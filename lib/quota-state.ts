@@ -14,7 +14,7 @@
 
 import { accountRecoveryAtMs } from "./admin/platform-state.ts";
 import { listCooldowns } from "./cooldown.ts";
-import { openPlatformOf } from "./open-platforms.ts";
+import { openPlatformOf, OPEN_PLATFORM_KIND_NAME } from "./open-platforms.ts";
 import { quotaPluginForBaseUrl, type QuotaPlugin } from "./quota-plugin-registry.ts";
 import type { HealthSnapshot, QuotaView } from "./provider-kinds.ts";
 import type { ProviderRow } from "./providers.ts";
@@ -31,9 +31,21 @@ export function quotaPluginIdOf(provider: Pick<ProviderRow, "platform">): string
   return quotaPluginOfAccount(provider)?.id ?? "";
 }
 
-/** 这个账号所在平台的额度插件；对不上任何一家就是 null（没有额度接口）。 */
+/**
+ * 这个账号所在平台的额度插件；对不上任何一家就是 null（没有额度接口）。
+ *
+ * 判据两条，缺一不可：平台行的 kind 得是通用开放平台那一族（openai），地址要
+ * 对上某家插件声明的地址。
+ *
+ * 为什么先看 kind：地址只说这台机器是谁，不说这条链路能不能问额度。anthropic
+ * 那一族的读侧永远返回空（lib/kinds/anthropic.ts 的 quotas: () => []），给它
+ * 认插件就是承诺一个不会到的答复 —— 面板上摆出额度区、凭据里多出永远没人问的
+ * 那一段，两头都在说一件不会发生的事。
+ */
 export function quotaPluginOfAccount(provider: Pick<ProviderRow, "platform">): QuotaPlugin | null {
-  return quotaPluginForBaseUrl(openPlatformOf(provider.platform)?.baseUrl ?? "");
+  const row = openPlatformOf(provider.platform);
+  if (!row || row.kind !== OPEN_PLATFORM_KIND_NAME) return null;
+  return quotaPluginForBaseUrl(row.baseUrl);
 }
 
 /** 一次探测的结论。 */

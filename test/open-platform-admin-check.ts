@@ -61,6 +61,8 @@ const { addAccount } = await import("../lib/providers.ts");
 const { kindOf } = await import("../lib/provider-kinds.ts");
 const { platformCategoryOfKind } = await import("../lib/platform-catalog.ts");
 const { setProviderKeys } = await import("../lib/admin/credentials.ts");
+const { listCredentials } = await import("../lib/admin/accounts.ts");
+const { openPlatformKeyOf } = await import("../lib/open-platform-credentials.ts");
 const { upstreamBaseUrl } = await import("../lib/admin/upstreams.ts");
 const { PLATFORMS } = await import("../lib/platform-templates.ts");
 const { saveAggregateModel, reloadAggregate } = await import("../lib/aggregate.ts");
@@ -1072,6 +1074,95 @@ check(
   show(listedQiniuAfter?.platforms),
 );
 await guard(() => deletePlatform({ id: "quota-match-demo" }));
+
+// 同一条地址、两种 kind：额度区只对 openai 那一族摆。
+// 地址只说这台机器是谁，不说这条链路能不能问额度 —— anthropic 那一族的读侧
+// 永远返回空（lib/kinds/anthropic.ts 的 quotas: () => []），摆出额度区等于
+// 承诺一个不会到的答复。
+await guard(() => addPlatform({
+  id: "quota-kind-anthropic",
+  label: "同地址的 anthropic 平台",
+  baseUrl: "https://api.qnaigc.com/v1",
+  kind: "anthropic",
+}));
+await guard(() => addPlatform({
+  id: "quota-kind-openai",
+  label: "同地址的 openai 平台",
+  baseUrl: "https://api.qnaigc.com/v1",
+  kind: "openai",
+}));
+const sameAddressAnth = (await listUpstreams()).find((u) => u.id === "quota-kind-anthropic");
+const sameAddressOai = (await listUpstreams()).find((u) => u.id === "quota-kind-openai");
+check(
+  "同地址 anthropic：三格全空（id）",
+  sameAddressAnth?.quotaPluginId === "",
+  show(sameAddressAnth?.quotaPluginId),
+);
+check(
+  "同地址 anthropic：三格全空（label）",
+  sameAddressAnth?.quotaPluginLabel === "",
+  show(sameAddressAnth?.quotaPluginLabel),
+);
+check(
+  "同地址 anthropic：三格全空（fields）",
+  (sameAddressAnth?.quotaPluginFields ?? []).length === 0,
+  show(sameAddressAnth?.quotaPluginFields),
+);
+check(
+  "同地址 openai：三格有值（id）",
+  sameAddressOai?.quotaPluginId === "qiniu",
+  show(sameAddressOai?.quotaPluginId),
+);
+check(
+  "同地址 openai：三格有值（label）",
+  sameAddressOai?.quotaPluginLabel === "七牛云资源包",
+  show(sameAddressOai?.quotaPluginLabel),
+);
+check(
+  "同地址 openai：三格有值（fields）",
+  (sameAddressOai?.quotaPluginFields ?? []).length === 1 &&
+    sameAddressOai?.quotaPluginFields?.[0]?.name === "account",
+  show(sameAddressOai?.quotaPluginFields),
+);
+
+// 插件页：那个插件名下的平台清单也不能有这行 anthropic —— 同一件事的另一面。
+const pluginsListed = await listQuotaPlugins();
+const qiniuListed = pluginsListed.plugins?.find((p: any) => p.id === "qiniu");
+check(
+  "插件页：qiniu 名下没有那行 anthropic 平台",
+  !(qiniuListed?.platforms ?? []).some((p: any) => p.platformId === "quota-kind-anthropic"),
+  show(qiniuListed?.platforms),
+);
+check(
+  "插件页：qiniu 名下有那行 openai 平台（对照组）",
+  (qiniuListed?.platforms ?? []).some((p: any) => p.platformId === "quota-kind-openai"),
+  show(qiniuListed?.platforms),
+);
+
+// 写入侧：面板按上游那三格只画一格（推理 Key），服务端也得只收一格。
+// 两边不一致就是「面板发一格、服务端要两格」—— 段数校验把整单挡下，一把 key
+// 都存不进去。
+const anthAccount = addAccount({ platform: "quota-kind-anthropic", alias: "撞地址的 anthropic 账号" });
+const anthAccountId = String(anthAccount.id ?? "");
+check("撞地址的 anthropic 账号建得起来", anthAccount.ok && anthAccountId !== "", anthAccount.message);
+const wroteOne = await guard(() => svc.setProviderKeys(
+  { upstreamId: anthAccountId, keys: ["sk-TESTONLY-anth"] },
+  {},
+));
+check("只发一格（推理 Key）写得进去", wroteOne !== null, errDetail());
+check(
+  "那把 key 确实在",
+  openPlatformKeyOf(anthAccountId)?.apiKey === "sk-TESTONLY-anth",
+  String(openPlatformKeyOf(anthAccountId)?.apiKey ?? "没有"),
+);
+const anthCredRows = listCredentials(anthAccountId);
+check(
+  "这个账号只有一格凭据（推理 Key）",
+  anthCredRows.length === 1 && anthCredRows[0]?.label === "推理 Key",
+  show(anthCredRows.map((r) => [r.label, r.status])),
+);
+await guard(() => deletePlatform({ id: "quota-kind-anthropic" }));
+await guard(() => deletePlatform({ id: "quota-kind-openai" }));
 
 // 每一格的名字只有一处产出：插件自己的声明。契约上发出去的必须就是它 ——
 // 面板拿它画那一格，凭据行上的 label 也是同一个值。逐个插件逐段比，不手写

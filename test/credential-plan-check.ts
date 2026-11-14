@@ -282,8 +282,18 @@ registerQuotaPlugin({
   probe: async () => ({ state: "unknown", views: [], recoverAt: null, message: "测试不出去" }),
 });
 
-/** 通用开放平台：两种方言各建一行，插件同一份 —— 凭据形状应该一模一样。 */
+/**
+ * 通用开放平台：两种方言各建一行，插件同一份 —— 但格子不一样。
+ *
+ * 只有 openai 那一族认额度插件：anthropic 声明过自己没有额度接口
+ * （lib/kinds/anthropic.ts 的 declareNoQuotaPlugin），给它认插件就是多出两格永远
+ * 没人问的凭据 —— 而面板画的格数与服务端要的段数得是同一个数（凭据计划按平台
+ * 行的 kind 走，lib/quota-state.ts 的 quotaPluginOfAccount）。
+ */
 const OPEN_PLATFORMS = ["openai", "anthropic"] as const;
+
+/** 这一族认不认额度插件（因而格子是不是多出那两段）。 */
+const HAS_PLUGIN: Record<string, boolean> = { openai: true, anthropic: false };
 
 for (const kind of OPEN_PLATFORMS) {
   const platformId = `test-open-${kind}`;
@@ -299,34 +309,45 @@ for (const kind of OPEN_PLATFORMS) {
   const openId = String(openAccount.id ?? "");
   check(`${kind}：开放平台的账号建得起来`, openAccount.ok && openId !== "", openAccount.message);
 
-  // 没填：插件那两段各占一行（面板上要看得见「这段还没填」），推理 key 不列。
+  const pluginFields = HAS_PLUGIN[kind] ? (quotaPluginOf("test-portal")?.fields ?? []) : [];
+
+  // 没填：认插件的那一族把插件那几段各列一行（面板上要看得见「这段还没填」），
+  // 推理 key 不列；不认插件的那一族此刻一格都不列。
   sameRows(
-    `${kind}：没填时只有插件那两行（missing）`,
+    `${kind}：没填时列哪几行`,
     rowsOf(openId),
-    [
-      ["额度凭据", "cookie", false],
-      ["额度 Cookie", "cookie", false],
-    ],
+    pluginFields.map((field) => [field.label, "cookie", false] as [string, string, boolean]),
   );
   check(
-    `${kind}：插件那两行是 missing`,
+    `${kind}：没填的插件那几行是 missing`,
     credentialsOf(openId).every((row) => row.status === CredentialState.MISSING),
     show(credentialsOf(openId).map((row) => [row.label, row.status])),
   );
 
-  // 三项：推理 key + 插件那两段。位置就是顺序。
-  const wrote = setProviderKeys(openId, ["sk-TESTONLY-open", "portal-user", "portal-cookie-1"]);
-  check(`${kind}：三项都写得进去`, wrote.ok && wrote.count === 3, `${wrote.message} / ${wrote.count}`);
+  // 写入：位置就是顺序。认插件的那一族三段，不认的那一族一段（推理 Key）。
+  const values = ["sk-TESTONLY-open", "portal-user", "portal-cookie-1"].slice(
+    0,
+    1 + pluginFields.length,
+  );
+  const wrote = setProviderKeys(openId, values);
+  check(
+    `${kind}：${values.length} 段都写得进去`,
+    wrote.ok && wrote.count === values.length,
+    `${wrote.message} / ${wrote.count}`,
+  );
   check(
     `${kind}：插件的第一段读得回来`,
-    pluginFieldOf(openId, "portal_account") === "portal-user",
+    pluginFieldOf(openId, "portal_account") === (pluginFields.length ? "portal-user" : ""),
     pluginFieldOf(openId, "portal_account"),
   );
-  sameRows(`${kind}：配齐后的行（推理 Key 在最前）`, rowsOf(openId), [
-    ["推理 Key", "api_key", true],
-    ["额度凭据", "cookie", false],
-    ["额度 Cookie", "cookie", false],
-  ]);
+  sameRows(
+    `${kind}：配齐后的行（推理 Key 在最前）`,
+    rowsOf(openId),
+    [
+      ["推理 Key", "api_key", true],
+      ...pluginFields.map((field) => [field.label, "cookie", false] as [string, string, boolean]),
+    ],
+  );
 
   const view = listAccounts().find((a) => a.id === openId);
   check(
@@ -335,12 +356,11 @@ for (const kind of OPEN_PLATFORMS) {
     `账号行 ${view?.credentialCount}，列出 ${listCredentials(openId).length}`,
   );
 
-  // 拿到真平台行时，格子必须是完整集合：推理 Key + 插件每一段一格，顺序就是
-  // 位置。少一格，面板就少发一段，服务端按位置写下去会把那一段清掉。
+  // 拿到真平台行时，格子必须是完整集合：推理 Key + （认插件的那一族）插件每一段
+  // 一格，顺序就是位置。少一格，面板就少发一段，服务端按位置写下去会把那一段清掉。
   const withRow = credentialsOfKind(kind).fields({ id: openId, platform: platformId, kind });
-  const pluginFields = quotaPluginOf("test-portal")?.fields ?? [];
   check(
-    `${kind}：有平台行时格子是「推理 Key + 插件那几段」`,
+    `${kind}：有平台行时格子是「推理 Key${pluginFields.length ? " + 插件那几段" : ""}」`,
     show(withRow.map((f) => f.label)) === show(["推理 Key", ...pluginFields.map((f) => f.label)]),
     `实际 ${show(withRow.map((f) => f.label))}`,
   );

@@ -165,8 +165,8 @@ import { refreshOpenPlatformCatalog } from "../open-platform-catalog.ts";
 import { forgetUpstreamSessions } from "../upstream-session.ts";
 import { breakerPanelState } from "../upstream-breaker.ts";
 import { isSimulatedClientKind, platformKindChoices } from "../platform-catalog.ts";
-import { allQuotaPlugins, quotaPluginForBaseUrl } from "../quota-plugin-registry.ts";
-import { quotaConclusionOf, quotaPluginIdOf, type QuotaConclusion } from "../quota-state.ts";
+import { allQuotaPlugins } from "../quota-plugin-registry.ts";
+import { quotaConclusionOf, quotaPluginIdOf, quotaPluginOfAccount, type QuotaConclusion } from "../quota-state.ts";
 import { peekHealthSnapshot } from "../health-cache.ts";
 import { listAggregateModels } from "../aggregate.ts";
 import {
@@ -443,10 +443,14 @@ function platformMessage(
   // 熔断：这个平台现在被跳过了没有。开着的时候补一句「已跳过，恢复时间 xx:xx」
   // —— 面板上要看得见「这个上游为什么这会儿不接」，不然只看到「它没接」。
   // 不加状态格（契约不动）：这一句挂在 stateReason 上，够用。
-  // 这个平台的额度插件：按平台地址认出来的那一个。判据跟路由同一个函数
-  //（quotaPluginForBaseUrl），面板不再自己拿地址算一遍。模板平台没有开放
-  // 平台行可对，三格照空 —— 面板据此不显示额度区。
-  const quotaPlugin = open ? quotaPluginForBaseUrl(open.baseUrl) : null;
+  // 这个平台的额度插件：判据只有一处（quotaPluginOfAccount）—— 平台行的 kind 得
+  // 是通用开放平台那一族，地址要对上某家插件声明的地址。模板平台没有开放平台行
+  // 可对，三格照空 —— 面板据此不显示额度区。
+  //
+  // 为什么不按地址单独认：地址只说这台机器是谁，不说这条链路能不能问额度 ——
+  // anthropic 那一族的读侧永远返回空（lib/kinds/anthropic.ts 的 quotas: () => []），
+  // 摆出额度区等于承诺一个不会到的答复。
+  const quotaPlugin = quotaPluginOfAccount({ platform: id });
   const breaker = breakerPanelState(id);
   const breakerNote =
     breaker.tripped && breaker.untilMs !== null ? `已跳过，恢复时间 ${stampOf(breaker.untilMs)}` : "";
@@ -1025,10 +1029,15 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
 
   async listQuotaPlugins() {
     // 现在用到每个插件的平台：从开放平台行里筛出地址匹配到它的那些。判据还是
-    // quotaPluginForBaseUrl —— 与 Upstream.quota_plugin_id 同一个答案，不在
-    // admin 层另写一套地址比较。模拟客户端那些行不是开放平台，滤掉。
+    // quotaPluginOfAccount —— 与 Upstream.quota_plugin_id 同一个答案，不在
+    // admin 层另写一套比较。模拟客户端那些行不是开放平台，滤掉。
+    //
+    // 判据按平台算一次再看：每家插件都重算一遍就是白读库 N 倍。
     const platformRows = listOpenPlatforms().filter(
       (row) => !isSimulatedClientKind(row.kind)
+    );
+    const pluginOfRow = new Map(
+      platformRows.map((row) => [row.id, quotaPluginOfAccount({ platform: row.id })]),
     );
     return create(ListQuotaPluginsResponseSchema, {
       plugins: allQuotaPlugins().map((plugin) =>
@@ -1039,7 +1048,7 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
           // 匹配结果在 platforms 里，服务端已经算好。
           baseUrls: [...plugin.baseUrls],
           platforms: platformRows
-            .filter((row) => quotaPluginForBaseUrl(row.baseUrl)?.id === plugin.id)
+            .filter((row) => pluginOfRow.get(row.id)?.id === plugin.id)
             .map((row) =>
               create(QuotaPluginPlatformSchema, {
                 platformId: row.id,
