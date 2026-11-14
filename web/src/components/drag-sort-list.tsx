@@ -95,12 +95,12 @@ export function DragSortList<T>({
   const rowHeights = () =>
     rowRefs.current.map((el) => el?.getBoundingClientRect().height ?? 0)
 
-  /** 指针落在原始布局的哪一行（按各行的中点切）。 */
+  /** 指针落在原始布局的哪一行（按各行的中点切，中点归本行）。 */
   const hoverFromPointer = (clientY: number, heights: number[]): number => {
     const listTop = listRef.current?.getBoundingClientRect().top ?? 0
     let acc = 0
     for (let i = 0; i < heights.length; i++) {
-      if (clientY - listTop < acc + heights[i] / 2) return i
+      if (clientY - listTop <= acc + heights[i] / 2) return i
       acc += heights[i]
     }
     return heights.length - 1
