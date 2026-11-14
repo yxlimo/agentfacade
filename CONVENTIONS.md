@@ -42,6 +42,63 @@ The main agent runs `mise run privacy` first, then the full `mise run check` bef
 committing. You do not commit, so you only need the group above — but do not leave real
 identities, credentials or internal addresses behind for that scan to find.
 
+## When the main agent gives you a worktree
+
+Some tasks arrive isolated in their own worktree (`subagent({worktree: true})`). Inside one
+the rule is different in exactly one way: **commit there, in that branch.** Do not commit on
+`main`, do not merge, do not push.
+
+Your work has to survive being killed — a timeout, an upstream error, a closed terminal. The
+only thing that survives is what is committed, so:
+
+1. **Start a branch and write your task log before you touch code.**
+   ```sh
+   git switch -c wt/<task-name>            # the worktree starts on whatever HEAD was
+   ```
+   The log is `.pi/worklogs/<task-name>.md` (tracked; `docs/` is not). It is not a summary you
+   write at the end — it is the running state of the task.
+
+2. **Update the log as you go, and commit both together.** After each step that you could
+   describe to someone else — a file changed, a test now red, a cause found — append what
+   you did and what you learned, then `git add -A && git commit -m "wip: <step>"`. Small
+   `wip:` commits in your own branch are correct here; nobody reads this branch's history as
+   prose.
+
+3. **Commit before any command you expect to take minutes** (`mise run check`, the full test
+   sweep, an e2e run, a long probe). If the harness stops you mid-command, an uncommitted
+   hour is gone and an uncommitted half-hour is worse than a rough one — the next reader
+   cannot tell a finished edit from a half-written one.
+
+4. **A file you did not finish is a trap.** Prefer leaving a change in a state that compiles
+   and commit it, over a larger change that half-applies. If you must stop mid-edit, say so
+   in the log's last line.
+
+### What your final report must contain
+
+So the work can be recovered without you:
+
+- the branch name and the latest commit sha (`git log --oneline -1` on your branch)
+- `git status --short` — empty means everything you did is committed; if not empty, list what
+  is uncommitted and where it stands
+- the path of your task log, and one paragraph naming the open questions left in it
+
+The main agent cherry-picks your commits into `main`. Work that exists only in a worktree
+directory — or only in a worktree the harness has already deleted — is work that was thrown
+away; that has happened here before.
+
+## Never reach into someone else's files
+
+Parallel subagents may share a checkout (the main agent decides). Either way these are
+forbidden, because they take other people's uncommitted work with them:
+
+```sh
+git stash        git checkout -- <file>        git restore <file>
+```
+
+To see what a file looked like before your change, read `git show HEAD:<path>` or open a
+throwaway worktree of your own (`git worktree add /tmp/base HEAD`). That answers the same
+question without touching the shared tree.
+
 ## Facts that cost someone an afternoon
 
 - Upstream response bodies belong in the log, not just the status code. When hunting an
