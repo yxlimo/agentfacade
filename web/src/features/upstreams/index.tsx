@@ -266,7 +266,6 @@ export function UpstreamsPage() {
                   <TableHead>区域</TableHead>
                   <TableHead>状态</TableHead>
                   <TableHead>生效策略</TableHead>
-                  <TableHead className='text-right'>账号</TableHead>
                   {/* 操作列：列宽就是几个按钮的宽（w-max），窄屏时（xl 以下）
                       收窄一点让按钮换行摆，不把它们推出可视区。 */}
                   <TableHead className='sticky right-0 z-20 w-max max-xl:w-40 xl:min-w-max border-l bg-background text-right whitespace-nowrap'>
@@ -373,9 +372,6 @@ export function UpstreamsPage() {
                             />
                           </div>
                         </TableCell>
-                        <TableCell className='text-right font-mono'>
-                          {upstream.accountCount}
-                        </TableCell>
                         {/* 操作列：宽屏时一行摆开（列宽就是按钮的宽），窄屏时
                             收窄一点让按钮换行摆 —— 按钮不压缩，也不被推出
                             可视区。底色不透明：横向滚动时，从它背后过去的
@@ -460,7 +456,7 @@ export function UpstreamsPage() {
                       </TableRow>
                       {isExpanded ? (
                         <TableRow>
-                          <TableCell colSpan={7} className='bg-muted/30 p-0'>
+                          <TableCell colSpan={6} className='bg-muted/30 p-0'>
                             <div className='grid gap-4 p-4'>
                               {/* 签到是账号的事，但跟账号表不是一回事：
                                   单独一块，不占账号表的一列。 */}

@@ -5,7 +5,6 @@ import type {
 import type { QuotaRegistry } from '@/features/accounts/provider-key-fields'
 import { hasQuota, quotaStateText, QuotaSummary } from '@/features/balance/quota'
 import {
-  platformKindReadout,
   simulatedPresetOf,
   type PlatformKindList,
 } from '@/features/open-platforms/platform-kinds'
@@ -51,10 +50,6 @@ export function OpenPlatformFacts({
   const simulated = simulatedPresetOf(kinds, upstream) !== undefined
   return (
     <div className='grid gap-0.5 text-xs whitespace-normal text-muted-foreground'>
-      {simulated ? null : (
-        <span className='font-mono break-all'>{upstream.baseUrl}</span>
-      )}
-      {kindLine(upstream, kinds)}
       <span>{modelLine(upstream)}</span>
       {simulated ? null : <span>{pluginLine(upstream, registry)}</span>}
       {quotaLine(upstream, registeredPlugin(upstream, registry))}
@@ -65,19 +60,6 @@ export function OpenPlatformFacts({
       ) : null}
     </div>
   )
-}
-
-/**
- * 类型那一行。
- *
- * 清单没到手（还在加载 / 取不到）不显示这一行 —— 那种时候说不出名字，也不该
- * 拿 raw 值顶上或者写「未知」。清单到手但没有这一条（服务端加了新方言）就摆
- * raw 值：那是服务端说的，不是猜的。判据在 platform-kinds.ts，弹窗用的是同一个。
- */
-function kindLine(upstream: Upstream, kinds: PlatformKindList) {
-  const kind = platformKindReadout(kinds, upstream)
-  if (!kind) return null
-  return <span>{`类型：${kind}`}</span>
 }
 
 /**

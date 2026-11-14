@@ -413,7 +413,7 @@ describe('面板上的开放平台', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 
-  it('开放平台显示地址、模型目录、额度插件名；模拟客户端不摆这两格', async () => {
+  it('开放平台显示模型目录、额度插件名；地址不显示；模拟客户端不摆额度插件', async () => {
     const client = clientWith(
       [template(), openPlatform({ quotaPlugin: 'qiniu' })],
       {
@@ -434,8 +434,10 @@ describe('面板上的开放平台', () => {
 
     await screen.findByText('我的中转站')
 
-    // 地址：原样显示。
-    expect(screen.getByText('https://api.example.com/v1')).toBeInTheDocument()
+    // 地址：卡片上不显示。
+    expect(
+      screen.queryByText('https://api.example.com/v1')
+    ).not.toBeInTheDocument()
     // 模型目录：几个模型、上次拉取的时刻。
     expect(
       screen.getByText(
@@ -454,7 +456,7 @@ describe('面板上的开放平台', () => {
       within(open).getByRole('button', { name: '删除' })
     ).toBeInTheDocument()
 
-    // 模拟客户端：地址与额度插件这两格不摆（归代码）。
+    // 模拟客户端：额度插件这一格不摆（归代码）。
     const tmpl = rowOf('MiniMax Code')
     expect(
       within(tmpl).queryByText(/https?:\/\//)
@@ -1662,16 +1664,17 @@ describe('建平台时能选类型', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('平台卡片：类型名按清单里的名字显示', async () => {
+  it('平台卡片：不再显示类型与地址', async () => {
     const client = clientWith([openPlatform({ kind: 'anthropic' })])
 
     renderWithClient({ client, children: <UpstreamsPage /> })
 
     await screen.findByText('我的中转站')
-    expect(await screen.findByText('类型：Anthropic 兼容')).toBeInTheDocument()
+    expect(screen.queryByText(/类型：/)).not.toBeInTheDocument()
+    expect(screen.queryByText('https://api.example.com/v1')).not.toBeInTheDocument()
   })
 
-  it('清单里没有这一条：摆 raw 值，不说「未知」', async () => {
+  it('卡片上没有其它格被顺带刪掉：模型目录与额度插件还在', async () => {
     const client = clientWith([
       openPlatform({ kind: 'newlang', quotaPlugin: '' }),
     ])
@@ -1679,11 +1682,10 @@ describe('建平台时能选类型', () => {
     renderWithClient({ client, children: <UpstreamsPage /> })
 
     await screen.findByText('我的中转站')
-    expect(await screen.findByText('类型：newlang')).toBeInTheDocument()
-    expect(screen.queryByText(/未知/)).not.toBeInTheDocument()
+    expect(screen.getByText(/模型目录：/)).toBeInTheDocument()
   })
 
-  it('清单还没到手：卡片上不显示类型这一行', async () => {
+  it('卡片上没有其它格被顺带刪掉：清单没到手时额度插件仍显示', async () => {
     const client = clientWith([openPlatform()], {
       ListPlatformKinds: () => new Promise(() => {}),
     })
@@ -1691,9 +1693,8 @@ describe('建平台时能选类型', () => {
     renderWithClient({ client, children: <UpstreamsPage /> })
 
     await screen.findByText('我的中转站')
+    expect(screen.getByText(/模型目录：/)).toBeInTheDocument()
     expect(screen.queryByText(/类型：/)).not.toBeInTheDocument()
-    // 也不因为清单没到就不显示别的格。
-    expect(screen.getByText('https://api.example.com/v1')).toBeInTheDocument()
   })
 })
 

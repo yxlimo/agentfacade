@@ -186,7 +186,7 @@ describe('上游页的平台列表', () => {
     window.history.replaceState(null, '', '/')
   })
 
-  it('一行一个平台：名字、区域、账号数都从后端来', async () => {
+  it('一行一个平台：名字、区域都从后端来', async () => {
     const client = clientWith([
       platform(),
       platform({
@@ -207,8 +207,9 @@ describe('上游页的平台列表', () => {
     expect(screen.getByText('qoder-cn')).toBeInTheDocument()
     // 区域是给人看的话。
     expect(screen.getAllByText('中国区')).toHaveLength(2)
-    // 账号数由后端给。
-    expect(screen.getByText('2')).toBeInTheDocument()
+    // 账号数不再单列展示。
+    expect(screen.queryByText('2')).not.toBeInTheDocument()
+    expect(screen.queryByText('账号')).not.toBeInTheDocument()
   })
 
   it('只有代码没有行的平台：没有编辑、没有删掉', async () => {
