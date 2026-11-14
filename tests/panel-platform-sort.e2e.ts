@@ -81,15 +81,55 @@ function sortRowAt(screen: Screen, index: number): Locator {
   return sortList(screen).getByRole('listitem').nth(index);
 }
 
-/** 拖拽列表的第一行（拖拽的落点）。 */
-function firstSortRow(screen: Screen): Locator {
-  return sortList(screen).getByRole('listitem').first();
-}
-
 /** 拖拽列表里行的先后（按页面上摆的顺序，取 data-platform-id）。 */
 function sortOrder(browser: Browser): Promise<string[]> {
   return browser.evaluate<string[]>(
     `[...document.querySelectorAll('ul[aria-label="平台排序"] > li')].map((li) => li.dataset.platformId ?? '')`,
+  );
+}
+
+/**
+ * 把第 from 行拖到第 to 行：合成拖拽（dragstart → dragover → drop）。
+ *
+ * 不用原生的 `dragTo`：它总把落点摆在目标行中心，而 DragSortList 的悬停判定
+ * 按各行中点切（`hoverFromPointer`），正中那一点会被切到下一行 —— 拖到第一位
+ * 会变成第二位。这里把 dragover 摆在第 to 行的上沿，悬停位就是第 to 行。
+ * dragstart 和 dragover 分两次 evaluate：dragstart 的 setState 要先渲染出去，
+ * dragover 的处理器才能看到拖动状态。
+ */
+async function dragRowToIndex(
+  browser: Browser,
+  from: number,
+  to: number,
+): Promise<void> {
+  const rows =
+    "[...document.querySelectorAll('ul[aria-label=\"平台排序\"] > li')]";
+  await browser.evaluate(
+    `(() => {
+      const rows = ${rows};
+      rows[${from}].dispatchEvent(new DragEvent('dragstart', {
+        bubbles: true, cancelable: true, dataTransfer: new DataTransfer(), clientY: 0,
+      }));
+    })()`,
+  );
+  await browser.evaluate(
+    `(() => {
+      const rows = ${rows};
+      const rect = rows[${to}].getBoundingClientRect();
+      rows[${to}].dispatchEvent(new DragEvent('dragover', {
+        bubbles: true, cancelable: true, dataTransfer: new DataTransfer(),
+        clientY: rect.top + 2,
+      }));
+    })()`,
+  );
+  await browser.evaluate(
+    `(() => {
+      document
+        .querySelector('ul[aria-label="平台排序"]')
+        .dispatchEvent(new DragEvent('drop', {
+          bubbles: true, cancelable: true, dataTransfer: new DataTransfer(),
+        }));
+    })()`,
   );
 }
 
@@ -118,6 +158,86 @@ async function storedOrder(browser: Browser): Promise<string[] | null> {
   );
   return raw === null ? null : (JSON.parse(raw) as string[]);
 }
+
+test('拖动让位：拖动进行中其余行带 transition-transform 或 inline transform，不是松手才跳变', async ({
+  app,
+  screen,
+  browser,
+}) => {
+  await app.open();
+  await seedAll();
+  await openPlatforms(screen, browser);
+  await enterSortMode(screen);
+
+  const before = await sortOrder(browser);
+  // 半场拖动：dragstart 起于排序丙、dragover 悬到第一行，不落手。两次
+  // evaluate：dragstart 的 setState 要先渲染出去，dragover 才能看到拖动状态。
+  const from = before.indexOf('sort-gamma');
+  expect(from).toBeGreaterThan(0);
+  const rowsSelector =
+    "[...document.querySelectorAll('ul[aria-label=\"平台排序\"] > li')]";
+  await browser.evaluate(
+    `(() => {
+      const rows = ${rowsSelector};
+      rows[${from}].dispatchEvent(new DragEvent('dragstart', {
+        bubbles: true, cancelable: true, dataTransfer: new DataTransfer(), clientY: 0,
+      }));
+    })()`,
+  );
+  await browser.evaluate(
+    `(() => {
+      const rows = ${rowsSelector};
+      const rect = rows[0].getBoundingClientRect();
+      rows[0].dispatchEvent(new DragEvent('dragover', {
+        bubbles: true, cancelable: true, dataTransfer: new DataTransfer(),
+        clientY: rect.top + 2,
+      }));
+    })()`,
+  );
+
+  // 拖动进行中：被拖行（排序丙）跟指针（inline transform、无过渡），
+  // 它上方的行已经让出位移（computeOffsets：hover < from 时 [hover, from)
+  // 各让出一个行高）—— 让位是滑过去的，不是松手才跳变。
+  const states = await browser.evaluate<
+    Array<{ cls: string; transform: string; id: string }>
+  >(
+    `[...document.querySelectorAll('ul[aria-label="平台排序"] > li')].map((li) => ({
+      cls: li.className,
+      transform: li.style.transform,
+      id: li.dataset.platformId ?? '',
+    }))`,
+  );
+  const dragged = states.find((row) => row.id === 'sort-gamma');
+  expect(dragged).toBeTruthy();
+  expect(dragged?.cls).toContain('transition-none');
+  expect(dragged?.transform).toContain('translateY');
+  // 悬停位之前的行（含落点行）都让了位：inline transform、带 transition 类。
+  for (const [index, row] of states.entries()) {
+    if (row.id === 'sort-gamma') continue;
+    if (index < from) {
+      expect(row.transform).toContain('translateY');
+      expect(row.cls).toContain('transition-transform');
+    } else {
+      // 悬停位之后的行不动，但过渡类照样在（下一帧让位也是滑的）。
+      expect(row.cls).toContain('transition-transform');
+    }
+  }
+
+  // 落手收尾：次序真正换掉，页面不炸。
+  await browser.evaluate(
+    `(() => {
+      document
+        .querySelector('ul[aria-label="平台排序"]')
+        .dispatchEvent(new DragEvent('drop', {
+          bubbles: true, cancelable: true, dataTransfer: new DataTransfer(),
+        }));
+    })()`,
+  );
+  const draggedOrder = await sortOrder(browser);
+  expect(draggedOrder[0]).toBe('sort-gamma');
+
+  await cleanupAll();
+});
 
 test('排序模式：点「排序」换出拖拽列表，点「完成排序」回表格', async ({
   app,
@@ -170,11 +290,10 @@ test('拖拽：把排序丙拖到列表第一位，退出后表格第一行就�
 
   // 拖之前排序丙不在第一位（不然这条用例什么都没证明）。
   const before = await sortOrder(browser);
-  expect(before.indexOf('sort-gamma')).toBeGreaterThan(0);
+  const gammaFrom = before.indexOf('sort-gamma');
+  expect(gammaFrom).toBeGreaterThan(0);
 
-  await sortRow(screen, 'sort-gamma').dragTo(
-    firstSortRow(screen),
-  );
+  await dragRowToIndex(browser, gammaFrom, 0);
 
   // 换位立刻生效：列表第一行是它，localStorage 里它排第一。
   expect((await sortOrder(browser))[0]).toBe('sort-gamma');
@@ -254,9 +373,7 @@ test('刷新保持：改完次序 reload，表格行的先后还在', async ({
   await enterSortMode(screen);
 
   const before = await sortOrder(browser);
-  await sortRow(screen, 'sort-gamma').dragTo(
-    firstSortRow(screen),
-  );
+  await dragRowToIndex(browser, before.indexOf('sort-gamma'), 0);
   const dragged = await sortOrder(browser);
   expect(dragged).not.toEqual(before);
   await screen.getByRole('button', { name: '完成排序' }).click();
@@ -321,9 +438,8 @@ test('跨页一致：改完次序，额度页与签到页的行次序跟着走',
   await openPlatforms(screen, browser);
   await enterSortMode(screen);
 
-  await sortRow(screen, 'sort-gamma').dragTo(
-    firstSortRow(screen),
-  );
+  const crossBefore = await sortOrder(browser);
+  await dragRowToIndex(browser, crossBefore.indexOf('sort-gamma'), 0);
   const dragged = await sortOrder(browser);
   const seededOrder = dragged.filter((id) => SEEDED_IDS.includes(id));
   expect(seededOrder).toEqual(['sort-gamma', 'sort-alpha', 'sort-beta']);

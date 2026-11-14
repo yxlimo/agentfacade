@@ -1,9 +1,10 @@
 // tests/panel-model-targets.e2e.ts — 主路由模型弹窗的「平台目标」排序。
 //
-// 位次即权重：目标不再手填权重、也没有「启用这个目标」开关 —— 拖动行首把手
-// 改顺序，第 1 行的权重 = 目标总数，往下递减（后端按 weight DESC 先试大的）；
-// 行尾「上移 / 下移 / 删除」，焦点在行上时 Alt + 上/下箭头。保存时每个目标
-// 一律 enabled: true。
+// 位次即权重：第 1 行的权重 = 目标总数，往下递减（后端按 weight DESC 先试
+// 大的）。拖拽不再常驻：平时是完整卡片（可填平台组 / 平台模型 id、可删行），
+// 点「排序」进入排序模式，每个目标压成一行「平台组 / 上游模型」，拖着排，
+// 点「完成排序」退出 —— 草稿不动，退出后各字段的输入原样回来。没有
+// 上移 / 下移按钮，也没有「启用这个目标」开关。
 //
 // 断言的真相有两处：界面上每行只读的「权重 N」，和服务端存下来的
 // targets[]（`ListPublishedModels` 回查，权重与顺序都要对上）。
@@ -68,7 +69,10 @@ async function openTargetTab(screen: Screen): Promise<Locator> {
   return dialog;
 }
 
-/** 目标顺序列表。 */
+/**
+ * 目标顺序列表。卡片模式和排序模式共用一个可访问名（`目标顺序`）：
+ * 任一时刻只有一份在 DOM 里，按当时所在的模式解读行内容。
+ */
 function targetList(dialog: Locator): Locator {
   return dialog.getByRole('list', { name: '目标顺序' });
 }
@@ -78,28 +82,14 @@ function targetRow(dialog: Locator, index: number): Locator {
   return targetList(dialog).getByRole('listitem').nth(index);
 }
 
-/** 行数（草稿里摆了几行，含没填全的）。 */
+/** 行数（当前模式里摆了几行）。 */
 function rowCount(dialog: Locator): Locator {
   return targetList(dialog).getByRole('listitem');
 }
 
-
-/** 行上手填的那个平台模型 id（模型 id 在输入框的 value 里，不在文本里）。 */
-async function rowModel(dialog: Locator, index: number): Promise<string> {
-  return targetRow(dialog, index).getByLabel('平台模型 id').inputValue();
-}
-/** 行首拖拽把手（没有可访问名，走 browser 的 CSS 转义口）。 */
-function dragHandle(browser: Browser, index: number): Locator {
-  return browser.locator(
-    `ul[aria-label="目标顺序"] > li[data-target-row="${index}"] [data-drag-handle]`,
-  );
-}
-
-/** 整行作为拖拽落点（同上，CSS 定位）。 */
-function dropRow(browser: Browser, index: number): Locator {
-  return browser.locator(
-    `ul[aria-label="目标顺序"] > li[data-target-row="${index}"]`,
-  );
+/** 排序模式里第 index 行的正文（「平台组 / 上游模型」两段文字）。 */
+function sortRowText(dialog: Locator, index: number): Promise<string | null> {
+  return targetRow(dialog, index).textContent();
 }
 
 /**
@@ -143,7 +133,30 @@ async function seedThreeTargets(
   }
 }
 
-/** 行上只读的权重文字（「权重 N」）。 */
+/** 进排序模式：点「排序」，等卡片退场、排序行出场。 */
+async function enterSortMode(dialog: Locator): Promise<void> {
+  await dialog.getByRole('button', { name: '排序', exact: true }).click();
+  // 卡片退场：平台模型 id 的输入框不在了。
+  await expect(dialog.getByLabel('平台模型 id')).toHaveCount(0);
+  // 排序行出场：每行带 data-target-row，整行可拖。
+  for (const index of [0, 1, 2]) {
+    await expect(rowAt(dialog, index)).toHaveAttribute('data-target-row', String(index));
+  }
+}
+
+/** 退出排序模式：点「完成排序」，等卡片回来。 */
+async function exitSortMode(dialog: Locator): Promise<void> {
+  await dialog.getByRole('button', { name: '完成排序' }).click();
+  await expect(dialog.getByLabel('平台模型 id').first()).toBeVisible();
+  await expect(dialog.getByRole('button', { name: '完成排序' })).toHaveCount(0);
+}
+
+/** 整行作为拖拽源 / 落点（排序模式的 li 自身 draggable，没有独立把手）。 */
+function rowAt(dialog: Locator, index: number): Locator {
+  return targetList(dialog).getByRole('listitem').nth(index);
+}
+
+/** 行上只读的权重文字（「权重 N」），只在卡片模式有。 */
 function shownWeight(row: Locator): Promise<string | null> {
   return row.getByText(/^权重 /).textContent();
 }
@@ -156,7 +169,56 @@ async function save(dialog: Locator, browser: Browser): Promise<void> {
   await expectSamePage(browser);
 }
 
-test('顺序即权重：三个目标权重 3/2/1，拖第 3 个到第 1 位后按新顺序重排，保存后服务端一致', async ({
+/**
+ * 用合成 DragEvent 在页内走半场拖动：dragstart 起于第 from 行、dragover 悬到
+ * 第 to 行，但不落手 —— 拖动过程的状态留在 DOM 里给断言看，之后由调用方
+ * 决定 drop 还是 dragend。React 的处理器接的是原生事件冒泡，合成事件一样
+ * 触发；DataTransfer 用构造器造（Chromium 支持）。
+ *
+ * dragover 的落点取第 to 行的上沿而不是中心：DragSortList 的悬停判定按各行
+ * 中点切（`hoverFromPointer`），正中那一点会被切到下一行。dragstart 与
+ * dragover 分两次 evaluate：dragstart 的 setState 要先渲染出去，dragover 的
+ * 处理器才能看到拖动状态。
+ */
+async function startSyntheticDrag(
+  browser: Browser,
+  from: number,
+  to: number,
+): Promise<void> {
+  const rows =
+    "[...document.querySelectorAll('ul[aria-label=\"目标顺序\"] > li')]";
+  await browser.evaluate(
+    `(() => {
+      const rows = ${rows};
+      rows[${from}].dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer(), clientY: 0 }));
+    })()`,
+  );
+  await browser.evaluate(
+    `(() => {
+      const rows = ${rows};
+      const rect = rows[${to}].getBoundingClientRect();
+      rows[${to}].dispatchEvent(new DragEvent('dragover', {
+        bubbles: true, cancelable: true, dataTransfer: new DataTransfer(),
+        clientY: rect.top + 2,
+      }));
+    })()`,
+  );
+}
+
+/** 收半场拖动：在列表上 drop，让次序真正提交。 */
+async function finishSyntheticDrag(browser: Browser): Promise<void> {
+  await browser.evaluate(
+    `(() => {
+      const list = document.querySelector('ul[aria-label="目标顺序"]');
+      const drop = new DragEvent('drop', {
+        bubbles: true, cancelable: true, dataTransfer: new DataTransfer(),
+      });
+      list.dispatchEvent(drop);
+    })()`,
+  );
+}
+
+test('排序模式进出：点「排序」卡片换出排序列表，点「完成排序」卡片回来', async ({
   app,
   screen,
   browser,
@@ -173,31 +235,83 @@ test('顺序即权重：三个目标权重 3/2/1，拖第 3 个到第 1 位后�
     const dialog = await openTargetTab(screen);
     await seedThreeTargets(screen, dialog);
 
-    // 行的骨架：把手可拖、行可聚焦、行 aria 带位次。把手没有可访问名，
-    // 用 CSS 定位（e2e 的 Locator 没有子元素选择，走 browser 的转义口）。
+    // 平时没有排序列表这回事：行是卡片（有输入框、有权重）。
+    await expect(targetRow(dialog, 0).getByLabel('平台模型 id')).toBeVisible();
+    await expect(
+      dialog.getByRole('button', { name: '完成排序' }),
+    ).toHaveCount(0);
+
+    await enterSortMode(dialog);
+
+    // 排序按钮换成了「完成排序」；行压成一行文字「平台组 / 上游模型」，
+    // 没有输入框、没有权重文字、也没有删除按钮。
+    await expect(
+      dialog.getByRole('button', { name: '排序', exact: true }),
+    ).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: '完成排序' })).toBeVisible();
     for (const index of [0, 1, 2]) {
-      const row = targetRow(dialog, index);
-      await expect(row).toHaveAttribute('aria-label', `目标 ${index + 1}`);
-      await expect(row).toHaveAttribute('tabindex', '0');
-      await expect(dragHandle(browser, index)).toHaveAttribute('draggable', 'true');
+      const text = await sortRowText(dialog, index);
+      expect(text).toContain(['t1', 't2', 't3'][index]);
+      await expect(rowAt(dialog, index)).toHaveAttribute('draggable', 'true');
+      await expect(rowAt(dialog, index).getByRole('textbox')).toHaveCount(0);
+      await expect(rowAt(dialog, index).getByText(/^权重 /)).toHaveCount(0);
+      await expect(
+        rowAt(dialog, index).getByRole('button', { name: /删除/ }),
+      ).toHaveCount(0);
     }
-    // 权重只读地摆着：第 1 行 = 总数，往下递减。
+
+    await exitSortMode(dialog);
+
+    // 卡片回来：三行都在、顺序没动、权重照位次摆。
+    await expect(rowCount(dialog)).toHaveCount(3);
+    for (const [index, modelId] of ['t1', 't2', 't3'].entries()) {
+      await expect(targetRow(dialog, index).getByLabel('平台模型 id')).toHaveValue(modelId);
+    }
+    expect(await shownWeight(targetRow(dialog, 0))).toBe('权重 3');
+    expect(await shownWeight(targetRow(dialog, 2))).toBe('权重 1');
+  } finally {
+    await cleanup();
+  }
+});
+
+test('拖动换位即权重：排序模式里拖第 3 个到第 1 位，退出后权重 3/2/1，保存后服务端一致', async ({
+  app,
+  screen,
+  browser,
+}) => {
+  await app.open();
+  await adminRpc('AddPlatform', {
+    id: PLATFORM_ID,
+    label: PLATFORM_LABEL,
+    kind: 'openai',
+    baseUrl: 'https://probe.example/v1',
+  });
+  try {
+    await openModelsPage(screen, browser);
+    const dialog = await openTargetTab(screen);
+    await seedThreeTargets(screen, dialog);
+    await enterSortMode(dialog);
+
+    // 拖第 3 行（t3）到第 1 行：合成拖拽，不用 dragTo —— 它总把落点摆在
+    // 目标行中心，而悬停判定按中点切，正中会被切到下一行（见 startSyntheticDrag
+    // 上方的注释；这里要的是「拖到第一位」）。
+    await startSyntheticDrag(browser, 2, 0);
+    await finishSyntheticDrag(browser);
+
+    // 拖完排序列表里的次序立刻是 t3 / t1 / t2（还没退出）。
+    for (const [index, modelId] of ['t3', 't1', 't2'].entries()) {
+      expect(await sortRowText(dialog, index)).toContain(modelId);
+    }
+
+    await exitSortMode(dialog);
+
+    // 退出后权重跟着位次重算：还是 3/2/1，但归属换了（总数 - 位次 + 1）。
     expect(await shownWeight(targetRow(dialog, 0))).toBe('权重 3');
     expect(await shownWeight(targetRow(dialog, 1))).toBe('权重 2');
     expect(await shownWeight(targetRow(dialog, 2))).toBe('权重 1');
-
-    // 拖第 3 行（t3）到第 1 行：拖的是行首把手，落点是整行。dragstart 只在
-    // 把手（唯一 draggable 的元素）上，从行上拖不出发不了。
-    await dragHandle(browser, 2).dragTo(dropRow(browser, 0));
-
-    // 换位立刻生效：t3 到第 1 位，权重跟着位次重算 —— 还是 3/2/1，
-    // 但归属换了（总数 - 位次 + 1）。
-    expect(await rowModel(dialog, 0)).toBe('t3');
-    expect(await rowModel(dialog, 1)).toBe('t1');
-    expect(await rowModel(dialog, 2)).toBe('t2');
-    expect(await shownWeight(targetRow(dialog, 0))).toBe('权重 3');
-    expect(await shownWeight(targetRow(dialog, 1))).toBe('权重 2');
-    expect(await shownWeight(targetRow(dialog, 2))).toBe('权重 1');
+    for (const [index, modelId] of ['t3', 't1', 't2'].entries()) {
+      await expect(targetRow(dialog, index).getByLabel('平台模型 id')).toHaveValue(modelId);
+    }
 
     await save(dialog, browser);
 
@@ -211,7 +325,7 @@ test('顺序即权重：三个目标权重 3/2/1，拖第 3 个到第 1 位后�
   }
 });
 
-test('键盘与按钮：Alt+ArrowDown 换位，行尾「下移」也换位，首行「上移」不可用；保存后顺序一致', async ({
+test('没有上移 / 下移：卡片模式和排序模式里都搜不到这两个可访问名', async ({
   app,
   screen,
   browser,
@@ -228,34 +342,64 @@ test('键盘与按钮：Alt+ArrowDown 换位，行尾「下移」也换位，首
     const dialog = await openTargetTab(screen);
     await seedThreeTargets(screen, dialog);
 
-    // 首行的「上移」没有上一行可去：不可用。
+    // 卡片模式：任何按钮的可访问名都不叫「上移 …」/「下移 …」。
+    await expect(dialog.getByRole('button', { name: /^上移/ })).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: /^下移/ })).toHaveCount(0);
+    // 精确名也各试一条（旧实现是「上移目标 1」这个形状）。
     await expect(
-      targetRow(dialog, 0).getByRole('button', { name: '上移目标 1' }),
-    ).toBeDisabled();
-
-    // 键盘：焦点在第 2 行（t2），Alt+ArrowDown 把它挪到第 3 位。
-    await targetRow(dialog, 1).focus();
-    await targetRow(dialog, 1).press('Alt+ArrowDown');
-    expect(await rowModel(dialog, 2)).toBe('t2');
-    expect(await rowModel(dialog, 1)).toBe('t3');
-    // 权重跟着位次走：t2 从「权重 2」变成「权重 1」。
-    expect(await shownWeight(targetRow(dialog, 2))).toBe('权重 1');
-    expect(await shownWeight(targetRow(dialog, 1))).toBe('权重 2');
-
-    // 行尾按钮：把第 3 行（t2）用「下移」挪不回去（已是最后一行），改用
-    // 第 2 行（t3）的「下移」——t3 落到最后，恢复 t1/t2/t3 的原序。
+      dialog.getByRole('button', { name: '上移目标 1' }),
+    ).toHaveCount(0);
     await expect(
-      targetRow(dialog, 2).getByRole('button', { name: '下移目标 3' }),
-    ).toBeDisabled();
-    await targetRow(dialog, 1)
-      .getByRole('button', { name: '下移目标 2' })
-      .click();
-    expect(await rowModel(dialog, 0)).toBe('t1');
-    expect(await rowModel(dialog, 1)).toBe('t2');
-    expect(await rowModel(dialog, 2)).toBe('t3');
-    expect(await shownWeight(targetRow(dialog, 0))).toBe('权重 3');
-    expect(await shownWeight(targetRow(dialog, 2))).toBe('权重 1');
+      dialog.getByRole('button', { name: '下移目标 3' }),
+    ).toHaveCount(0);
 
+    await enterSortMode(dialog);
+    // 排序模式同样没有：换位只靠拖和 Alt + 方向键。
+    await expect(dialog.getByRole('button', { name: /^上移/ })).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: /^下移/ })).toHaveCount(0);
+
+    await exitSortMode(dialog);
+  } finally {
+    await cleanup();
+  }
+});
+
+test('进出排序模式不丢草稿：之前填的目标字段原样回来', async ({
+  app,
+  screen,
+  browser,
+}) => {
+  await app.open();
+  await adminRpc('AddPlatform', {
+    id: PLATFORM_ID,
+    label: PLATFORM_LABEL,
+    kind: 'openai',
+    baseUrl: 'https://probe.example/v1',
+  });
+  try {
+    await openModelsPage(screen, browser);
+    const dialog = await openTargetTab(screen);
+    await seedThreeTargets(screen, dialog);
+    // 顺手在基本页也填一格：弹窗里所有草稿都该在排序模式前后保持。
+    await dialog.getByRole('tab', { name: '基本' }).click();
+    await dialog.getByLabel('显示名').fill('E2E 显示名');
+    await dialog.getByLabel('推理档位（逗号分隔）').fill('low, high');
+    await dialog.getByRole('tab', { name: '平台目标' }).click();
+
+    await enterSortMode(dialog);
+    await exitSortMode(dialog);
+
+    // 目标行的输入都还在，顺序也没被排序模式动过。
+    for (const [index, modelId] of ['t1', 't2', 't3'].entries()) {
+      await expect(targetRow(dialog, index).getByLabel('平台模型 id')).toHaveValue(modelId);
+    }
+    // 基本页的两格也原样。
+    await dialog.getByRole('tab', { name: '基本' }).click();
+    await expect(dialog.getByLabel('显示名')).toHaveValue('E2E 显示名');
+    await expect(dialog.getByLabel('推理档位（逗号分隔）')).toHaveValue('low, high');
+    await dialog.getByRole('tab', { name: '平台目标' }).click();
+
+    // 草稿完整不是白断言的：这单存得进去，服务端回读一致。
     await save(dialog, browser);
     const mine = await savedModel(MODEL_ID);
     expect(mine?.targets.map((t) => t.upstreamModel)).toEqual(['t1', 't2', 't3']);
@@ -265,7 +409,60 @@ test('键盘与按钮：Alt+ArrowDown 换位，行尾「下移」也换位，首
   }
 });
 
-test('删除目标：删掉中间一个后权重重新紧凑（2/1），保存结果里没有它', async ({
+test('让位动画有 DOM 证据：拖动进行中其余行带 transition-transform，被拖行不带过渡', async ({
+  app,
+  screen,
+  browser,
+}) => {
+  await app.open();
+  await adminRpc('AddPlatform', {
+    id: PLATFORM_ID,
+    label: PLATFORM_LABEL,
+    kind: 'openai',
+    baseUrl: 'https://probe.example/v1',
+  });
+  try {
+    await openModelsPage(screen, browser);
+    const dialog = await openTargetTab(screen);
+    await seedThreeTargets(screen, dialog);
+    await enterSortMode(dialog);
+
+    // 半场拖动：起于第 3 行、悬到第 1 行，不落手。
+    await startSyntheticDrag(browser, 2, 0);
+
+    // 拖动进行中：被拖行（t3，现在的第 3 行）是 transition-none，其余行
+    // 带 transition-transform —— 让位是滑过去的，不是松手才跳变。
+    const classes = await browser.evaluate<string[]>(
+      `[...document.querySelectorAll('ul[aria-label="目标顺序"] > li')].map((li) => li.className)`,
+    );
+    expect(classes).toHaveLength(3);
+    expect(classes[2]).toContain('transition-none');
+    expect(classes[2]).not.toContain('transition-transform');
+    for (const index of [0, 1]) {
+      expect(classes[index]).toContain('transition-transform');
+      expect(classes[index]).not.toContain('transition-none');
+    }
+    // 悬停位之前的行已经让出位移（computeOffsets：hover < from 时
+    // [hover, from) 各让出一个行高），不是等 drop 才动。
+    const transforms = await browser.evaluate<string[]>(
+      `[...document.querySelectorAll('ul[aria-label="目标顺序"] > li')].map((li) => li.style.transform)`,
+    );
+    expect(transforms[0]).toContain('translateY');
+    expect(transforms[1]).toContain('translateY');
+
+    // 落手：次序真正换掉。
+    await finishSyntheticDrag(browser);
+    for (const [index, modelId] of ['t3', 't1', 't2'].entries()) {
+      expect(await sortRowText(dialog, index)).toContain(modelId);
+    }
+
+    await exitSortMode(dialog);
+  } finally {
+    await cleanup();
+  }
+});
+
+test('删除目标：卡片模式里删掉中间一个后权重重新紧凑（2/1），保存结果里没有它', async ({
   app,
   screen,
   browser,
@@ -288,8 +485,9 @@ test('删除目标：删掉中间一个后权重重新紧凑（2/1），保存�
       .click();
     await expect(rowCount(dialog)).toHaveCount(2);
     // 剩下两行的权重重新紧凑：总数变成 2，第 1 行权重 2、第 2 行权重 1。
-    expect(await rowModel(dialog, 0)).toBe('t1');
-    expect(await rowModel(dialog, 1)).toBe('t3');
+    for (const [index, modelId] of ['t1', 't3'].entries()) {
+      await expect(targetRow(dialog, index).getByLabel('平台模型 id')).toHaveValue(modelId);
+    }
     expect(await shownWeight(targetRow(dialog, 0))).toBe('权重 2');
     expect(await shownWeight(targetRow(dialog, 1))).toBe('权重 1');
 
@@ -322,7 +520,6 @@ test('没有「启用这个目标」开关：目标行里没有任何开关，�
     // 目标顺序列表里：没有开关、没有勾选框、也没有「启用这个目标」这类字样。
     await expect(targetList(dialog).getByRole('switch')).toHaveCount(0);
     await expect(targetList(dialog).getByRole('checkbox')).toHaveCount(0);
-    await expect(dialog.getByText('启用这个目标')).toHaveCount(0);
     await expect(dialog.getByText(/启用这个目标/)).toHaveCount(0);
 
     await save(dialog, browser);
@@ -331,45 +528,6 @@ test('没有「启用这个目标」开关：目标行里没有任何开关，�
     for (const target of mine?.targets ?? []) {
       expect(target.enabled).toBe(true);
     }
-  } finally {
-    await cleanup();
-  }
-});
-
-test('没有权重输入框：每行只有一个可编辑输入（平台模型 id），「权重 N」是只读文字', async ({
-  app,
-  screen,
-  browser,
-}) => {
-  await app.open();
-  await adminRpc('AddPlatform', {
-    id: PLATFORM_ID,
-    label: PLATFORM_LABEL,
-    kind: 'openai',
-    baseUrl: 'https://probe.example/v1',
-  });
-  try {
-    await openModelsPage(screen, browser);
-    const dialog = await openTargetTab(screen);
-    await seedThreeTargets(screen, dialog);
-
-    for (const index of [0, 1, 2]) {
-      const row = targetRow(dialog, index);
-      // 权重没有输入框：没有叫「权重」的 textbox，行上的 input 只有
-      // 平台模型 id 那一格（平台组是下拉，不是 input）。
-      await expect(dialog.getByRole('textbox', { name: /权重/ })).toHaveCount(0);
-      await expect(row.getByRole('textbox')).toHaveCount(1);
-      await expect(row.getByLabel('平台模型 id')).toHaveValue(
-        ['t1', 't2', 't3'][index],
-      );
-      // 权重是一段只读文字，不是控件。
-      await expect(row.getByText(/^权重 /)).toBeVisible();
-    }
-    // 顺手存一条，保证上面这些断言不是在保存被挡住的状态下看的。
-    await save(dialog, browser);
-    expect((await savedModel(MODEL_ID))?.targets.map((t) => t.weight)).toEqual([
-      3, 2, 1,
-    ]);
   } finally {
     await cleanup();
   }
