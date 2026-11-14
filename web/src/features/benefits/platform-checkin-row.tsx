@@ -118,11 +118,13 @@ export function PlatformCheckinRow({
                     ))}
                   </ul>
                 ) : null}
-                <span className='text-xs text-muted-foreground'>
-                  {benefit.checkedAt > 0n
-                    ? `上次签到 ${formatLocalMoment(benefit.checkedAt)}`
-                    : '还没签过'}
-                </span>
+                {benefit.checkedAt > 0n ? (
+                  <span className='text-xs text-muted-foreground'>
+                    {benefit.checkinState === CheckinState.UNKNOWN
+                      ? `上次查询 ${formatLocalMoment(benefit.checkedAt)}`
+                      : `上次签到 ${formatLocalMoment(benefit.checkedAt)}`}
+                  </span>
+                ) : null}
               </div>
             )
           })}

@@ -19,12 +19,14 @@ import { renderWithClient } from '@/test/render'
 function platform(
   id: string,
   label = '',
-  accounts: { id: string; alias: string }[] = [],
+  accounts: { id: string; alias: string; enabled?: boolean }[] = [],
 ) {
   return create(UpstreamSchema, {
     id,
     label,
-    accounts: accounts.map((a) => create(AccountSchema, a)),
+    accounts: accounts.map((a) =>
+      create(AccountSchema, { enabled: true, ...a }),
+    ),
   })
 }
 
@@ -189,6 +191,61 @@ describe('签到页', () => {
     expect(within(row).queryByText('今日尚未签到')).toBeNull()
   })
 
+  it('从没问过（UNKNOWN 且 checkedAt=0）不写「还没签过」：那一格不出时间信息', async () => {
+    const user = userEvent.setup({ delay: null })
+    const { client } = setup({
+      upstreams: [platform('minimax')],
+      benefits: [
+        benefit({
+          upstreamId: 'minimax',
+          accountId: 'a1',
+          checkinState: CheckinState.UNKNOWN,
+          checkedAt: 0n,
+          summary: '还没查过',
+        }),
+      ],
+    })
+
+    renderWithClient({ client, children: <CheckinPage /> })
+
+    const toggle = await screen.findByRole('button', { name: 'minimax 签到' })
+    await user.click(toggle)
+
+    const detail = screen.getByRole('region', { name: 'minimax 签到明细' })
+    // 「不知道」不许被说成「还没签过」。
+    expect(within(detail).queryByText('还没签过')).toBeNull()
+    // 没查过就没有时刻可给。
+    expect(within(detail).queryByText(/上次签到/)).toBeNull()
+    expect(within(detail).queryByText(/上次查询/)).toBeNull()
+  })
+
+  it('停用的账号不在签到行里占位', async () => {
+    const { client } = setup({
+      upstreams: [
+        platform('minimax', '', [
+          { id: 'a1', alias: '主号' },
+          { id: 'a2', alias: '停用号', enabled: false },
+        ]),
+      ],
+      benefits: [
+        benefit({ accountId: 'a1', checkinState: CheckinState.SIGNED }),
+        benefit({
+          accountId: 'a2',
+          checkinState: CheckinState.UNKNOWN,
+          summary: '状态未知',
+        }),
+      ],
+    })
+
+    renderWithClient({ client, children: <CheckinPage /> })
+
+    const row = await screen.findByRole('listitem', { name: 'minimax 签到行' })
+    // 全列只剩启用的那个，停用账号不再以「未知」占一行。
+    expect(within(row).getByText('今日已签到')).toBeInTheDocument()
+    expect(within(row).queryByText('停用号')).toBeNull()
+    expect(within(row).queryByText('状态未知')).toBeNull()
+  })
+
   it('平台显示名用 label，没有 label 用 id', async () => {
     const { client } = setup({
       upstreams: [platform('minimax', 'MiniMax'), platform('qoder-cn')],
@@ -221,6 +278,7 @@ describe('签到页', () => {
           lines: ['minimax: +12 点'],
           checkedAt: 1_700_000_000_000n,
           credits: 12,
+          checkinState: CheckinState.SIGNED,
         }),
       ],
     })

@@ -47,12 +47,14 @@ const accountReaders = [
  */
 const readers: Record<ServerData, readonly (readonly unknown[])[]> = {
   // 平台那份答复（带账号）、总览（按平台列可用情况）、额度页（按上游分卡片）、
-  // 模型目录（开放平台的目录就是平台上那份 models）。
+  // 模型目录（开放平台的目录就是平台上那份 models）。额度插件列表按平台地址
+  // 匹配，平台改了地址插件也就换了，一并失效。
   platforms: [
     queryKeys.upstreams.all,
     queryKeys.system.status,
     queryKeys.balances.root,
     queryKeys.catalog.all,
+    queryKeys.quotaPlugins.all,
   ],
   accounts: accountReaders,
   credentials: accountReaders,

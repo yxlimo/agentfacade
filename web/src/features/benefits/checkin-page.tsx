@@ -7,7 +7,18 @@ import { useBenefitStatus, useRunBenefitNow } from '@/features/upstreams/benefit
 import { describeError } from '@/lib/errors'
 import { useOrderedPlatforms } from '@/lib/platform-order'
 import { PlatformCheckinRow } from '@/features/benefits/platform-checkin-row'
-import type { BenefitStatus } from '@/gen/buddy/admin/v1/admin_pb'
+import type { BenefitStatus, Upstream } from '@/gen/buddy/admin/v1/admin_pb'
+
+/** 停用账号的 id：签到页只列启用的账号（停用的签不了，占一行说「未知」是噪声）。 */
+export function disabledAccountIds(upstreams: Upstream[]): Set<string> {
+  const disabled = new Set<string>()
+  for (const upstream of upstreams) {
+    for (const account of upstream.accounts) {
+      if (!account.enabled) disabled.add(account.id)
+    }
+  }
+  return disabled
+}
 
 /**
  * 签到页：一个平台一行，收起时给状态，点开看逐条明细。
@@ -23,15 +34,19 @@ export function CheckinPage() {
   const run = useRunBenefitNow()
 
   // 答复里的账号按平台归堆：upstreamId 是平台，accountId 是账号。
+  // 停用的账号签不了，也不该在签到页占一行说「状态未知」——只列启用的账号。
+  // 后端答复里多出的账号（清单里找不到的）不扣：扣不扣不知道，别替后端删。
   const benefits = useMemo(() => {
+    const disabled = disabledAccountIds(platforms.data?.upstreams ?? [])
     const map = new Map<string, BenefitStatus[]>()
     for (const benefit of status.data?.benefits ?? []) {
+      if (disabled.has(benefit.accountId)) continue
       const list = map.get(benefit.upstreamId) ?? []
       list.push(benefit)
       map.set(benefit.upstreamId, list)
     }
     return map
-  }, [status.data])
+  }, [platforms.data, status.data])
 
   // 账号别名：展开明细里每条记录要能看出是哪个账号，拿别名，拿不到退回 id。
   const accountAliases = useMemo(() => {
