@@ -110,7 +110,7 @@ test('新增平台弹窗：两组类型标题都在；选模拟客户端定死 i
   await dropPlatform('e2e-dialog');
 });
 
-test('加账号：账号列变成 1，状态说出「没有可用凭据」这一条明确原因', async ({
+test('加账号：状态说出「没有可用凭据」这一条明确原因；表格里没有「账号」列', async ({
   app,
   screen,
   browser,
@@ -136,15 +136,46 @@ test('加账号：账号列变成 1，状态说出「没有可用凭据」这一
   await dialog.getByRole('button', { name: '加上' }).click();
   await expect(dialog).toBeHidden();
 
-  // 账号那一列变成 1（列序：平台 / 区域 / 状态 / 生效策略 / 账号 / 操作）。
-  await expect(row.getByRole('cell').nth(4)).toHaveText('1');
+  // 「账号」这一列整列删掉了（个数不给看）：表头不存在，行里也没有那个数字格。
+  // 列序：平台 / 区域 / 状态 / 生效策略 / 操作。
+  await expect(screen.getByRole('columnheader', { name: '账号' })).toHaveCount(0);
+  await expect(row.getByRole('cell').nth(4)).not.toHaveText('1');
+  await expect(row.getByRole('cell').nth(4)).not.toContainText('探针一号');
+  // 没删过头：留下的几列都在。
+  for (const name of ['平台', '区域', '状态', '生效策略', '操作']) {
+    await expect(screen.getByRole('columnheader', { name })).toBeVisible();
+  }
+  // 操作列的按钮仍然可点。
+  const addAccountButton = row.getByRole('button', { name: '新增账号' });
+  await expect(addAccountButton).toBeVisible();
+  await expect(addAccountButton).toBeEnabled();
   // 状态说清新的是哪一件事：账号有了，但它还没有凭据。
   await expect(row.getByRole('cell').nth(2)).toContainText('没有可用凭据');
   // 只有一个账号时策略不生效，这一格自己会说。
   await expect(row.getByRole('cell').nth(3)).toContainText(
     '这个平台只有一个账号，策略不生效',
   );
+  // 展开之后账号还在：个数不给看，不等于账号看不到。
+  await row.click();
+  await expect(row.getByText('探针一号')).toBeVisible();
   await expectSamePage(browser);
+
+  await dropPlatform('e2e-account');
+});
+
+test('平台行的小字里没有 base URL，也没有类型', async ({ app, screen, browser }) => {
+  await seedOpenPlatform('e2e-account', 'E2E 账号站');
+  await app.open();
+  await openPlatforms(screen, browser);
+
+  const row = rowOf(screen, 'E2E 账号站');
+  await expect(row).toBeVisible();
+  // 名字下的小字不给看 base URL（播种时填了 https://probe.example/v1）
+  // 与类型（openai 的名字是「OpenAI 兼容」）—— 摆出来只会让人以为能改。
+  await expect(row).not.toContainText('https://probe.example/v1');
+  await expect(row).not.toContainText('OpenAI 兼容');
+  // id 还在小字里：客户端路径里那一段得能认出来。
+  await expect(row).toContainText('e2e-account');
 
   await dropPlatform('e2e-account');
 });
