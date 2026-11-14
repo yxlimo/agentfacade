@@ -458,10 +458,11 @@ section("5. usage");
 }
 
 /* ------------------------------------------------------------------ *
- * 基址已经带了 /v1 时不重复拼
+ * 基址自己带了 /v1：Anthropic 方言的 /v1 由代码填，网关不纠正用户
+ * 填错的地址，会原样拼成 /v1/v1/messages（OpenAI 方言才由用户填 /v1）
  * ------------------------------------------------------------------ */
 
-section("基址带 /v1");
+section("基址带 /v1：网关不纠正，会拼成 /v1/v1/messages");
 
 {
   const created2 = createOpenPlatform({
@@ -486,7 +487,8 @@ section("基址带 /v1");
     messages: [{ role: "user", content: "say ok" }],
   });
   check("请求答 200", answer.status === 200, `HTTP ${answer.status} ${answer.text.slice(0, 300)}`);
-  check("路径没有拼成 /v1/v1/messages", lastSeen().path === "/v1/messages", lastSeen().path);
+  // 用户在 Anthropic 平台的地址里多填了 /v1：网关不替他纠正，路径就是 /v1/v1/messages
+  check("路径拼成了 /v1/v1/messages（不纠正用户填的 /v1）", lastSeen().path === "/v1/v1/messages", lastSeen().path);
 }
 
 /* ------------------------------------------------------------------ *

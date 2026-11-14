@@ -204,8 +204,9 @@ const PING_MS = 15_000;
 /**
  * 推理地址：`{base}/v1/messages`。
  *
- * 用户填的 base 里可能已经带了 `/v1`（面板上照着 OpenAI 那一类填的，那边就是
- * `…/v1`）。直接拼会拼出 `/v1/v1/messages`，所以先看最后一段。
+ * Anthropic 的 `/v1` 由网关填：用户填到主机（如 https://api.anthropic.com），
+ * 网关无条件拼上 `/v1/messages`，不看也不猜。用户若自己已经填了 `/v1`，
+ * 拼出来会是 `/v1/v1/messages` —— 那是他填错了，网关不替他纠正。
  *
  * 地址是平台行上的数据，写入时校验过一次（lib/open-platforms.ts 的
  * checkBaseUrl），但库里可能有更早写下的行 —— 出去之前再判一次协议：只许
@@ -230,7 +231,7 @@ function anthropicMessagesUrl(base: string): string {
     );
   }
   const path = url.pathname.replace(/\/+$/, "");
-  url.pathname = path.endsWith("/v1") ? `${path}/messages` : `${path}/v1/messages`;
+  url.pathname = `${path}/v1/messages`;
   return url.toString();
 }
 
