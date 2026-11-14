@@ -5,7 +5,6 @@ import userEvent from '@testing-library/user-event'
 import {
   AccountSchema,
   PlatformKindSchema,
-  QuotaPluginSchema,
   UpstreamSchema,
 } from '@/gen/buddy/admin/v1/admin_pb'
 import type { Upstream } from '@/gen/buddy/admin/v1/admin_pb'
@@ -108,7 +107,6 @@ const simulatedPlatform = create(UpstreamSchema, {
   kind: 'minimax',
   label: 'MiniMax Code',
   baseUrl: '',
-  quotaPlugin: '',
   models: ['MiniMax-M2'],
   isOpenPlatform: false,
   fromRow: true,
@@ -140,11 +138,6 @@ async function pickKind(user: ReturnType<typeof userEvent.setup>, label: string)
   await user.click(await screen.findByRole('option', { name: label }))
 }
 
-/** 登记表里的一个额度插件。 */
-const plugins = [
-  create(QuotaPluginSchema, { id: 'qiniu', label: '七牛云资源包', fields: [] }),
-]
-
 /**
  * 下拉里每一条的身份两两不同。
  *
@@ -165,7 +158,6 @@ const platform = create(UpstreamSchema, {
   kind: 'openai',
   label: '我的中转站',
   baseUrl: 'https://api.example.com/v1',
-  quotaPlugin: 'qiniu-portal',
   models: ['gpt-4o', 'claude-3'],
   isOpenPlatform: true,
   fromRow: true,
@@ -183,7 +175,6 @@ describe('平台弹窗交出去的那一单', () => {
         platform={platform}
         existing={[]}
         kinds={kinds}
-        registry={{ status: 'ready', plugins: [] }}
         pending={false}
         onSubmit={(input) => submitted.push(input)}
         onOpenChange={() => {}}
@@ -198,7 +189,6 @@ describe('平台弹窗交出去的那一单', () => {
       id: 'my-gateway',
       label: '我的中转站',
       baseUrl: 'https://api.example.com/v1',
-      quotaPlugin: 'qiniu-portal',
     })
     // 多一格都不行：类型建完就改不了。
     expect(submitted[0]).not.toHaveProperty('kind')
@@ -207,7 +197,6 @@ describe('平台弹窗交出去的那一单', () => {
       'baseUrl',
       'id',
       'label',
-      'quotaPlugin',
     ])
   })
 
@@ -220,7 +209,6 @@ describe('平台弹窗交出去的那一单', () => {
         open
         existing={[]}
         kinds={kinds}
-        registry={{ status: 'ready', plugins: [] }}
         pending={false}
         onSubmit={(input) => submitted.push(input)}
         onOpenChange={() => {}}
@@ -240,8 +228,6 @@ describe('平台弹窗交出去的那一单', () => {
         // 清单到手后默认选第一条。
         kind: 'openai',
         baseUrl: 'https://api.example.com/v1',
-        // 这一类没有默认插件：发空串 = 不用插件。
-        quotaPlugin: '',
       },
     ])
   })
@@ -255,7 +241,6 @@ describe('新增平台：两族类型', () => {
         open
         existing={[]}
         kinds={allKinds}
-        registry={{ status: 'ready', plugins: [] }}
         pending={false}
         onSubmit={(input) => submitted.push(input)}
         onOpenChange={() => {}}
@@ -285,7 +270,7 @@ describe('新增平台：两族类型', () => {
     ])
   })
 
-  it('选到模拟客户端：id 只说不能改，没有地址、额度插件、模板列表', async () => {
+  it('选到模拟客户端：id 只说不能改，没有地址、插件、模板列表', async () => {
     const user = userEvent.setup({ delay: null })
     renderAdd()
 
@@ -299,7 +284,8 @@ describe('新增平台：两族类型', () => {
     expect(screen.queryByLabelText('平台 id')).not.toBeInTheDocument()
     expect(screen.getByText('minimax')).toBeInTheDocument()
     expect(screen.getByText('客户端走的是 /minimax/v1')).toBeInTheDocument()
-    // 地址由模拟端定，额度插件不走平台这一行，模板列表只对方言有意义。
+    // 地址由模拟端定，模板列表只对方言有意义。插件在弹窗里没有控件（按
+    // 地址匹配，不是能选的一格）。
     expect(screen.queryByLabelText('地址')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('额度插件')).not.toBeInTheDocument()
     expect(
@@ -362,7 +348,6 @@ describe('改一个模拟客户端', () => {
         platform={platformMessage}
         existing={[]}
         kinds={allKinds}
-        registry={{ status: 'ready', plugins }}
         pending={false}
         onSubmit={(input) => submitted.push(input)}
         onOpenChange={() => {}}
@@ -421,7 +406,6 @@ describe('改一个模拟客户端', () => {
         platform={renamed}
         existing={[]}
         kinds={list}
-        registry={{ status: 'ready', plugins }}
         pending={false}
         onSubmit={(input) => submitted.push(input)}
         onOpenChange={() => {}}
@@ -450,29 +434,7 @@ describe('改一个模拟客户端', () => {
     ])
   })
 
-  it('行上原有的 quota_plugin 不会被前端抹掉：仍是不带这一格', async () => {
-    const user = userEvent.setup({ delay: null })
-    // 库里那一行上存着一个插件 id（面板不掌这一格，但也不能把它冲成空串）。
-    const submitted = renderEdit(
-      create(UpstreamSchema, {
-        id: 'minimax',
-        kind: 'minimax',
-        label: 'MiniMax Code',
-        quotaPlugin: 'qiniu',
-        models: ['MiniMax-M2'],
-        isOpenPlatform: false,
-        fromRow: true,
-        accounts: [],
-      })
-    )
-
-    await user.click(screen.getByRole('button', { name: '保存' }))
-
-    expect(submitted[0]).not.toHaveProperty('quotaPlugin')
-    expect(submitted[0]).not.toHaveProperty('baseUrl')
-  })
-
-  it('开放平台改名字：地址与额度插件两格带上现在的值', async () => {
+  it('开放平台改名字：地址带上现在的值', async () => {
     const user = userEvent.setup({ delay: null })
     const submitted: unknown[] = []
 
@@ -482,7 +444,6 @@ describe('改一个模拟客户端', () => {
         platform={platform}
         existing={[]}
         kinds={allKinds}
-        registry={{ status: 'ready', plugins }}
         pending={false}
         onSubmit={(input) => submitted.push(input)}
         onOpenChange={() => {}}
@@ -494,13 +455,14 @@ describe('改一个模拟客户端', () => {
     await user.type(label, '新的名字')
     await user.click(screen.getByRole('button', { name: '保存' }))
 
-    // 开放平台那两格本来就摆在界面上：整单提交带的是现在的值。
+    // 开放平台的地址本来就摆在界面上：整单提交带的是现在的值。插件不是
+    // 弹窗里的一格（按地址匹配）：任何族都没有这个控件。
     expect(submitted[0]).toEqual({
       id: 'my-gateway',
       label: '新的名字',
       baseUrl: 'https://api.example.com/v1',
-      quotaPlugin: 'qiniu-portal',
     })
+    expect(screen.queryByLabelText('额度插件')).not.toBeInTheDocument()
   })
 })
 
@@ -519,7 +481,6 @@ describe('改平台时怎么判是不是模拟客户端', () => {
         platform={platformMessage}
         existing={[]}
         kinds={noKinds}
-        registry={{ status: 'ready', plugins }}
         pending={false}
         onSubmit={(input) => submitted.push(input)}
         onOpenChange={() => {}}
@@ -531,11 +492,12 @@ describe('改平台时怎么判是不是模拟客户端', () => {
   it('清单取不到：服务端说是开放平台的那一个，地址照样摆出来', () => {
     renderEdit(platform)
 
-    // 控制组：开放平台的地址格不能被误判成模拟客户端藏起来。
+    // 控制组：开放平台的地址格不能被误判成模拟客户端藏起来；插件没有
+    // 控件（按地址匹配，不是能选的一格）。
     expect(screen.getByLabelText('地址')).toHaveValue(
       'https://api.example.com/v1'
     )
-    expect(screen.getByLabelText('额度插件')).toBeInTheDocument()
+    expect(screen.queryByLabelText('额度插件')).not.toBeInTheDocument()
   })
 
   it('清单取不到：模拟客户端（isOpenPlatform 为假）不摆地址', () => {
@@ -590,7 +552,6 @@ describe('换一条类型：草稿里那几格跟着走', () => {
         open
         existing={[]}
         kinds={allKinds}
-        registry={{ status: 'ready', plugins }}
         pending={false}
         onSubmit={(input) => submitted.push(input)}
         onOpenChange={() => {}}
@@ -692,8 +653,6 @@ describe('换一条类型：草稿里那几格跟着走', () => {
         label: '自己搭的',
         baseUrl: 'https://qoder.example.com/v1',
         kind: 'openai',
-        // 这一类没有默认插件：发空串 = 不用插件。
-        quotaPlugin: '',
       },
     ])
   })
@@ -709,7 +668,6 @@ describe('换一条类型：草稿里那几格跟着走', () => {
         platform={simulatedPlatform}
         existing={[]}
         kinds={kinds}
-        registry={{ status: 'ready', plugins }}
         pending={false}
         onSubmit={(input) => submitted.push(input)}
         onOpenChange={() => {}}
@@ -757,7 +715,6 @@ describe('正常操作点不出的错：提交前就拦住', () => {
         open
         existing={existing}
         kinds={kinds}
-        registry={{ status: 'ready', plugins: [] }}
         pending={false}
         onSubmit={(input) => submitted.push(input)}
         onOpenChange={() => {}}
@@ -882,8 +839,6 @@ describe('正常操作点不出的错：提交前就拦住', () => {
         label: '另一个中转站',
         baseUrl: 'https://api.example.com/v1',
         kind: 'openai',
-        // 这一类没有默认插件：发空串 = 不用插件。
-        quotaPlugin: '',
       },
     ])
   })
@@ -916,7 +871,6 @@ describe('用共性表补模型参数', () => {
         platform={platformMessage}
         existing={[]}
         kinds={allKinds}
-        registry={{ status: 'ready', plugins }}
         pending={false}
         onSubmit={(input) => submitted.push(input)}
         onOpenChange={() => {}}
@@ -957,7 +911,6 @@ describe('用共性表补模型参数', () => {
       id: 'my-gateway',
       label: '我的中转站',
       baseUrl: 'https://api.example.com/v1',
-      quotaPlugin: 'qiniu-portal',
       traitsFromCommon: true,
     })
     expect(submitted[0]).not.toHaveProperty('kind')
@@ -972,7 +925,6 @@ describe('用共性表补模型参数', () => {
         kind: 'openai',
         label: '我的中转站',
         baseUrl: 'https://api.example.com/v1',
-        quotaPlugin: 'qiniu-portal',
         models: [],
         isOpenPlatform: true,
         fromRow: true,
@@ -1026,10 +978,10 @@ describe('用共性表补模型参数', () => {
 })
 
 /**
- * 新建平台时按类型预填的两格：地址与额度插件。
+ * 新建平台时按类型预填的一格：地址。
  *
- * 两格都取自服务端给的类型清单（`default_base_url` 与 `default_quota_plugin`）：
- * 面板不写死这几个平台各自的地址与插件 id。
+ * 取自服务端给的类型清单（`default_base_url`）。额度插件不预填也不可选：
+ * 它按平台地址自动匹配，与类型清单无关。
  */
 const vendorKinds: PlatformKindList = {
   status: 'ready',
@@ -1039,26 +991,23 @@ const vendorKinds: PlatformKindList = {
       label: 'OpenAI 兼容',
       category: 'dialect',
       defaultBaseUrl: '',
-      defaultQuotaPlugin: '',
     }),
     create(PlatformKindSchema, {
       kind: 'qiniu',
       label: '七牛云',
       category: 'dialect',
       defaultBaseUrl: 'https://api.qnaigc.com/v1',
-      defaultQuotaPlugin: 'qiniu',
     }),
     create(PlatformKindSchema, {
       kind: 'xinghuo',
       label: '讯飞星火',
       category: 'dialect',
       defaultBaseUrl: 'https://maas-api.cn-huabei-1.xf-yun.com/v2',
-      defaultQuotaPlugin: '',
     }),
   ],
 }
 
-describe('新建平台：按类型预填地址与额度插件', () => {
+describe('新建平台：按类型预填地址', () => {
   /** 新建弹窗（清单里有那三家）。 */
   function renderAdd(submitted: unknown[] = []) {
     render(
@@ -1066,7 +1015,6 @@ describe('新建平台：按类型预填地址与额度插件', () => {
         open
         existing={[]}
         kinds={vendorKinds}
-        registry={{ status: 'ready', plugins }}
         pending={false}
         onSubmit={(input) => submitted.push(input)}
         onOpenChange={() => {}}
@@ -1075,7 +1023,7 @@ describe('新建平台：按类型预填地址与额度插件', () => {
     return submitted
   }
 
-  it('选七牛云：地址与额度插件都按这一类预填', async () => {
+  it('选七牛云：地址按这一类预填，插件没有控件', async () => {
     const user = userEvent.setup({ delay: null })
     const submitted = renderAdd()
 
@@ -1084,10 +1032,8 @@ describe('新建平台：按类型预填地址与额度插件', () => {
     expect(screen.getByLabelText('地址')).toHaveValue(
       'https://api.qnaigc.com/v1'
     )
-    // 下拉里摆的是插件自己的名字。
-    expect(screen.getByRole('combobox', { name: '额度插件' })).toHaveTextContent(
-      '七牛云资源包'
-    )
+    // 插件按地址自动匹配：弹窗里没有选插件的控件。
+    expect(screen.queryByLabelText('额度插件')).not.toBeInTheDocument()
 
     await user.type(screen.getByLabelText('平台 id'), 'my-qiniu')
     await user.type(screen.getByLabelText('名字'), '我的七牛')
@@ -1099,13 +1045,11 @@ describe('新建平台：按类型预填地址与额度插件', () => {
         label: '我的七牛',
         kind: 'qiniu',
         baseUrl: 'https://api.qnaigc.com/v1',
-        // 预填的那一格也交上去：发的是插件 id。
-        quotaPlugin: 'qiniu',
       },
     ])
   })
 
-  it('选讯飞星火：地址按这一类预填，额度插件留空', async () => {
+  it('选讯飞星火：地址按这一类预填', async () => {
     const user = userEvent.setup({ delay: null })
     renderAdd()
 
@@ -1114,52 +1058,16 @@ describe('新建平台：按类型预填地址与额度插件', () => {
     expect(screen.getByLabelText('地址')).toHaveValue(
       'https://maas-api.cn-huabei-1.xf-yun.com/v2'
     )
-    // 这一类没有额度接口：那一格是「不用插件」。
-    expect(screen.getByRole('combobox', { name: '额度插件' })).toHaveTextContent(
-      '不用插件'
-    )
+    expect(screen.queryByLabelText('额度插件')).not.toBeInTheDocument()
   })
 
-  it('选 OpenAI 兼容：地址与额度插件都空着', async () => {
+  it('选 OpenAI 兼容：地址空着', async () => {
     const user = userEvent.setup({ delay: null })
     renderAdd()
 
     await pickKind(user, 'OpenAI 兼容')
 
     expect(screen.getByLabelText('地址')).toHaveValue('')
-    expect(screen.getByRole('combobox', { name: '额度插件' })).toHaveTextContent(
-      '不用插件'
-    )
-  })
-
-  it('用户自己选过额度插件：换类型不再覆盖它', async () => {
-    const user = userEvent.setup({ delay: null })
-    const submitted = renderAdd()
-
-    await pickKind(user, '七牛云')
-    // 改成「不用插件」。
-    await user.click(screen.getByRole('combobox', { name: '额度插件' }))
-    await user.click(await screen.findByRole('option', { name: '不用插件' }))
-    // 再换一条类型：这一格是用户自己选的，不跟着默认值走。
-    await pickKind(user, '讯飞星火')
-
-    expect(screen.getByRole('combobox', { name: '额度插件' })).toHaveTextContent(
-      '不用插件'
-    )
-
-    await user.type(screen.getByLabelText('平台 id'), 'my-xinghuo')
-    await user.type(screen.getByLabelText('名字'), '我的星火')
-    await user.click(screen.getByRole('button', { name: '加上' }))
-
-    expect(submitted).toEqual([
-      {
-        id: 'my-xinghuo',
-        label: '我的星火',
-        kind: 'xinghuo',
-        baseUrl: 'https://maas-api.cn-huabei-1.xf-yun.com/v2',
-        // 用户明确选的「不用插件」：发空串。
-        quotaPlugin: '',
-      },
-    ])
+    expect(screen.queryByLabelText('额度插件')).not.toBeInTheDocument()
   })
 })

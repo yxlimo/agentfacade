@@ -5,7 +5,6 @@
 // 的状态（没填 cookie / 凭据被拒 / 被限流 / 问不到）。
 
 import { quotaProbe, type QuotaState } from "../quota-state.ts";
-import { quotaEndpointBase } from "../quota-plugins.ts";
 import { registerQuotaPlugin } from "../quota-plugin-registry.ts";
 import type { CreditLotView, QuotaView } from "../provider-kinds.ts";
 import type { ProviderRow } from "../providers.ts";
@@ -80,6 +79,8 @@ export function qiniuQuotas(account: ProviderRow, payload: unknown): QuotaView[]
 export const qiniuQuotaPlugin = registerQuotaPlugin({
   id: QINIU_QUOTA_PLUGIN_ID,
   label: "七牛云资源包",
+  // 行上的地址是这台（迁移写进去的规范推理地址）的平台，额度插件就是本插件。
+  baseUrls: ["https://api.qnaigc.com/v1"],
   // 这一格在面板上叫什么，只有这一处说了算：凭据行与填凭据的弹窗读的都是它。
   fields: [{ name: QINIU_ACCOUNT_FIELD, label: "额度 Cookie", secret: true }],
   probe: async (account) => {
@@ -87,7 +88,7 @@ export const qiniuQuotaPlugin = registerQuotaPlugin({
     const cookie = qiniuPortalCookie(account.id);
     if (!cookie) return quotaProbe("missing", "账号上没有门户 cookie，无法查询资源包");
 
-    const answer = await fetchQiniuQuota(cookie, quotaEndpointBase(account, QINIU_PORTAL_BASE));
+    const answer = await fetchQiniuQuota(cookie, QINIU_PORTAL_BASE);
     if (!answer.ok) {
       // 门户说的话原样带过去：状态码在日志与面板上是最有用的一句。
       return quotaProbe(stateOfReason(answer.reason), answer.message, {

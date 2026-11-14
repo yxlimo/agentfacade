@@ -41,8 +41,19 @@ export interface QuotaProbe {
  * 也没说出来（网络、解析）。结论怎么处理由平台统一做，插件不判「能不能接」。
  */
 export interface QuotaPlugin {
-  /** 插件 id：写进 platform.quota_plugin 的那个字符串。 */
+  /** 插件 id：快照桶的键（plugins[<id>][<账号>]）。 */
   id: string;
+  /**
+   * 这个插件服务哪些平台地址（一个插件可以认多家）。
+   *
+   * 填的是各平台**推理**的规范地址：平台行按 base_url 对上这里的一个，它的额度
+   * 插件就是这一个 —— 用户不选，也没有「没选」这一说。对不上任何插件的平台
+   * 就是没有额度接口：不显示额度区、不报错。
+   *
+   * 两个插件声明同一个地址是代码错误：登记时直接抛（见 registerQuotaPlugin），
+   * 否则「用的是哪一个」就没有答案。
+   */
+  baseUrls: readonly string[];
   /** 面板上给人看的名字。 */
   label: string;
   /** 查额度要哪些凭据。 */
@@ -52,28 +63,23 @@ export interface QuotaPlugin {
 }
 
 /**
- * 额度插件 id → 那家平台原来的推理地址。
+ * 两个地址是不是「同一台同一段」。
  *
- * 厂商 kind 退场时，迁移把这几台地址写进了存量平台行（lib/store.ts 的
- * LEGACY_VENDOR_KINDS）。写在行里不代表用户指到了别处：那是我们自己写进去的
- * 默认值，不是用户的信号 —— 这是判据的全部理由。额度插件问的门户/控制台在
- * 另一台机器上，行上的地址只是推理地址；行上地址还等于原推理地址时，额度问
- * 插件自己那台，不问推理主机。
- *
- * 判据按插件 id（行上的 quota_plugin），不按 kind：厂商 kind 已经不存在了，
- * 迁移后行上是 `openai`，稳定身份只剩插件 id。
- *
- * 用户真的把 base_url 改成别的地址时，这条不命中 —— 额度跟着行上地址走
- * （lib/quota-plugins.ts 的 quotaEndpointBase），那个设计意图不在这里被砍掉。
- *
- * 叶模块：谁都许引它，它不许引 store/router —— 引用即登记的环已经踩过一次。
+ * 走 URL 解析，比解析后的 origin 与 pathname：大小写、默认端口、尾部斜杠这些
+ * 差异由标准库归一。地址写进库里的时候已经去过尾部斜杠
+ * （lib/open-platforms.ts 的 normalizeBaseUrl），这边再兜一层。
  */
-export const VENDOR_INFERENCE_BASES: Readonly<Record<string, string>> = {
-  "qiniu": "https://api.qnaigc.com/v1",
-  "sensenova-pools": "https://token.sensenova.cn/v1",
-  "intern-ai-credits": "https://discovery-api.intern-ai.org.cn/v1",
-  "tokenrhythm-wallet": "https://tokenrhythm.studio/v1",
-};
+export function sameQuotaBase(a: string, b: string): boolean {
+  try {
+    const norm = (u: URL): string => (u.pathname.length > 1 ? u.pathname.replace(/\/+$/, "") : u.pathname);
+    const left = new URL(a);
+    const right = new URL(b);
+    return left.origin === right.origin && norm(left) === norm(right);
+  } catch {
+    // 不是完整网址：认不出「同一台」，只好按原文比。
+    return a === b;
+  }
+}
 
 const PLUGINS = new Map<string, QuotaPlugin>();
 
@@ -87,6 +93,14 @@ export function registerQuotaPlugin(plugin: QuotaPlugin): QuotaPlugin {
   if (PLUGINS.has(plugin.id)) {
     throw new Error(`额度插件 ${plugin.id} 注册了两次`);
   }
+  for (const base of plugin.baseUrls) {
+    const owner = quotaPluginForBaseUrl(base);
+    if (owner && owner.id !== plugin.id) {
+      // 两个插件抢一个地址，「用的是哪一个」就没答案了：登记期就吵出来，
+      // 别等到面板把一个平台的数字挂在另一个平台名下。
+      throw new Error(`额度插件 ${plugin.id} 与 ${owner.id} 都声明了地址 ${base}`);
+    }
+  }
   PLUGINS.set(plugin.id, plugin);
   return plugin;
 }
@@ -99,6 +113,22 @@ export function quotaPluginOf(id: string): QuotaPlugin | null {
 /** 登记过的全部插件。 */
 export function allQuotaPlugins(): QuotaPlugin[] {
   return [...PLUGINS.values()];
+}
+
+/**
+ * 这个平台地址的额度插件；对不上任何一家就是 null —— 那是「没有额度接口」，
+ * 不是「没配好」。调用方对 null 什么都不做：不显示额度、不报错、不提示。
+ *
+ * 匹配是数据的事（地址对地址），所以住在叶上：谁都在求值期许引它，它不许
+ * 引 store/router —— 引用即登记的环已经踩过一次。
+ */
+export function quotaPluginForBaseUrl(baseUrl: string): QuotaPlugin | null {
+  const base = String(baseUrl ?? "").trim();
+  if (!base) return null;
+  for (const plugin of PLUGINS.values()) {
+    if (plugin.baseUrls.some((served) => sameQuotaBase(base, served))) return plugin;
+  }
+  return null;
 }
 
 /**

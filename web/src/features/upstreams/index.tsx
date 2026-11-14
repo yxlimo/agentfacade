@@ -193,7 +193,7 @@ export function UpstreamsPage() {
 
   const loginTarget = login.target
   // 额度插件登记表的状态：三档（加载中 / 取不到 / 到手）。开放平台的凭据格子
-  // 数由它说了算，判据在 providerKeyAccess 那一层。
+  // 数与平台卡上的额度区由它（加上平台地址的匹配结果）说了算。
   const registry = quotaRegistryFrom({
     isPending: plugins.isPending,
     isError: plugins.isError,
@@ -214,7 +214,7 @@ export function UpstreamsPage() {
       kind: upstream.kind,
       isOpenPlatform: upstream.isOpenPlatform,
       platformLabel: upstream.label || upstream.id,
-      quotaPlugin: upstream.quotaPlugin,
+      baseUrl: upstream.baseUrl,
       kinds: providerKinds,
       registry,
     })
@@ -324,13 +324,11 @@ export function UpstreamsPage() {
                               <span className='font-mono text-xs break-all text-muted-foreground'>
                                 {upstream.id}
                               </span>
-                              {/* 开放平台的配置：地址、模型目录、额度插件与额度。
-                                  模拟客户端那一族（表里有行、地址与目录归代码）
-                                  没有地址与插件这两格。 */}
+                              {/* 开放平台的配置：模型目录与额度。额度插件按
+                                  地址匹配，卡片上不再摆插件行。 */}
                               {upstream.isOpenPlatform ? (
                                 <OpenPlatformFacts
                                   upstream={upstream}
-                                  kinds={kinds}
                                   registry={registry}
                                   refresh={refreshOutcomes[upstream.id]}
                                 />
@@ -596,7 +594,6 @@ export function UpstreamsPage() {
         platform={editingPlatform ?? undefined}
         existing={list}
         kinds={kinds}
-        registry={registry}
         pending={addPlatform.isPending || updatePlatform.isPending}
         error={addPlatform.error ?? updatePlatform.error}
         onOpenChange={(open) => {

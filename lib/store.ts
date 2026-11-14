@@ -164,7 +164,6 @@ export function store(): DatabaseSync {
       models       TEXT NOT NULL DEFAULT '[]',
       models_auto  INTEGER NOT NULL DEFAULT 1,
       traits_from_common INTEGER NOT NULL DEFAULT 1,
-      quota_plugin TEXT NOT NULL DEFAULT '',
       kind         TEXT NOT NULL DEFAULT 'openai',
       region       TEXT NOT NULL DEFAULT '',
       created_at   INTEGER NOT NULL,
@@ -226,6 +225,8 @@ export function store(): DatabaseSync {
   // 版本 2 漏掉的那一种凭据形状（key 藏在 `:account` blob 里）：生产库的版本号
   // 已经是 2，只能用新版本号补。
   migrateVendorKeyBackfill(db);
+  // 额度插件改按地址认：把存量行上的插件 id 补成地址，再把那一列退场。
+  migrateQuotaPluginToBase(db);
   return db;
 }
 
@@ -445,8 +446,7 @@ const LEGACY_VENDOR_KINDS: readonly {
  *      原来那段（`:account` …）一律不动 —— 额度插件读的就是它（七牛的门户 cookie
  *      就在同一段里）。
  *   2. 平台行改 kind 与地址。地址写当时真正生效的那台（见 LEGACY_VENDOR_KINDS）。
- *      `quota_plugin` 不动：插件是按行挂的，与 kind 无关。`models`（含 traits）
- *      也不动：目录本来就在行里，不属于 kind。
+ *      `models`（含 traits）也不动：目录本来就在行里，不属于 kind。
  *   3. 策略值不动：`expiry_first` 是一等策略（按余额到期挑账号），任何平台都能选 ——
  *      它不随 kind 走，因此这里不重写。
  *
@@ -543,6 +543,74 @@ function migrateVendorKeyBackfill(db: DatabaseSync): void {
   setSchemaVersion(db, VENDOR_KEY_BACKFILL_VERSION);
 }
 
+/**
+ * 额度插件改按地址认（schema 版本 4）：存量行上的 `quota_plugin` 退场。
+ *
+ * 新的判据是平台行的 base_url：对上哪个插件声明的地址，额度插件就是哪个 ——
+ * 用户不选，也没有「没选」这一说。所以迁移做两件事，都只跑一次：
+ *
+ *   1. 把插件 id 补成地址。存量行上 `quota_plugin` 指着某个已知插件、而行上
+ *      地址对不上任何插件的规范地址时，把该插件的规范地址写进行里 —— 行上
+ *      那个旧值是我们当年写进去的，不是用户的信号；不补的话，这行迁完后额度
+ *      全变「没有」。地址已经对上任何一家已知插件的不动：那是用户真的改过地址。
+ *
+ *   2. 把列删掉（ALTER TABLE … DROP COLUMN：这列没索引、没约束，直接退）。
+ *      列没了，老数据里残留的插件 id 也就彻底没了 —— 不留「界面没有、库里
+ *      还有」的半截状态。
+ *
+ * 那张 id → 地址的小表是迁移自己带的，不引登记表：store 在依赖图的最底下，
+ * 登记表（lib/quota-plugin-registry.ts）从类型那头引 quota-state，quota-state
+ * 引 open-platforms，open-platforms 引 store —— 引回去就是环。
+ *
+ * 幂等：版本号到了就不再跑。新库没有这一列，判列存在时直接跳过（但版本号
+ * 照推，免得后加的步骤把它当旧库重跑一遍）。
+ */
+const QUOTA_PLUGIN_BY_BASE_VERSION = 4;
+
+const LEGACY_PLUGIN_BASES: Readonly<Record<string, string>> = {
+  "qiniu": "https://api.qnaigc.com/v1",
+  "sensenova-pools": "https://token.sensenova.cn/v1",
+  "intern-ai-credits": "https://discovery-api.intern-ai.org.cn/v1",
+  "tokenrhythm-wallet": "https://tokenrhythm.studio/v1",
+};
+
+function migrateQuotaPluginToBase(db: DatabaseSync): void {
+  if (schemaVersion(db) >= QUOTA_PLUGIN_BY_BASE_VERSION) return;
+  const columns = db.prepare("PRAGMA table_info(platform)").all() as { name?: string }[];
+  if (columns.some((c) => c.name === "quota_plugin")) {
+    const rows = db.prepare("SELECT id, base_url, quota_plugin FROM platform").all() as {
+      id?: string;
+      base_url?: string;
+      quota_plugin?: string;
+    }[];
+    const sameBase = (a: string, b: string): boolean => {
+      try {
+        const left = new URL(a);
+        const right = new URL(b);
+        return left.origin === right.origin && left.pathname === right.pathname;
+      } catch {
+        return a === b;
+      }
+    };
+    const known = Object.values(LEGACY_PLUGIN_BASES);
+    const move = db.prepare("UPDATE platform SET base_url = ?, updated_at = ? WHERE id = ?");
+    const now = Date.now();
+    for (const row of rows) {
+      const pluginId = String(row.quota_plugin ?? "").trim();
+      if (!pluginId) continue;
+      const base = String(row.base_url ?? "").trim();
+      // 地址已经指着某家已知插件的规范地址：不动，无论它是不是行上这一格指的
+      // 那家 —— 地址是现在的判据，行上的 id 已经过场了。
+      if (base && known.some((served) => sameBase(base, served))) continue;
+      const canonical = LEGACY_PLUGIN_BASES[pluginId];
+      if (!canonical) continue;
+      move.run(canonical, now, String(row.id ?? ""));
+    }
+    db.exec("ALTER TABLE platform DROP COLUMN quota_plugin");
+  }
+  setSchemaVersion(db, QUOTA_PLUGIN_BY_BASE_VERSION);
+}
+
 
 /**
  * 模拟客户端那一族的平台补成表里的行。
@@ -571,8 +639,8 @@ function migrateVendorKeyBackfill(db: DatabaseSync): void {
 export function migrateSimulatedClients(db: DatabaseSync): void {
   const insert = db.prepare(
     "INSERT INTO platform " +
-      "(id, label, base_url, models, quota_plugin, kind, region, created_at, updated_at) " +
-      "SELECT ?, ?, '', '[]', '', ?, ?, ?, ? " +
+      "(id, label, base_url, models, kind, region, created_at, updated_at) " +
+      "SELECT ?, ?, '', '[]', ?, ?, ?, ? " +
       "WHERE NOT EXISTS (SELECT 1 FROM platform_preset_removed WHERE id = ?) " +
       "AND NOT EXISTS (SELECT 1 FROM platform WHERE id = ?)",
   );

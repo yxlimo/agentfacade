@@ -12,7 +12,7 @@ import { providerSecretId } from "../credential-ids.ts";
 import { deadSession } from "../session.ts";
 import { listSecrets } from "../store.ts";
 import { openPlatformOf } from "../open-platforms.ts";
-import { quotaPluginOf } from "../quota-plugin-registry.ts";
+import { quotaPluginForBaseUrl } from "../quota-plugin-registry.ts";
 import { pluginFieldOf, writePluginField } from "../quota-plugin-credentials.ts";
 import { openPlatformKeyOf, writeOpenPlatformKey } from "../open-platform-credentials.ts";
 
@@ -202,8 +202,8 @@ export function keyPlan(options: {
  *   · 推理 key 那一格是**种类自己定死的**，与平台行无关 —— 没有平台上下文
  *     （面板问「有哪些种类」）时也得给得出它。曾经这里一查到不到平台行就整份
  *     返回空数组，于是面板一格也画不出来、保存被段数校验挡下。
- *   · 插件那几段是**数据**不是代码：插件由平台那一行指名，所以几段、叫什么名字
- *     到运行时才定得下来。拿不到平台行就不算这几段（没平台就没有「这个平台选了
+ *   · 插件那几段是**数据**不是代码：插件按平台那一行的地址认，所以几段、叫什么名字
+ *     到运行时才定得下来。拿不到平台行就不算这几段（没平台就没有「这个平台用
  *     哪个插件」这回事）。
  *
  * 插件那一格叫什么名字只有一处产出：插件自己的声明（QuotaField.label）。凭据行
@@ -213,7 +213,7 @@ export function keyPlan(options: {
  */
 export function openPlatformPlan(): CredentialPlan {
   const pluginOf = (account: CredentialOwner) =>
-    quotaPluginOf(openPlatformOf(account.platform)?.quotaPlugin?.trim() ?? "");
+    quotaPluginForBaseUrl(openPlatformOf(account.platform)?.baseUrl ?? "");
   const fieldsOf = (account: CredentialOwner) => pluginOf(account)?.fields ?? [];
   const keyId = (owner: CredentialOwner) => providerSecretId(owner.id, "key");
   /** 种类自己定死的那一格：推理用的 key。只有这一份声明。 */

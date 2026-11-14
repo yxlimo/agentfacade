@@ -487,8 +487,7 @@ function platformMessage(
     // 加账号之前什么都存不进去。
     baseUrl: open ? open.baseUrl : upstreamBaseUrl(id),
     region: upstreamRegion(id),
-    // 额度插件与模型目录：只有开放平台有这几格（模板平台是空串与空目录）。
-    quotaPlugin: open?.quotaPlugin ?? "",
+    // 模型目录：只有开放平台有这几格（模板平台是空目录）。
     // 共性表那个开关（面板上的一个勾）：模拟客户端那一族的行也有，所以照表里的
     // 那一行报，不跟着 open（open 把那一族滤掉了）。
     traitsFromCommon: row?.traitsFromCommon ?? false,
@@ -676,7 +675,6 @@ function openPlatformMessage(row: OpenPlatformRow) {
     id: row.id,
     label: row.label,
     baseUrl: row.baseUrl,
-    quotaPlugin: row.quotaPlugin,
     models: row.models.items,
     modelsFetchedAtMs: BigInt(row.models.fetchedAt),
     // 建的时候定下的那一类：面板靠它决定这一排平台能用哪些凭据格子、要不要
@@ -924,9 +922,6 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
       label: String(request.label ?? ""),
       baseUrl: String(request.baseUrl ?? ""),
       kind: String(request.kind ?? ""),
-      // 这一格带 presence：没给（undefined）= 用这一类声明的默认插件；给了空串
-      // = 不用插件。别用 ?? "" 抹平 —— 抹平了「没给」就变成了「不用插件」。
-      quotaPlugin: request.quotaPlugin,
     });
     if (!result.ok) throw adminError(result.code, result.message);
     console.log(`[ADMIN] 加了开放平台 ${id}`);
@@ -936,21 +931,17 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
 
   async updatePlatform(request) {
     const id = String(request.id ?? "").trim();
-    // base_url 与 quota_plugin 带 presence：没给 = 别动那一格，给了空串 = 清空。
-    // 名字也照这条走（没给 = 别动；显式空串 = 错，平台得有名字），不这么写的话
-    // “只改额度插件”那一单会先撞在“得有个名字”上。
+    // base_url 带 presence：没给 = 别动那一格。
+    // 名字也照这条走（没给 = 别动；显式空串 = 错，平台得有名字）。
     // 目录不在这里改：目录归上游（方言族）还是归代码（模拟客户端）由平台的族
     // 决定，不是面板说了算。面板要换目录，去点「刷新模型目录」。
     const patch: {
       label?: string;
       baseUrl?: string;
-      quotaPlugin?: string;
       traitsFromCommon?: boolean;
     } = {
       label: givenText(request.label),
       baseUrl: givenText(request.baseUrl),
-      // 没给 = 别动这一格；空串 = 不选插件。
-      quotaPlugin: givenText(request.quotaPlugin),
       // 带 presence 的开关：没给 = 别动（只改名字的单子不能把它清零）。
       traitsFromCommon: givenBool(request.traitsFromCommon),
     };
@@ -1022,6 +1013,9 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
         create(QuotaPluginSchema, {
           id: plugin.id,
           label: plugin.label,
+          // 声明的地址原样带上去：面板按它把平台地址对到插件（web/src/lib/
+          // quota-match.ts 与后端同一套规则）。漏了它，面板侧永远匹配不到。
+          baseUrls: [...plugin.baseUrls],
           fields: plugin.fields.map((field) =>
             create(QuotaPluginFieldSchema, {
               name: field.name,
@@ -1041,14 +1035,13 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
     //
     // 默认地址取自 kind 注册表（ProviderKind.defaultBaseUrl）：catalog 那一列是
     // 空的，地址是各自适配器的地址常量，不写在面板这一层。额度插件同理（注册表
-    // 里的 defaultQuotaPlugin）：面板建平台时拿它预填那一格，用户可以改。
+    // 里的 defaultBaseUrl）：面板建平台时拿它占位，用户可以改。
     return create(ListPlatformKindsResponseSchema, {
       kinds: platformKindChoices().map((option) =>
         create(PlatformKindSchema, {
           kind: option.kind,
           label: option.label,
           defaultBaseUrl: kindOf(option.kind)?.defaultBaseUrl ?? "",
-          defaultQuotaPlugin: kindOf(option.kind)?.defaultQuotaPlugin ?? "",
           category: option.category,
           presetId: option.presetId,
           region: option.region,

@@ -22,7 +22,6 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { describeError } from '@/lib/errors'
-import type { QuotaRegistry } from '@/features/accounts/provider-key-fields'
 import type { PlatformKind } from '@/gen/buddy/admin/v1/admin_pb'
 import {
   isSimulatedKind,
@@ -35,55 +34,6 @@ import {
 } from './platform-kinds'
 import { PLATFORM_TEMPLATES, type PlatformTemplate } from './templates'
 import { platformProblems, MISSING_TEXT, type PlatformField } from './platform-form'
-
-/**
- * 「不用插件」在契约里是空串，但下拉框的选项不能是空串（那是控件的限制），
- * 所以这里用一个别的值代表它，提交时再换回空串。
- *
- * 这个串不能跟真的插件 id 撞：登记表里的 id 只由小写字母、数字与连字符组成
- * （`[a-z0-9-]`），所以带星号的这一串永远不会是插件 id。
- */
-const NO_PLUGIN = '*none*'
-
-/**
- * 下拉里那一项「已选、但登记表里没有」的 id 怎么显示。
- *
- * 「未知插件」只有在登记表到手之后才说得准：还在加载、或者取不到的时候，
- * 登记过的插件也会被说成「未知」—— 那句话是错的，所以那样的时候只说
- * 「登记表还没到手 / 取不到」，把 id 原样摆着。
- *
- * 不管哪一种，提交上去的都是原来那个 id：面板不替用户把它改成第一项。
- */
-function storedPluginLabel(id: string, registry: QuotaRegistry): string {
-  switch (registry.status) {
-    case 'pending':
-      return `${id}（列表还在加载）`
-    case 'error':
-      return `${id}（列表取不到）`
-    default:
-      return `未知插件 ${id}`
-  }
-}
-
-/**
- * 下拉框下面那一行提示。
- *
- * 先按登记表的状态说：没到手的时候「不在登记表里」这个判断本身就不成立 ——
- * 登记过的插件也会被说成填错了。只有到手了、且里面真的没这个 id，才说可能
- * 填错或插件下线。
- */
-function pluginHint(registry: QuotaRegistry, unregistered: string): string {
-  switch (registry.status) {
-    case 'pending':
-      return '插件列表还在加载，暂时只能看到原来那个 id'
-    case 'error':
-      return `插件列表取不到：${registry.message}`
-    default:
-      return unregistered
-        ? '这个 id 不在已知插件里，仍会原样保存。'
-        : '决定这个平台怎么查额度'
-  }
-}
 
 export type PlatformSubmit = AddPlatformSubmit | UpdatePlatformSubmit
 
@@ -98,13 +48,6 @@ export type AddPlatformSubmit = {
   baseUrl: string
   /** 用哪一类适配器（清单里的一个 kind）。 */
   kind: string
-  /**
-   * 额度插件的 id。
-   *
-   * 三种给法是三件事：没给 = 用这一类声明的默认插件，空串 = 不用插件，给了 id =
-   * 用那个。模拟客户端不带这一格（额度不走平台这一行）。
-   */
-  quotaPlugin?: string
 }
 
 /**
@@ -113,17 +56,14 @@ export type AddPlatformSubmit = {
  * 契约里 UpdatePlatform 没有 kind 这一格：类型建完就改不了，所以这里不带它 ——
  * 不是「带上但 hook 会挑掉」，是这一单本身就没有。
  *
- * 地址与额度插件对模拟客户端是不适用的两格（归代码）：那一族提交时这两格
- * **不出现**，不是出现但为空串。合同里 `quota_plugin` 的约定是「空串 = 清空
- * 这一格」，所以发空串就是抹掉库里那份用户以后可能填的值。
+ * 地址对模拟客户端是不适用的一格（归代码）：那一族提交时这一格
+ * **不出现**，不是出现但为空串。
  */
 export type UpdatePlatformSubmit = {
   id: string
   label: string
   /** 模拟客户端不带这一格（地址归代码）。 */
   baseUrl?: string
-  /** 模拟客户端不带这一格（额度插件归代码）。 */
-  quotaPlugin?: string
   /**
    * 用共性表补模型参数。
    *
@@ -158,14 +98,6 @@ type Draft = {
    * 改平台时没有这一格 —— 类型建完就改不了。
    */
   choice: string
-  quotaPlugin: string
-  /**
-   * 用户自己动过额度插件这一格吗。
-   *
-   * 跟地址那格不一样：空串在这儿是一个有意义的答案（「不用插件」），所以不能
-   * 拿「不是空」当「动过」。动过之后换类型不再覆盖这一格。
-   */
-  quotaPluginEdited: boolean
   /** 用共性表补模型参数这一格现在开着没有（这一格缺失时按关显示）。 */
   traitsFromCommon: boolean
   /**
@@ -198,7 +130,7 @@ function kindGroups(
  * 新增或修改一个开放平台。
  *
  * 新增只有三格（id、名字、地址）：服务端建的就是一个空平台，不接 key、不接
- * 模型清单。修改是整单提交 —— 名字、地址、额度插件、模型目录一起发过去，
+ * 模型清单。修改是整单提交 —— 名字、地址、模型目录一起发过去，
  * 空串表示清空。
  *
  * 选到模拟客户端时只有名字一格是能填的：id、地址、区域都是那个客户端的身份
@@ -213,7 +145,6 @@ export function PlatformDialog({
   platform,
   existing,
   kinds,
-  registry,
   pending,
   error,
   onSubmit,
@@ -226,8 +157,6 @@ export function PlatformDialog({
   existing: readonly Upstream[]
   /** 建平台时能选的类型清单：三档（加载中 / 取不到 / 到手）。 */
   kinds: PlatformKindList
-  /** 额度插件登记表：三档（加载中 / 取不到 / 到手）。 */
-  registry: QuotaRegistry
   pending: boolean
   /** 上一次提交的错误：服务端的话，原样显示。 */
   error?: unknown
@@ -300,11 +229,11 @@ export function PlatformDialog({
   const preset = platform ? simulatedPresetOf(kinds, platform) : chosenPreset
   // 改的时候清单可能还没到手（加载中 / 取不到），那时认不出是哪一条预置；但
   // 是不是模拟客户端平台那一条自己说得出来：服务端没把它明确算作开放平台的，
-  // 就是那一族。地址与额度插件两格归代码，不摆也不往上送。
+  // 就是那一族。地址归代码，不摆也不往上送。
   //
   // 判据只看族（服务端那一格说的是这个），不看「表里有没有这一行」：有没有行、
   // 能不能改删是另一件事，掺进来就会多出一条「模拟客户端被当成开放平台 → 发
-  // 空串 → 抹掉库里那份插件 id」的路。
+  // 空串 → 抹掉库里那份地址」的路。
   //
   // 判据写成「不为 true」而不是「等于 false」：这一格缺失（老服务端 / 形状里
   // 没有它）时不能当成「不是模拟客户端」—— 那样会给模拟客户端露出地址格，
@@ -388,13 +317,6 @@ export function PlatformDialog({
               : prev.baseUrlEdited
                 ? prev.baseUrl
                 : first.defaultBaseUrl,
-            // 额度插件：这一类声明了哪个就预填哪个（空串 = 这一类没有额度
-            // 接口）。用户自己改过就不动。
-            quotaPlugin: isSimulatedKind(first)
-              ? ''
-              : prev.quotaPluginEdited
-                ? prev.quotaPlugin
-                : first.defaultQuotaPlugin,
             // 名字空着、选中的又是预置：填它的名字（能改）。
             label:
               isSimulatedKind(first) && !prev.labelEdited && !prev.label.trim()
@@ -413,7 +335,7 @@ export function PlatformDialog({
    *
    * 离开预置那一族（模拟客户端 → 方言）时 id 清掉：那格在预置那边是不摆的，
    * 草稿里留着的东西跟现在选中的类型没关系 —— 提交上去就成了一个用户没填过
-   * 的 id。额度插件改成跟着这一类的默认插件走（用户自己改过就不动）。
+   * 的 id。
    */
   const chooseKind = (value: string) => {
     const option = kindOptions.find((item) => platformKindValue(item) === value)
@@ -433,13 +355,6 @@ export function PlatformDialog({
           : prev.baseUrlEdited
             ? prev.baseUrl
             : (option?.defaultBaseUrl ?? ''),
-        // 模拟客户端的额度不走平台这一行：草稿里那个插件 id 跟它无关。
-        // 方言：这一类声明了哪个默认插件就预填哪个；用户自己改过就不覆盖。
-        quotaPlugin: simulated
-          ? ''
-          : prev.quotaPluginEdited
-            ? prev.quotaPlugin
-            : (option?.defaultQuotaPlugin ?? ''),
         label: prev.labelEdited
           ? prev.label
           : simulated
@@ -448,14 +363,6 @@ export function PlatformDialog({
       }
     })
   }
-  // 登记表到手了才有可选项；没到手、取不到的时候只有存着的那个 id。
-  const plugins = registry.status === 'ready' ? registry.plugins : []
-  // 选中的插件：登记表里有的那个。存着的 id 不在登记表里（或者登记表还没
-  // 到手）时，那一格也要看得见 —— 不然下拉框里是空的，看着像没选。
-  const selected = plugins.find((item) => item.id === draft.quotaPlugin)
-  const unregistered =
-    draft.quotaPlugin !== '' && !selected ? draft.quotaPlugin : ''
-
   /**
    * 选一条模板：把 id、名字、地址三格填上。
    *
@@ -479,7 +386,7 @@ export function PlatformDialog({
         id: draft.id.trim(),
         label: draft.label.trim(),
       }
-      // 模拟客户端的地址与额度插件归代码：这两格整格不出现。发空串是「清空
+      // 模拟客户端的地址归代码：这一格整格不出现。发空串是「清空
       // 那一格」的意思，会把库里原来那份抹掉。
       if (simulated) {
         onSubmit(shared)
@@ -488,7 +395,6 @@ export function PlatformDialog({
       const update: UpdatePlatformSubmit = {
         ...shared,
         baseUrl: draft.baseUrl.trim(),
-        quotaPlugin: draft.quotaPlugin,
       }
       // 只有用户动过这一格才带：契约里它是 optional bool，没给就是「别动这一格」。
       // 带一个默认值等于替用户写一遍，把它自己改过的值盖回去。
@@ -498,9 +404,7 @@ export function PlatformDialog({
       onSubmit(update)
       return
     }
-    // 新增：额度插件这一格带上。给 id = 用那个，给空串 = 不用插件。
-    // 模拟客户端不带这一格（额度不走平台这一行）：带空串等于明确说「不用」，
-    // 那一族的插件是代码定的事。
+    // 新增只建空平台：额度插件按地址匹配，不是建平台时能填的一格。
     const add: AddPlatformSubmit = {
       // 模拟客户端：id 是预置定的那一个，不是下拉里那个值本身（方言的
       // 下拉值是 kind，不是 id）。
@@ -509,7 +413,6 @@ export function PlatformDialog({
       baseUrl: simulated ? '' : draft.baseUrl.trim(),
       kind: chosenKind?.kind ?? '',
     }
-    if (!simulated) add.quotaPlugin = draft.quotaPlugin
     onSubmit(add)
   }
 
@@ -713,71 +616,11 @@ export function PlatformDialog({
             </div>
           )}
 
-          {/* 额度插件：模拟客户端的额度不走平台这一行（库里的插件 id 是空
-              串），摆一个选不了东西的下拉只会让人以为要填。新增时按这一类
-              声明的默认插件预填，用户可以改。 */}
-          {simulated ? null : (
-            <div className='grid gap-2'>
-              <Label htmlFor='platform-quota-plugin'>额度插件</Label>
-              <Select
-                value={draft.quotaPlugin === '' ? NO_PLUGIN : draft.quotaPlugin}
-                onValueChange={(value) =>
-                  patch({
-                    quotaPlugin: value === NO_PLUGIN ? '' : value,
-                    // 动过这一格：换类型时不再拿默认值盖它。
-                    quotaPluginEdited: true,
-                  })
-                }
-              >
-                <SelectTrigger id='platform-quota-plugin'>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NO_PLUGIN}>不用插件</SelectItem>
-                  {plugins.map((item) => (
-                    <SelectItem key={item.id} value={item.id}>
-                      {item.label}
-                    </SelectItem>
-                  ))}
-                  {/* 现在选着的 id 不在可选项里：摆出来，别让它变成一个空下拉框，
-                    也别把它静默改写回第一项。 */}
-                  {unregistered ? (
-                    <SelectItem value={unregistered}>
-                      {storedPluginLabel(unregistered, registry)}
-                    </SelectItem>
-                  ) : null}
-                </SelectContent>
-              </Select>
-              <p className='text-xs text-muted-foreground'>
-                {pluginHint(registry, unregistered)}
-              </p>
-            </div>
-          )}
+          {/* 额度插件按平台地址自动匹配，不是能填的一格：没有控件也没有提示。
+              匹配不到插件就是没有额度接口，账号的凭据里只有推理那一格。 */}
 
           {editing ? (
             <>
-              {selected && !simulated ? (
-                <div className='grid gap-1 rounded-md border p-3'>
-                  <p className='text-sm font-medium'>
-                    这个插件要这几段凭据
-                  </p>
-                  {selected.fields.length ? (
-                    <ul className='list-disc ps-5 text-xs text-muted-foreground'>
-                      {selected.fields.map((field) => (
-                        <li key={field.name}>{field.label}</li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className='text-xs text-muted-foreground'>
-                      这个插件不用额外的凭据
-                    </p>
-                  )}
-                  <p className='text-xs text-muted-foreground'>
-                    这几段凭据在账号那一行的「凭据」里填
-                  </p>
-                </div>
-              ) : null}
-
               {/* 模型目录不由用户管：开放平台的目录一律从上游拉，模拟客户端的
                   目录归代码。两族都只留一句说清，没有开关也没有文本域。 */}
               {simulated ? (
@@ -864,9 +707,6 @@ function toDraft(platform?: Upstream): Draft {
       baseUrlEdited: false,
       // 空串：清单到手后由上面那个 effect 选第一条。
       choice: '',
-      quotaPlugin: '',
-      // 新增：预填由类型决定，用户没动过。
-      quotaPluginEdited: false,
       // 新增没有平台行，这一格没有意义（界面上也不摆）。
       traitsFromCommon: false,
       traitsFromCommonEdited: false,
@@ -882,10 +722,6 @@ function toDraft(platform?: Upstream): Draft {
     baseUrlEdited: true,
     // 改平台没有类型这一格（契约里 UpdatePlatform 没有它）。
     choice: '',
-    quotaPlugin: platform.quotaPlugin,
-    // 改平台时这一格是行上的值（用户自己存的那份）：当成动过，别拿类型的
-    // 默认值去盖它。
-    quotaPluginEdited: true,
     // 还没动过：提交时不带这一格。
     traitsFromCommon: traitsFromCommonOf(platform),
     traitsFromCommonEdited: false,

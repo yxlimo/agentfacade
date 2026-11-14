@@ -13,7 +13,7 @@
 // 「现在该用哪个账号」的答案，不是每次请求现算的次序。
 
 import { peekHealthSnapshot } from "../health-cache.ts";
-import { openPlatformOf } from "../open-platforms.ts";
+import { quotaPluginIdOf } from "../quota-state.ts";
 import type { HealthSnapshot, QuotaView } from "../provider-kinds.ts";
 
 /** 一个账号的余额，按「赠金什么时候到期」关心。 */
@@ -46,11 +46,11 @@ const pinned = new Map<string, string>();
 /**
  * 快照里这个平台每个账号的额度视图。
  *
- * 插件 id 只从平台行读（`platform.quota_plugin`）：没指名插件就是没有余额可读，
- * 那是「不知道」，不是「没钱」。
+ * 插件按平台行的地址认（lib/quota-state.ts 的 quotaPluginIdOf）：对不上插件就
+ * 没有余额可读，那是「不知道」，不是「没钱」。
  */
 function readFromSnapshot(platform: string): Record<string, QuotaView[]> {
-  const pluginId = openPlatformOf(platform)?.quotaPlugin?.trim() ?? "";
+  const pluginId = quotaPluginIdOf({ platform });
   if (!pluginId) return {};
   const snapshot = peekHealthSnapshot<HealthSnapshot>()?.data;
   const bucket = snapshot?.plugins?.[pluginId] ?? {};

@@ -4,6 +4,7 @@ import {
   CircleDollarSign,
   LayoutDashboard,
   Layers,
+  PlugZap,
   Settings2,
   Wallet,
 } from 'lucide-react'
@@ -28,6 +29,11 @@ export const sidebarData: SidebarData = {
           title: '平台',
           url: '/upstreams',
           icon: Boxes,
+        },
+        {
+          title: '插件列表',
+          url: '/quota-plugins',
+          icon: PlugZap,
         },
         {
           title: '额度',

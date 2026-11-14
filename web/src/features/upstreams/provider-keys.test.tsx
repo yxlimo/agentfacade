@@ -791,6 +791,7 @@ describe('凭据弹窗按平台渲染格子', () => {
       create(QuotaPluginSchema, {
         id: 'demo-plugin',
         label: '演示插件',
+        baseUrls: ['https://api.example.com/v1'],
         fields: [
           create(QuotaPluginFieldSchema, {
             name: 'first',
@@ -810,7 +811,7 @@ describe('凭据弹窗按平台渲染格子', () => {
       client: clientOf(
         platformOf('my-open', 'openai', '我的开放平台', {
           isOpenPlatform: true,
-          quotaPlugin: 'demo-plugin',
+          baseUrl: 'https://api.example.com/v1',
         }),
         sent,
         plugins
@@ -843,6 +844,7 @@ describe('凭据弹窗按平台渲染格子', () => {
       create(QuotaPluginSchema, {
         id: 'qiniu',
         label: '七牛云资源包',
+        baseUrls: ['https://api.example.com/v1'],
         fields: [
           create(QuotaPluginFieldSchema, {
             name: 'account',
@@ -857,7 +859,7 @@ describe('凭据弹窗按平台渲染格子', () => {
       client: clientOf(
         platformOf('my-open', 'openai', '我的开放平台', {
           isOpenPlatform: true,
-          quotaPlugin: 'qiniu',
+          baseUrl: 'https://api.example.com/v1',
         }),
         sent,
         plugins
@@ -882,7 +884,7 @@ describe('凭据弹窗按平台渲染格子', () => {
     })
   })
 
-  it('开放平台：没选插件：只有推理那一格', async () => {
+  it('开放平台：地址对不上任何插件：只有推理那一格', async () => {
     const user = userEvent.setup({ delay: null })
     const sent: string[][] = []
 
@@ -890,7 +892,7 @@ describe('凭据弹窗按平台渲染格子', () => {
       client: clientOf(
         platformOf('my-open', 'openai', '我的开放平台', {
           isOpenPlatform: true,
-          quotaPlugin: '',
+          baseUrl: 'https://api.example.com/v1',
         }),
         sent
       ),
@@ -900,10 +902,11 @@ describe('凭据弹窗按平台渲染格子', () => {
     await openDialog(user, 'my-open')
 
     expect(await screen.findByLabelText('推理 Key')).toBeInTheDocument()
-    // 只有一格：没有插件的那几段。
+    // 只有一格：没有插件的那几段，也没有「没有插件」这类提示。
     expect(
       screen.queryByLabelText('第一段')
     ).not.toBeInTheDocument()
+    expect(screen.queryByText(/没有插件|未配插件/)).not.toBeInTheDocument()
 
     await user.type(screen.getByLabelText('推理 Key'), 'sk-infer')
     await user.click(screen.getByRole('button', { name: '保存' }))
@@ -913,7 +916,7 @@ describe('凭据弹窗按平台渲染格子', () => {
     })
   })
 
-  it('开放平台：插件没登记：也只有推理那一格', async () => {
+  it('开放平台：对不上的地址没有提示：也只有推理那一格', async () => {
     const user = userEvent.setup({ delay: null })
     const sent: string[][] = []
 
@@ -921,7 +924,7 @@ describe('凭据弹窗按平台渲染格子', () => {
       client: clientOf(
         platformOf('my-open', 'openai', '我的开放平台', {
           isOpenPlatform: true,
-          quotaPlugin: 'not-registered',
+          baseUrl: 'https://api.example.com/v1',
         }),
         sent
       ),
@@ -948,13 +951,14 @@ describe('凭据弹窗按平台渲染格子', () => {
       client: clientOf(
         platformOf('my-open', 'openai', '我的开放平台', {
           isOpenPlatform: true,
-          quotaPlugin: 'sensenova-pools',
+          baseUrl: 'https://api.example.com/v1',
         }),
         sent,
         [
           create(QuotaPluginSchema, {
             id: 'sensenova-pools',
             label: 'SenseNova 积分池',
+            baseUrls: ['https://api.example.com/v1'],
             // 额度用的是登录会话，不另填凭据。
             fields: [],
           }),
@@ -1035,7 +1039,7 @@ describe('凭据弹窗按平台渲染格子', () => {
 })
 
 /**
- * 开放平台的凭据格子数由额度插件登记表说了算。
+ * 开放平台的凭据格子数由额度插件登记表（加上地址匹配结果）说了算。
  *
  * 登记表没到手的时候，面板只知道有「推理 API Key」那一格。这时候开弹窗，用户
  * 一保存就发上去一个长度 1 的 keys 数组，而服务端 setProviderKeys 是按位置
@@ -1066,7 +1070,7 @@ describe('开放平台的凭据入口：登记表没到手就不给开', () => {
       accountCount: 1,
       accounts: [accountOf('my-open-1', 'my-open', '账号一')],
       isOpenPlatform: true,
-      quotaPlugin: 'demo-plugin',
+      baseUrl: 'https://api.example.com/v1',
     })
   }
 

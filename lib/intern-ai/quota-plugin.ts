@@ -14,7 +14,6 @@
 import type { CreditLotView, QuotaView } from "../provider-kinds.ts";
 import type { ProviderRow } from "../providers.ts";
 import { quotaProbe } from "../quota-state.ts";
-import { quotaEndpointBase } from "../quota-plugins.ts";
 import { registerQuotaPlugin, type QuotaProbe } from "../quota-plugin-registry.ts";
 import { INTERN_AI_DISCOVERY_BASE } from "./config.ts";
 // 插件 id 住在一个没有依赖的地方（lib/intern-ai/quota-plugin-id.ts）：本模块与
@@ -174,6 +173,8 @@ export function internAiRecoverAt(credits: InternAiCredits): number | null {
 export const internAiCreditsPlugin = registerQuotaPlugin({
   id: INTERN_AI_CREDITS_PLUGIN_ID,
   label: "书生·端砚墨点",
+  // 行上的地址是这台（迁移写进去的规范推理地址）的平台，额度插件就是本插件。
+  baseUrls: ["https://discovery-api.intern-ai.org.cn/v1"],
   fields: [],
   probe: async (account) => {
     const session = loadSession(account.id);
@@ -182,10 +183,9 @@ export const internAiCreditsPlugin = registerQuotaPlugin({
     const token = session.token;
 
     let balance: InternAiBalance;
-    // 墨点在 Discovery 那一台上；平台行把地址指到别处时问那一台。
-    const endpointBase = quotaEndpointBase(account, INTERN_AI_DISCOVERY_BASE);
+    // 墨点在 Discovery 的控制台上，控制台的地址是本插件自己的事。
     try {
-      balance = await internAiBalance(session, token, endpointBase);
+      balance = await internAiBalance(session, token, INTERN_AI_DISCOVERY_BASE);
     } catch (e) {
       return stateOfError(e);
     }
@@ -193,7 +193,7 @@ export const internAiCreditsPlugin = registerQuotaPlugin({
     // 批次是补充信息：问不到照样报余额，只是少几行批次。
     let packs: InternAiCreditPack[] | null = null;
     try {
-      packs = await internAiCreditPacks(session, token, endpointBase);
+      packs = await internAiCreditPacks(session, token, INTERN_AI_DISCOVERY_BASE);
     } catch (e) {
       console.warn(`[INTERN-AI] 墨点批次查询失败：${(e as Error)?.message}`);
     }

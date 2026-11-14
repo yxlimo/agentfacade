@@ -15,6 +15,7 @@
 import { accountRecoveryAtMs } from "./admin/platform-state.ts";
 import { listCooldowns } from "./cooldown.ts";
 import { openPlatformOf } from "./open-platforms.ts";
+import { quotaPluginForBaseUrl } from "./quota-plugin-registry.ts";
 import type { HealthSnapshot, QuotaView } from "./provider-kinds.ts";
 import type { ProviderRow } from "./providers.ts";
 import type { QuotaProbe } from "./quota-plugins.ts";
@@ -22,12 +23,13 @@ import type { QuotaProbe } from "./quota-plugins.ts";
 /**
  * 这个账号的额度归哪个插件问。
  *
- * 只有一个来源：平台行那一格（platform.quota_plugin）。写快照的一头按它问，读
- * 结论的一头也按它取 —— kind 那边再写一份插件 id，两边就有了两份判断，改一边
- * 忘一边时面板自相矛盾：数字在 A 插件下，结论从 B 插件读。
+ * 只有一个来源：平台行的 base_url 对上哪个插件声明的地址。对不上任何插件
+ * 就是空串 —— 那是「这个平台没有额度接口」，不是「没配好」。写快照的一头
+ * 与读结论的一头都走这里，两边才不会有两份判断。
  */
 export function quotaPluginIdOf(provider: Pick<ProviderRow, "platform">): string {
-  return openPlatformOf(provider.platform)?.quotaPlugin?.trim() ?? "";
+  const row = openPlatformOf(provider.platform);
+  return row ? (quotaPluginForBaseUrl(row.baseUrl)?.id ?? "") : "";
 }
 
 /** 一次探测的结论。 */

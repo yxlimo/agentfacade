@@ -23,11 +23,11 @@ import { invalidateServerData } from '@/lib/server-data'
 export const quotaPluginKeys = queryKeys.quotaPlugins
 
 /**
- * 面板能选的额度插件。
+ * 服务端登记的额度插件。
  *
- * 插件是服务端登记的：面板不问「哪些平台有额度接口」，问登记表。用户自己填的
- * 插件 id 要是没登记，登记表里就没有它 —— 面板照样存得下去，只是额度那格显示
- * 「未知」，不假装知道。
+ * 面板不选插件：插件按平台地址自动匹配（`lib/quota-match.ts`）。登记表拿
+ * 来两件事：插件列表页展示每个插件与它服务的地址，以及凭据格子按匹配结果
+ * 多几段。
  */
 export function useQuotaPlugins() {
   const client = useAdminClient()
@@ -75,14 +75,6 @@ export function useAddPlatform() {
       baseUrl: string
       /** 用哪一类适配器：清单里的一个 kind。 */
       kind: string
-      /**
-       * 额度插件的 id。
-       *
-       * 三种给法是三件事：没给 = 用这一类声明的默认插件，空串 = 不用插件，
-       * 给了 id = 用那个。契约里这一格带 presence，就是为了分清「没给」与
-       * 「给了空串」。
-       */
-      quotaPlugin?: string
     }) => {
       const init: MessageInitShape<typeof AddPlatformRequestSchema> = {
         id: input.id,
@@ -90,9 +82,6 @@ export function useAddPlatform() {
         baseUrl: input.baseUrl,
         kind: input.kind,
       }
-      // 不放就是「没给」：服务端用这一类的默认插件。放了（哪怕是空串）就是
-      // 用户自己的选择。
-      if (input.quotaPlugin !== undefined) init.quotaPlugin = input.quotaPlugin
       return await client.addPlatform(create(AddPlatformRequestSchema, init))
     },
     onSuccess: () => {
@@ -108,12 +97,13 @@ export function useAddPlatform() {
 /**
  * 改一个开放平台。
  *
- * 整单提交：名字、地址、额度插件一起发。模型目录不由用户管（开放平台的目录
- * 一律从上游拉），所以这一单里没有目录那几格。
+ * 整单提交：名字、地址一起发。模型目录不由用户管（开放平台的目录
+ * 一律从上游拉），额度插件按地址匹配（都不是用户填的格），所以这一单里
+ * 没有这两摊。
  *
- * 模拟客户端的地址与额度插件两格归代码：那种平台调用方整格不给（`undefined`）
+ * 模拟客户端的地址归代码：那种平台调用方整格不给（`undefined`）
  * —— 给空串在这条 RPC 上就是「清空那一格」（合同里 string 没有 presence 位，
- * 约定写在 `UpdatePlatformRequest` 的注释里）。不给的两格这里不往消息里放。
+ * 约定写在 `UpdatePlatformRequest` 的注释里）。不给的那格这里不往消息里放。
  *
  * `traitsFromCommon` 同理：它是 optional bool，不给 = 别动这一格。只有用户动过
  * 开关才带。
@@ -126,7 +116,6 @@ export function useUpdatePlatform() {
       id: string
       label: string
       baseUrl?: string
-      quotaPlugin?: string
       traitsFromCommon?: boolean
     }) => {
       const init: MessageInitShape<typeof UpdatePlatformRequestSchema> = {
@@ -134,7 +123,6 @@ export function useUpdatePlatform() {
         label: input.label,
       }
       if (input.baseUrl !== undefined) init.baseUrl = input.baseUrl
-      if (input.quotaPlugin !== undefined) init.quotaPlugin = input.quotaPlugin
       // optional bool：不放就是「别动这一格」。关掉时给的是 false，与不放不一样。
       if (input.traitsFromCommon !== undefined) {
         init.traitsFromCommon = input.traitsFromCommon
@@ -147,7 +135,7 @@ export function useUpdatePlatform() {
       toast.success('已保存')
     },
     onSettled: () => {
-      // 名字、地址、额度插件都是平台那一行上的字段。
+      // 名字、地址都是平台那一行上的字段。
       invalidateServerData(queryClient, 'platforms')
     },
   })

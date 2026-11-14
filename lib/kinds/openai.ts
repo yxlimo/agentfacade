@@ -7,10 +7,10 @@
 //
 // 这一段声明只回答三件事：地址从哪来、key 从哪来、目录里有哪些模型。
 //
-// 额度是开放平台唯一自己给不出来的东西：它是数据，不是代码，所以额度插件由平台
-// 那一行来指（platform.quota_plugin），插件回答「怎么问」与「怎么读」。没有插件、
-// 插件没登记、快照里没有这个账号的那一份 —— 三种都是「不知道」，而「不知道」跟
-// 0 不是一回事。
+// 额度是开放平台唯一自己给不出来的东西：它是数据，不是代码，所以额度插件按
+// 平台行的地址认（lib/quota-plugin-registry.ts 的 quotaPluginForBaseUrl），插件
+// 回答「怎么问」与「怎么读」。对不上插件、快照里没有这个账号的那一份 —— 两种
+// 都是「不知道」，而「不知道」跟 0 不是一回事。
 
 import { tokenFingerprint } from "../credential.ts";
 import { declareNoLoginFlow } from "../login-flow.ts";
@@ -19,6 +19,12 @@ import { openPlatformKeyOf } from "../open-platform-credentials.ts";
 // 从那里取而不是从 lib/platforms.ts 转出来：环上的模块不能在求值期读别人的
 // 常量，转出来等于把环用回来了，现在能跑只靠依赖求值顺序。
 import { openPlatformOf, OPEN_PLATFORM_KIND_NAME } from "../open-platforms.ts";
+import { quotaPluginForBaseUrl } from "../quota-plugin-registry.ts";
+// 引用即登记：开放平台按地址认插件，认的是登记表（lib/quota-plugin-registry.ts
+// 的 map）。登记的副作用集中在 hub（lib/quota-plugins.ts）：以前靠各家插件文件
+// 反向 import 额度端点函数被顺带加载，那函数退场后没人拉它了 —— 不在这里引
+// 一把，登记表在只走 kind 链的进程里是空的，按地址解析认不出任何插件。
+import "../quota-plugins.ts";
 import { fromUpstreamStatus } from "../provider-kinds.ts";
 import { openPlatformPlan } from "./shared.ts";
 import { outOfCreditsOf, quotaViewsOf, recoverAtOf } from "../quota-state.ts";
@@ -58,13 +64,14 @@ function openPlatformStatus(provider: ProviderRow): Record<string, unknown> {
 }
 
 /**
- * 这个平台选的额度插件 id。
+ * 这个平台的额度插件 id。
  *
- * 插件 id 是用户填的：没填、或者填了一个没人登记的 id，就是没有额度插件。那是
- * 「不知道」，不是错误 —— 用户可能还在输，而网关得照样服务。
+ * 插件按平台行的地址认（插件声明它服务哪些地址）：对不上任何插件就是空串 ——
+ * 那是「这个平台没有额度接口」，不是错误，也不是「没配好」。网关照样服务。
  */
 function quotaPluginIdOf(provider: ProviderRow): string {
-  return openPlatformOf(provider.platform)?.quotaPlugin?.trim() ?? "";
+  const row = openPlatformOf(provider.platform);
+  return row ? (quotaPluginForBaseUrl(row.baseUrl)?.id ?? "") : "";
 }
 
 export const openaiKind = registerCompatiblePlatform({

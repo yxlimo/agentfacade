@@ -19,12 +19,6 @@ import {
   platformKindOptionOf,
   simulatedClientPresetsOfKind,
 } from "./platform-catalog.ts";
-// 额度插件的登记表（lib/quota-plugins.ts）反过来要读这一层的平台表，所以这两
-// 个模块是个环。环上的模块不能在求值期读别人的常量：这里只在函数里用它，
-// 那里也不在求值期读这边的东西。
-import { allQuotaPlugins, quotaPluginOf } from "./quota-plugin-registry.ts";
-// kind 注册表：这一类的能力描述（能不能拉模型目录、默认地址）事实在那边。
-import { kindOf } from "./provider-kinds.ts";
 // 失败的机器码与排查用的事实。文案在面板那一侧，这里只说「哪一格不对」。
 import type { AdminFailure, AdminResult } from "./admin/error-codes.ts";
 // 计费的形状：与 contextWindow 一样是上游报的，只是它多一层结构（币种、单位、
@@ -110,8 +104,6 @@ export interface OpenPlatformRow {
   baseUrl: string;
   /** 模型目录。 */
   models: OpenPlatformModels;
-  /** 额度那一份的插件名（空串就是没有）。 */
-  quotaPlugin: string;
   /** 怎么跟它说话（kind 注册表里的那一类）。 */
   kind: string;
   /** 区域（空串就是没有）。 */
@@ -154,7 +146,7 @@ const RESERVED_IDS = new Set(["v1", "admin", "health", "healthz", "metrics"]);
 export function listOpenPlatforms(): OpenPlatformRow[] {
   const rows = store()
     .prepare(
-      "SELECT id, label, base_url, models, traits_from_common, quota_plugin, kind, region, created_at, updated_at " +
+      "SELECT id, label, base_url, models, traits_from_common, kind, region, created_at, updated_at " +
         "FROM platform ORDER BY id",
     )
     .all() as any[];
@@ -165,7 +157,7 @@ export function listOpenPlatforms(): OpenPlatformRow[] {
 export function openPlatformOf(id: string): OpenPlatformRow | null {
   const row = store()
     .prepare(
-      "SELECT id, label, base_url, models, traits_from_common, quota_plugin, kind, region, created_at, updated_at " +
+      "SELECT id, label, base_url, models, traits_from_common, kind, region, created_at, updated_at " +
         "FROM platform WHERE id = ?",
     )
     .get(id) as any;
@@ -183,12 +175,6 @@ export function createOpenPlatform(input: {
   id: string;
   label: string;
   baseUrl: string;
-  /**
-   * 额度插件。不给 = 这一类声明了哪个就用哪个（kind 注册表里的 defaultQuotaPlugin）。
-   *
-   * 空串是「不用插件」：那是用户的明确意思，不走默认值。
-   */
-  quotaPlugin?: string;
   /** 哪一类适配器。空串 = openai（OpenAI 兼容的通用平台）。 */
   kind?: string;
 }): AdminResult {
@@ -205,11 +191,6 @@ export function createOpenPlatform(input: {
   const kind = String(input.kind ?? "").trim() || OPEN_PLATFORM_KIND_NAME;
 
   let baseUrl = String(input.baseUrl ?? "").trim();
-  // 没给 = 这一类默认用哪个插件；给了空串 = 不用插件（用户的明确意思）。
-  let quotaPlugin =
-    input.quotaPlugin === undefined
-      ? (kindOf(kind)?.defaultQuotaPlugin ?? "")
-      : String(input.quotaPlugin).trim();
   let region = "";
 
   if (isSimulatedClientKind(kind)) {
@@ -240,17 +221,12 @@ export function createOpenPlatform(input: {
       };
     }
     baseUrl = "";
-    // 额度插件将来要的话另说：模拟客户端的额度走自己的配额路径，不落在
-    // platform 这一行上。
-    quotaPlugin = "";
     region = preset.region;
   } else {
     const urlProblem = checkBaseUrl(baseUrl);
     if (urlProblem) return urlProblem;
     const kindProblem = checkKind(kind);
     if (kindProblem) return kindProblem;
-    const pluginProblem = checkQuotaPlugin(quotaPlugin);
-    if (pluginProblem) return pluginProblem;
   }
 
   const now = Date.now();
@@ -266,14 +242,13 @@ export function createOpenPlatform(input: {
     // openai」—— 这一格现在由调用方定，写进去的必须是校验过的那一个。
     db.prepare(
       "INSERT INTO platform " +
-        "(id, label, base_url, models, quota_plugin, kind, region, created_at, updated_at) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "(id, label, base_url, models, kind, region, created_at, updated_at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     ).run(
       id,
       label,
       normalizeBaseUrl(baseUrl),
       modelsJson(models),
-      quotaPlugin,
       kind,
       region,
       now,
@@ -313,7 +288,6 @@ export function updateOpenPlatform(
   patch: {
     label?: string;
     baseUrl?: string;
-    quotaPlugin?: string;
     /**
      * 平台自己给的信息不足时从共性表里补参数。不给 = 别动这一格。
      *
@@ -359,20 +333,14 @@ export function updateOpenPlatform(
     const urlProblem = checkBaseUrl(baseUrl);
     if (urlProblem) return urlProblem;
   }
-  // null 与没给是两回事：null 是「把这一格清空」，没给是「别动它」。
-  const quotaPlugin = patch.quotaPlugin === undefined ? row.quotaPlugin : String(patch.quotaPlugin ?? "").trim();
-  const pluginProblem = checkQuotaPlugin(quotaPlugin);
-  if (pluginProblem) return pluginProblem;
-
   store()
     .prepare(
-      "UPDATE platform SET label = ?, base_url = ?, quota_plugin = ?, " +
+      "UPDATE platform SET label = ?, base_url = ?, " +
         "traits_from_common = ?, updated_at = ? WHERE id = ?",
     )
     .run(
       label,
       normalizeBaseUrl(baseUrl),
-      quotaPlugin,
       patch.traitsFromCommon === undefined ? (row.traitsFromCommon ? 1 : 0) : patch.traitsFromCommon ? 1 : 0,
       Date.now(),
       id,
@@ -519,27 +487,6 @@ function checkId(id: string): AdminFailure | null {
 function isAccountId(id: string): boolean {
   const row = store().prepare("SELECT id FROM provider WHERE id = ?").get(id);
   return row !== undefined;
-}
-
-/**
- * 额度插件这一格填的 id 得有人登记。
- *
- * 空串是「不用额度插件」，那是合法的一种选择。没登记的 id 一旦存下去，这个
- * 平台之后一条额度结论都不会有，而面板上看着「已选插件」—— 静默的不工作比
- * 拒绝保存更难查，所以拦在写库之前，一个字都不落库。
- *
- * 拒绝时要把登记过的插件列出来（用插件自己的 id：面板认得的就是这个 id）：
- * 只说「不行」，调用方没法自己改对。
- */
-function checkQuotaPlugin(pluginId: string): AdminFailure | null {
-  if (!pluginId) return null;
-  if (quotaPluginOf(pluginId)) return null;
-  const known = allQuotaPlugins().map((plugin) => plugin.id);
-  return {
-    ok: false,
-    code: "QUOTA_PLUGIN_UNKNOWN",
-    message: `no quota plugin ${pluginId}, registered: ${known.join(", ") || "(none)"}`,
-  };
 }
 
 /**
@@ -771,7 +718,6 @@ function toRow(row: any): OpenPlatformRow {
     label: String(row.label ?? ""),
     baseUrl: String(row.base_url ?? ""),
     models: parseModels(row.models),
-    quotaPlugin: String(row.quota_plugin ?? ""),
     kind: String(row.kind ?? "openai"),
     region: String(row.region ?? ""),
     traitsFromCommon: Number(row.traits_from_common ?? 0) !== 0,

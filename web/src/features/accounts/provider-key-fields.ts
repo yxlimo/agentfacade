@@ -1,5 +1,6 @@
 import type { CredentialField, QuotaPlugin } from '@/gen/buddy/admin/v1/admin_pb'
 import { describeError } from '@/lib/errors'
+import { quotaPluginForBaseUrl } from '@/lib/quota-match'
 
 /**
  * 面板上填凭据的格子。
@@ -153,8 +154,8 @@ export function quotaRegistryFrom(query: {
  * 判据：
  *
  *   - 开放平台（面板上加的表里那一行）：第一格是推理用的 API key（由种类声明
- *     说），后面几格按它选的额度插件的 fields 顺序，一段一段写。平台没选插件、
- *     或者选的插件没登记在册，就只有推理那一格。
+ *     说），后面几格按平台地址匹配出来的额度插件的 fields 顺序，一段一段写。
+ *     地址对不上任何插件，就只有推理那一格（不提示、不报错）。
  *   - 模板平台：格子由种类的声明说。声明里一格都没有（会话型的那些：MiniMax
  *     Code、Qoder、WorkBuddy、ZCode）就不给入口 —— 它们的凭据是登录会话，贴
  *     key 服务端会拒。
@@ -171,8 +172,8 @@ export function providerKeyAccess(input: {
   isOpenPlatform: boolean
   /** 平台的名字：开放平台的标题用它。 */
   platformLabel?: string
-  /** 这个平台选的额度插件 id。 */
-  quotaPlugin?: string
+  /** 平台的地址：额度插件按它匹配（对不上就没有插件那几段）。 */
+  baseUrl?: string
   /** 种类登记表的状态。 */
   kinds: ProviderKinds
   /** 额度插件登记表的状态。 */
@@ -187,8 +188,8 @@ export function providerKeyAccess(input: {
     }
   }
   const declared = input.kinds.of(input.kind)
-  // 开放平台先判：它的格子是「种类那一格 + 平台所选插件那几段」，不是照声明
-  // 整份抄（声明里只有推理那一格）。
+  // 开放平台先判：它的格子是「种类那一格 + 按地址匹配出来的插件那几段」，
+  // 不是照声明整份抄（声明里只有推理那一格）。
   if (input.isOpenPlatform) return openPlatformAccess(input, declared)
   // 模板平台：格子由种类声明定死，不看插件登记表。
   if (!declared || declared.fields.length === 0) return { status: 'none' }
@@ -205,15 +206,15 @@ export function providerKeyAccess(input: {
 }
 
 /**
- * 开放平台的凭据入口：推理那一格（来自种类声明）加上平台所选插件那几段。
+ * 开放平台的凭据入口：推理那一格（来自种类声明）加上按平台地址匹配出来的插件那几段。
  *
- * 插件那几段是数据不是代码：插件由平台那一行指名，所以格子数到运行时才定得
+ * 插件那几段是数据不是代码：插件按平台地址匹配，所以格子数到运行时才定得
  * 下来。登记表没到手就不放行 —— 见 providerKeyAccess 的说明。
  */
 function openPlatformAccess(
   input: {
     platformLabel?: string
-    quotaPlugin?: string
+    baseUrl?: string
     registry: QuotaRegistry
   },
   declared: { title: string; fields: ProviderKeyField[] } | null
@@ -225,8 +226,11 @@ function openPlatformAccess(
       message: `插件列表取不到，凭据格子数不确定：${input.registry.message}`,
     }
   }
-  const plugin = input.registry.plugins.find(
-    (row) => row.id === (input.quotaPlugin ?? '')
+  // 插件按地址匹配：对不上任何插件就是没有额度接口，凭据里只有推理那一格。
+  // 不提示「没有插件」—— 那不是错误，也不是没配好。
+  const plugin = quotaPluginForBaseUrl(
+    input.registry.plugins,
+    input.baseUrl ?? ''
   )
   const fields: ProviderKeyField[] = (declared?.fields ?? []).map((field) => ({
     ...field,

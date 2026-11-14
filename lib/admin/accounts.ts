@@ -24,7 +24,7 @@ import { loadSession as loadWorkBuddySession } from "../workbuddy/auth.ts";
 import { fetchWorkBuddyCredits } from "../workbuddy/credits.ts";
 import { zcodeStatus } from "../zcode/auth.ts";
 import { clearOpenPlatformKey } from "../open-platform-credentials.ts";
-import { quotaPluginOf } from "../quota-plugin-registry.ts";
+import { quotaPluginForBaseUrl } from "../quota-plugin-registry.ts";
 import { openPlatformOf } from "../open-platforms.ts";
 import { fetchOpenPlatformModels } from "../open-platform-catalog.ts";
 import { senseNovaInferenceKey } from "../sensenova/transport.ts";
@@ -527,9 +527,9 @@ async function testInferenceKey(account: ProviderRow): Promise<{ ok: boolean; me
       };
 }
 
-/** 额度那段：交给平台的额度插件问一次（插件不 reject，答不出来就是 unknown）。 */
+/** 额度那段：交给平台行的地址认出的额度插件问一次（插件不 reject，答不出来就是 unknown）。 */
 async function testQuotaCredential(account: ProviderRow): Promise<{ ok: boolean; message: string }> {
-  const plugin = quotaPluginOf(openPlatformOf(account.platform)?.quotaPlugin?.trim() ?? "");
+  const plugin = quotaPluginForBaseUrl(openPlatformOf(account.platform)?.baseUrl ?? "");
   if (!plugin) return { ok: false, message: "这个平台没有额度插件，这段凭据没有可以问的接口" };
   const probe = await plugin.probe(account);
   if (probe.state === "ok") return { ok: true, message: probe.message ? `可用，${probe.message}` : "可用" };

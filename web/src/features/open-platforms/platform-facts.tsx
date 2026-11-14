@@ -4,10 +4,7 @@ import type {
 } from '@/gen/buddy/admin/v1/admin_pb'
 import type { QuotaRegistry } from '@/features/accounts/provider-key-fields'
 import { hasQuota, quotaStateText, QuotaSummary } from '@/features/balance/quota'
-import {
-  simulatedPresetOf,
-  type PlatformKindList,
-} from '@/features/open-platforms/platform-kinds'
+import { quotaPluginForBaseUrl } from '@/lib/quota-match'
 import { formatLocalMoment } from '@/lib/format'
 
 /** 一次「刷新模型目录」的结果：服务端给的，面板照它显示。 */
@@ -18,16 +15,17 @@ export type RefreshOutcome = {
 }
 
 /**
- * 开放平台的那几格：地址、模型目录、额度插件、额度。
+ * 开放平台的那几格：地址、模型目录、额度。
  *
  * 面板知道的都以服务端给的为准：
  *
- *   地址、插件 id、模型目录、上次拉取的时刻             Upstream（ListUpstreams）
- *   额度插件叫什么                                      额度插件登记表（ListQuotaPlugins）
- *   额度现在的结论                                       Upstream.quota.quotaState
+ *   地址、模型目录、上次拉取的时刻        Upstream（ListUpstreams）
+ *   额度插件与它的地址声明                额度插件登记表（ListQuotaPlugins）
+ *   额度现在的结论                        Upstream.quota.quotaState
  *
- * 模拟客户端（预置的那几条）不摆地址与额度插件：两格都是空串，摆出来只会让人
- * 以为要填。它们靠 id 与 kind 从清单里认出来（两个 Qoder 的 kind 相同）。
+ * 额度插件按平台地址匹配（不是平台上选的）：对不上任何插件的平台就是没有
+ * 额度接口 —— 额度区整块不摆，不报错，也不提示。模拟客户端（预置的那几条）
+ * 不摆地址：它们靠 id 与 kind 从清单里认出来（两个 Qoder 的 kind 相同）。
  *
  * 额度按服务端给的结论说：`ok` 给数字，其余各说一句（额度用尽、平台说这个账号
  * 不能用、凭据被拒、被限流、还没填凭据、未知），没有结论就不说这一栏。
@@ -35,24 +33,26 @@ export type RefreshOutcome = {
  */
 export function OpenPlatformFacts({
   upstream,
-  kinds,
   registry,
   refresh,
 }: {
   upstream: Upstream
-  /** 建平台时能选的类型清单：三档（加载中 / 取不到 / 到手）。 */
-  kinds: PlatformKindList
   /** 额度插件登记表：三档（加载中 / 取不到 / 到手）。 */
   registry: QuotaRegistry
   /** 上一次刷新模型目录的结果。 */
   refresh?: RefreshOutcome
 }) {
-  const simulated = simulatedPresetOf(kinds, upstream) !== undefined
+  // 额度插件按地址匹配；登记表没到手 / 取不到的时候认不出来，额度区整块不摆
+  // （那种时候说「没有插件」是错的）。匹配不到就是没有额度接口：不显示、不报
+  // 错、不提示。
+  const plugin =
+    registry.status === 'ready'
+      ? quotaPluginForBaseUrl(registry.plugins, upstream.baseUrl)
+      : undefined
   return (
     <div className='grid gap-0.5 text-xs whitespace-normal text-muted-foreground'>
       <span>{modelLine(upstream)}</span>
-      {simulated ? null : <span>{pluginLine(upstream, registry)}</span>}
-      {quotaLine(upstream, registeredPlugin(upstream, registry))}
+      {plugin ? quotaLine(upstream, plugin) : null}
       {refresh ? (
         <span className={refresh.ok ? undefined : 'text-destructive'}>
           刷新：{refresh.message}
@@ -78,37 +78,6 @@ function modelLine(upstream: Upstream): string {
 }
 
 /**
- * 登记表里这个平台选的那个插件。
- *
- * 只有登记表到手了才说得准「有没有这一条」：加载中、取不到的时候一律 undefined，
- * 那种时候说「没登记」是错的。
- */
-function registeredPlugin(
-  upstream: Upstream,
-  registry: QuotaRegistry
-): QuotaPlugin | undefined {
-  if (registry.status !== 'ready') return undefined
-  return registry.plugins.find((item) => item.id === upstream.quotaPlugin)
-}
-
-/**
- * 额度插件那一行：三档各说一句。
- *
- *   登记表到手且里面有这个 id   插件自己的名字
- *   登记表到手但没有这个 id     未知插件 <id>
- *   加载中 / 取不到             说登记表还没到手 / 取不到 —— 不说成「没登记」
- */
-function pluginLine(upstream: Upstream, registry: QuotaRegistry): string {
-  const id = upstream.quotaPlugin
-  if (!id) return '额度插件：未选'
-  const plugin = registeredPlugin(upstream, registry)
-  if (plugin) return `额度插件：${plugin.label}`
-  if (registry.status === 'pending') return `额度插件：${id}（列表还在加载）`
-  if (registry.status === 'error') return `额度插件：${id}（列表取不到）`
-  return `额度插件：未知插件 ${id}`
-}
-
-/**
  * 额度那一栏。
  *
  * 先说结论，再说数字 —— 两样不会同时有（契约里只有 `ok` 带数字）：
@@ -123,11 +92,10 @@ function pluginLine(upstream: Upstream, registry: QuotaRegistry): string {
  *   其余值（服务端新加的） 原样显示
  *   空串（没有结论）     整栏不显示
  *
- * 结论只看 `quotaState`：插件登记表到没到手，跟服务端说的结论无关 —— 登记表没
- * 到手就藏掉「额度用尽」，等于把服务端的话丢了。只有数字那几行需要插件名，
- * 名字说不准的时候摆 id。
+ * 结论只看 `quotaState`。数字那几行带插件名：能走到这一栏说明插件已经匹配到
+ * 了，名字直接用它。
  */
-function quotaLine(upstream: Upstream, plugin?: QuotaPlugin) {
+function quotaLine(upstream: Upstream, plugin: QuotaPlugin) {
   const quota = upstream.quota
   if (!quota) return null
 
@@ -145,9 +113,7 @@ function quotaLine(upstream: Upstream, plugin?: QuotaPlugin) {
   if (!hasQuota(quota)) return null
   return (
     <div className='grid gap-0.5'>
-      {/* 插件名说不准（登记表没到手 / 没有这一条）的时候摆 id：不猜名字，也不
-          因为这就不显示数字。 */}
-      <span>额度：{plugin?.label ?? upstream.quotaPlugin}</span>
+      <span>额度：{plugin.label}</span>
       <QuotaSummary quota={quota} align='start' />
     </div>
   )

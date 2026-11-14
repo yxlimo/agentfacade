@@ -13,7 +13,6 @@
 import type { QuotaView, CreditLotView } from "../provider-kinds.ts";
 import type { ProviderRow } from "../providers.ts";
 import { quotaProbe } from "../quota-state.ts";
-import { quotaEndpointBase } from "../quota-plugins.ts";
 import { registerQuotaPlugin, type QuotaProbe } from "../quota-plugin-registry.ts";
 import { SENSENOVA_PLATFORM_BASE } from "./config.ts";
 // 插件 id 住在一个没有依赖的地方（lib/sensenova/quota-plugin-id.ts）：本模块与
@@ -115,6 +114,8 @@ export function senseNovaRecoverAt(usage: SenseNovaPoolUsage | null): number | n
 export const senseNovaPoolsPlugin = registerQuotaPlugin({
   id: SENSE_NOVA_POOLS_PLUGIN_ID,
   label: "SenseNova 资源池",
+  // 行上的地址是这台（迁移写进去的规范推理地址）的平台，额度插件就是本插件。
+  baseUrls: ["https://token.sensenova.cn/v1"],
   fields: [],
   probe: async (account) => {
     // 没有会话：用户还没登录。那不是控制台拒了什么，是没人去问。
@@ -122,10 +123,9 @@ export const senseNovaPoolsPlugin = registerQuotaPlugin({
     if (!session) return quotaProbe("missing", "账号上没有控制台会话，无法查询积分池");
 
     let usage: SenseNovaPoolUsage;
-    // 积分池在控制台上；平台行把地址指到别处时问那一台。
-    const endpointBase = quotaEndpointBase(account, SENSENOVA_PLATFORM_BASE);
+    // 积分池在控制台上，控制台的地址是本插件自己的事（与推理地址无关）。
     try {
-      usage = await poolUsage(session, endpointBase);
+      usage = await poolUsage(session, SENSENOVA_PLATFORM_BASE);
     } catch (e) {
       return stateOfError(e);
     }

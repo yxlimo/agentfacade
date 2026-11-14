@@ -16,6 +16,7 @@ import type { ProviderRow } from "../providers.ts";
 import { quotaProbe } from "../quota-state.ts";
 import { registerQuotaPlugin, type QuotaProbe } from "../quota-plugin-registry.ts";
 import { tokenRhythmStatuses, type TokenRhythmAccountStatus } from "./wallet.ts";
+import { TOKENRHYTHM_INFER_BASE } from "./config.ts";
 // 插件 id 住在一个没有依赖的地方（lib/tokenrhythm/quota-plugin-id.ts）：本模块与
 // register 互相引用，id 若在本模块里，register 在求值期读它就会撞上「还在初始化」。
 import { TOKENRHYTHM_WALLET_PLUGIN_ID } from "./quota-plugin-id.ts";
@@ -86,6 +87,9 @@ export function tokenRhythmRecoverAt(status: TokenRhythmAccountStatus | null): n
 export const tokenRhythmWalletPlugin = registerQuotaPlugin({
   id: TOKENRHYTHM_WALLET_PLUGIN_ID,
   label: "TokenRhythm 钱包",
+  // 行上的地址是推理那台（随 env 走：测试与自建都改同一把变量）的平台，
+  // 额度插件就是本插件。
+  baseUrls: [TOKENRHYTHM_INFER_BASE],
   fields: [],
   probe: async (account) => {
     let statuses: TokenRhythmAccountStatus[];

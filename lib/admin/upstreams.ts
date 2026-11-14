@@ -384,8 +384,8 @@ function groupByPlatform(rows: ProviderRow[]): Map<string, ProviderRow[]> {
  */
 function applyPartial(snapshot: HealthSnapshot, partial: HealthSnapshot, rows: ProviderRow[]): void {
   for (const row of rows) {
-    // 额度来自插件的那些 kind 没有具名桶：它的那一份在插件桶里（两层），按账号逐条合并。
-    if (quotaFromPlugin(row.kind)) {
+    // 开放平台的额度没有具名桶：它的那一份在插件桶里（两层），按账号逐条合并。
+    if (row.kind === OPEN_PLATFORM_KIND_NAME) {
       applyPluginPartial(snapshot, partial, row);
       continue;
     }
@@ -465,35 +465,14 @@ export async function refreshHealthSnapshot(): Promise<void> {
 }
 
 /**
- * 额度归插件问的那些 kind。
- *
- * 它们没有具名桶：快照里那一份存在插件桶里（插件 id → 账号 id → 那一次的结论）。
- * 问哪个插件由平台那一行说（七牛、开放平台是用户选的），读法由 kind 自己说。
- * 开放平台是数据，七牛云的额度在门户上、门户只认 cookie —— 两家都得由平台行
- * 说了算：没指名插件就是「不知道」，不该自己找个地方去问。三家插件是跟 kind
- * 一起登记的（SenseNova / TokenRhythm / 书生·端砚），各自一个插件 id，由平台
- * 行那一格指名。
- */
-const QUOTA_FROM_PLUGIN: ReadonlySet<string> = new Set([
-  OPEN_PLATFORM_KIND_NAME,
-  "qiniu",
-  "sensenova",
-  "intern-ai",
-  "tokenrhythm",
-]);
-
-function quotaFromPlugin(kind: string): boolean {
-  return QUOTA_FROM_PLUGIN.has(kind);
-}
-
-/**
  * 问平台那一行指名的额度插件，把这一次的结论写进插件桶。
  *
  * 每一种结论都写 —— 面板要能回答「为什么这里没有数字」：「没填凭据」「凭据
  * 被拒」「问不到」是三件不同的事，只写问到的那几种会把它们全变回「不知道」。
  * 结论带来的副作用（写冷却、交给凭据线）由 lib/quota-state.ts 统一做。
  *
- * 没指名插件、或者指名的插件没登记：不写。那不是「问过了」，是没人去问。
+ * 对不上插件（地址认不出）、或者认出的插件没登记：不写。那不是「问过了」，
+ * 是没人去问。
  */
 async function refreshPluginQuota(snapshot: HealthSnapshot, row: ProviderRow): Promise<void> {
   const pluginId = quotaPluginIdOf(row);
@@ -517,9 +496,10 @@ async function refreshPluginQuota(snapshot: HealthSnapshot, row: ProviderRow): P
 
 /** 问一家上游，把它那段填进快照。 */
 async function refreshOne(snapshot: HealthSnapshot, row: ProviderRow): Promise<void> {
-  // 额度归插件的那些 kind 先走插件：它们没有具名桶，下面那几个 case 是给自带
-  // 抓取逻辑的平台留的。
-  if (quotaFromPlugin(row.kind)) {
+  // 开放平台的额度归插件问：它们没有具名桶，快照里那一份存在插件桶里（插件 id
+  // → 账号 id → 那一次的结论）。问哪个插件由平台行的地址认（quotaPluginIdOf），
+  // 读法由 kind 自己说。下面那几个 case 是给自带抓取逻辑的平台留的。
+  if (row.kind === OPEN_PLATFORM_KIND_NAME) {
     await refreshPluginQuota(snapshot, row);
     return;
   }

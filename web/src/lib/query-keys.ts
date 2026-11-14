@@ -67,7 +67,7 @@ export const queryKeys = {
   config: {
     all: ['config'] as const,
   },
-  /** 服务端登记的额度插件：平台那一格选插件用。 */
+  /** 服务端登记的额度插件：插件列表页展示用，凭据格子按地址匹配出来的插件定。 */
   quotaPlugins: {
     all: ['quota-plugins'] as const,
   },

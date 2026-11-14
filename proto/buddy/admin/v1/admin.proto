@@ -93,8 +93,8 @@ message Upstream {
   int64 recovers_at_ms = 20;
   // 一句给面板直接用的话（比如「冷却到 12:23（rate-limit）」）。没有就空串。
   string state_reason = 21;
-  // 额度插件：开放平台填的插件 id（模板平台没有这一格，空串）。
-  string quota_plugin = 22;
+  reserved 22;
+  reserved "quota_plugin";
   // 这是不是一个开放平台（表里的那一行，不是代码里的模板）。
   bool is_open_platform = 24;
   // 模型目录（模型名）：值来自上游，不改。
@@ -572,8 +572,8 @@ message OpenPlatform {
   string id = 1;
   string label = 2;
   string base_url = 3;
-  // 额度插件的 id。空串 = 不选插件。
-  string quota_plugin = 4;
+  reserved 4;
+  reserved "quota_plugin";
   // 模型目录（模型名）：值来自上游，不改。
   repeated string models = 5;
   // 上次拉目录的时刻（Unix 毫秒）。0 = 没拉过。
@@ -596,15 +596,8 @@ message AddPlatformRequest {
   //   id（minimax / qoder / qoder-cn / workbuddy-cn / workbuddy-global），
   //   地址与区域照预置来。
   string kind = 4;
-  // 额度插件的 id。三种给法是三件事：
-  //
-  //   没给   = 用这一类声明的默认插件（kind 注册表里的 default_quota_plugin）。
-  //   空串   = 不用插件。
-  //   给了 id = 用这个（必须已登记；没登记就拒，不写库）。
-  //
-  // 带 presence 是为了分清「没给」与「给了空串」：没有 presence 时这两件事在线上
-  // 是同一份字节，用户在弹窗里选「不选插件」就变成了「用默认插件」。
-  optional string quota_plugin = 5;
+  reserved 5;
+  reserved "quota_plugin";
 }
 
 message AddPlatformResponse {
@@ -615,12 +608,12 @@ message AddPlatformResponse {
 
 // 改一个开放平台。
 //
-// base_url 与 quota_plugin 带 presence：没给 = 别动这一格，给了空串 = 清空。
-// 没有 presence 时这两件事在线上是同一份字节，只改一部分字段的调用方（只改名字
-// 的面板、对模拟客户端平台故意不发这两格的面板）就会把没送的格清掉。
+// base_url 带 presence：没给 = 别动这一格。没有 presence 时「没给」与「给了空串」
+// 在线上是同一份字节，只改一部分字段的调用方（只改名字的面板、对模拟客户端平台
+// 故意不发地址的面板）就会把没送的格清掉。
 //
-// label 与 base_url 空串要拒（平台必须有名字与地址）；quota_plugin 空串
-// = 不选插件。模型目录不在这里改：目录归上游还是归代码由平台的族决定。
+// label 与 base_url 空串要拒（平台必须有名字与地址）。模型目录不在这里改：目录
+// 归上游还是归代码由平台的族决定。
 message UpdatePlatformRequest {
   reserved 5, 6;
   reserved "models_auto", "models";
@@ -628,8 +621,8 @@ message UpdatePlatformRequest {
   string label = 2;
   // 没给 = 别动这一格；给了空串 = 清空（空串会被地址校验拦下：平台得有地址）。
   optional string base_url = 3;
-  // 没给 = 别动这一格；给了空串 = 清空（= 不选插件）。
-  optional string quota_plugin = 4;
+  reserved 4;
+  reserved "quota_plugin";
   // 平台自己给的信息不足时，从共性表（模型 id → 能力参数）里补。
   // 默认关：只有用户明确打开才用。人工元数据仍然优先于它。
   // 没给 = 别动这一格；给了就照给的值写。
@@ -681,6 +674,9 @@ message QuotaPlugin {
   string id = 1;
   string label = 2;
   repeated QuotaPluginField fields = 3;
+  // 这个插件服务哪些平台地址：平台行按 base_url 对上其中一个，额度插件就是它。
+  // 面板不用它选插件（没有「选」这一说），拿它展示插件与平台的对应关系。
+  repeated string base_urls = 4;
 }
 
 message ListQuotaPluginsResponse {
@@ -704,8 +700,8 @@ message PlatformKind {
   string preset_id = 6;
   // 预置平台的区域（cn / global / 空串）。方言类为空串。
   string region = 7;
-  // 建平台时给这一格预填（额度插件那一格）；用户可以改。空串 = 这一类没有额度接口。
-  string default_quota_plugin = 8;
+  reserved 8;
+  reserved "default_quota_plugin";
 }
 
 message ListPlatformKindsRequest {}

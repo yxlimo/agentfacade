@@ -488,13 +488,12 @@ describe('平台的编辑与删除入口', () => {
     ).toBeInTheDocument()
   })
 
-  it('编辑模拟客户端：改名字能存，地址与额度插件两格不带值', async () => {
+  it('编辑模拟客户端：改名字能存，地址不带值', async () => {
     const user = userEvent.setup({ delay: null })
     const sent: {
       id: string
       label: string
       baseUrl: string
-      quotaPlugin: string
     }[] = []
     const client = clientWith([platform()], {
       UpdatePlatform: (input) => {
@@ -502,7 +501,6 @@ describe('平台的编辑与删除入口', () => {
           id: input.id ?? '',
           label: input.label ?? '',
           baseUrl: input.baseUrl ?? '',
-          quotaPlugin: input.quotaPlugin ?? '',
         })
         return create(UpdatePlatformResponseSchema)
       },
@@ -516,7 +514,7 @@ describe('平台的编辑与删除入口', () => {
     )
 
     const dialog = await screen.findByRole('dialog')
-    // 地址与额度插件两格不在：这两格对模拟客户端没意义。
+    // 地址不在（额度插件在哪个弹窗都没有控件）：这两格对模拟客户端没意义。
     expect(within(dialog).queryByLabelText('地址')).not.toBeInTheDocument()
     expect(within(dialog).queryByLabelText('额度插件')).not.toBeInTheDocument()
 
@@ -530,11 +528,10 @@ describe('平台的编辑与删除入口', () => {
         {
           id: 'minimax',
           label: '改过的名字',
-          // 面板不往这两格放值。注意：合同里 string 没有 presence 位，
+          // 面板不往地址那一格放值。注意：合同里 string 没有 presence 位，
           // 落在这条 RPC 上「没带」与「带空串」是同一个字节 —— 面板那一侧
           // 「整格不出现」的断言在 platform-dialog.test.tsx 里。
           baseUrl: '',
-          quotaPlugin: '',
         },
       ])
     })

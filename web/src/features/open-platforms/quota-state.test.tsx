@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import {
   CreditSummarySchema,
-  PlatformKindSchema,
   QuotaPluginSchema,
   UpstreamQuotaSchema,
   UpstreamSchema,
@@ -11,7 +10,6 @@ import {
 import type { MessageInitShape } from '@bufbuild/protobuf'
 import type { QuotaRegistry } from '@/features/accounts/provider-key-fields'
 import { OpenPlatformFacts } from '@/features/open-platforms/platform-facts'
-import type { PlatformKindList } from '@/features/open-platforms/platform-kinds'
 import { formatLocalMoment } from '@/lib/format'
 
 /**
@@ -27,30 +25,16 @@ const FETCHED_AT = BigInt(Date.UTC(2026, 10, 3, 4, 0, 0))
 /** 服务端说的恢复时刻。 */
 const RECOVER_AT = BigInt(Date.UTC(2027, 0, 15, 11, 30, 0))
 
-/** 登记表里那一个插件。 */
+/** 登记表里那一个插件：它声明的地址对得上平台的地址。 */
 const PLUGIN = create(QuotaPluginSchema, {
   id: 'qiniu-portal',
   label: '七牛门户',
   fields: [],
+  baseUrls: ['https://api.example.com/v1'],
 })
 
 /** 登记表到手：里面就是这个插件。 */
 const READY: QuotaRegistry = { status: 'ready', plugins: [PLUGIN] }
-
-/** 建平台时能选的类型：到手了的两条（服务端现在给的那两条）。 */
-const KINDS: PlatformKindList = {
-  status: 'ready',
-  kinds: [
-    create(PlatformKindSchema, {
-      kind: 'openai',
-      label: 'OpenAI 兼容',
-    }),
-    create(PlatformKindSchema, {
-      kind: 'anthropic',
-      label: 'Anthropic 兼容',
-    }),
-  ],
-}
 
 /** 一个开放平台的额度栏。 */
 function facts(
@@ -63,14 +47,11 @@ function facts(
     kind: 'openai',
     baseUrl: 'https://api.example.com/v1',
     isOpenPlatform: true,
-    quotaPlugin: 'qiniu-portal',
     models: ['gpt-4o'],
     modelsFetchedAtMs: FETCHED_AT,
     quota: create(UpstreamQuotaSchema, quota),
   })
-  return (
-    <OpenPlatformFacts upstream={upstream} kinds={KINDS} registry={registry} />
-  )
+  return <OpenPlatformFacts upstream={upstream} registry={registry} />
 }
 
 /** 全页文字：断言「哪里都没有 0」时用它。 */
@@ -193,8 +174,8 @@ describe('额度那一栏按结论说', () => {
     expect(screen.queryByText(/^额度：/)).not.toBeInTheDocument()
     expect(screen.queryByText('未知')).not.toBeInTheDocument()
     expect(screen.queryByText('—')).not.toBeInTheDocument()
-    // 上面那几行还在（地址、目录、插件），只是没有额度这一栏。
-    expect(screen.getByText('额度插件：七牛门户')).toBeInTheDocument()
+    // 插件那一行已经退场：卡片上只有目录，没有插件行。
+    expect(screen.queryByText(/额度插件/)).not.toBeInTheDocument()
   })
 
   it('没结论但有数字（不走插件的种类）：数字照旧显示', () => {
@@ -217,23 +198,21 @@ describe('额度那一栏按结论说', () => {
 })
 
 /**
- * 登记表只是一张名字表：它到没到手，跟服务端说的额度结论无关。
+ * 登记表没到手：插件认不出来，额度区整块不摆。
  *
- * 结论在 `quotaState` 上，把「额度用尽」藏起来等于把服务端说的话丢了；插件那
- * 一行则要说准是三档里的哪一档 —— 加载中、取不到都不能说成「没登记」。
+ * 匹配按地址进行，登记表没到手就说不准「这个地址有没有插件」——那种时候既
+ * 不能摆「额度插件：还在加载」，也不能把服务端给的结论硬挂在一个认不出的
+ * 插件名下。整块不显示、不报错。
  */
-describe('登记表没到手：额度结论照服务端说的显示', () => {
-  it('加载中：额度结论照显示，插件那一行只说还在加载', () => {
+describe('登记表没到手：额度区整块不摆', () => {
+  it('加载中：状态句与数字都不显示，也不报错', () => {
     render(facts({ quotaState: 'no_quota' }, { status: 'pending' }))
 
-    expect(screen.getByText('额度用尽')).toBeInTheDocument()
-    expect(
-      screen.getByText('额度插件：qiniu-portal（列表还在加载）')
-    ).toBeInTheDocument()
-    expect(text()).not.toMatch(/没登记|未知插件/)
+    expect(screen.queryByText('额度用尽')).not.toBeInTheDocument()
+    expect(text()).not.toMatch(/额度插件|未知插件|没登记/)
   })
 
-  it('取不到：额度结论照显示，插件那一行只说取不到', () => {
+  it('取不到：同上，也不说原因（对不上插件不是错误）', () => {
     render(
       facts(
         { quotaState: 'blocked', recoverAtMs: RECOVER_AT },
@@ -241,17 +220,11 @@ describe('登记表没到手：额度结论照服务端说的显示', () => {
       )
     )
 
-    const when = formatLocalMoment(RECOVER_AT)
-    expect(
-      screen.getByText(`平台说这个账号不能用 · ${when} 恢复`)
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText('额度插件：qiniu-portal（列表取不到）')
-    ).toBeInTheDocument()
-    expect(text()).not.toMatch(/没登记|未知插件/)
+    expect(screen.queryByText(/不能用/)).not.toBeInTheDocument()
+    expect(text()).not.toMatch(/额度插件|问不到/)
   })
 
-  it('加载中且有数字：插件名说不准就摆 id，数字照显示', () => {
+  it('加载中且有数字：数字也不显示（挂不到插件名下）', () => {
     render(
       facts(
         {
@@ -266,8 +239,8 @@ describe('登记表没到手：额度结论照服务端说的显示', () => {
       )
     )
 
-    expect(screen.getByText('额度：qiniu-portal')).toBeInTheDocument()
-    expect(screen.getByText('剩 1,200 点')).toBeInTheDocument()
+    expect(screen.queryByText(/额度：/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/剩 1,200 点/)).not.toBeInTheDocument()
   })
 })
 
@@ -290,60 +263,23 @@ describe('认不出的状态', () => {
 })
 
 /**
- * 预置的模拟客户端：地址与额度插件两格不摆。
+ * 预置的模拟客户端：地址与插件行不摆。
  *
- * 那两格在库里都是空串（地址由模拟端定，额度不走平台这一行）。摆出来就是一个
- * 空的行、一句「额度插件：未选」—— 看着像漏填了什么。
- *
- * 两族的 kind 会重名（Qoder 的全球区与中国区都是 `qoder`），所以认的是 id 与
- * kind 两样。
+ * 地址在库里是空串（由模拟端定），空地址对不上任何插件 —— 额度区与插件行
+ * 整块不摆，不留一个空的行、一句「额度插件：未选」。
  */
 describe('模拟客户端那一行', () => {
-  /** 清单里那五条预置：这里只用到 MiniMax 与两个 Qoder。 */
-  const SIMULATED: PlatformKindList = {
-    status: 'ready',
-    kinds: [
-      create(PlatformKindSchema, {
-        kind: 'openai',
-        label: 'OpenAI 兼容',
-        category: 'dialect',
-      }),
-      create(PlatformKindSchema, {
-        kind: 'minimax',
-        label: 'MiniMax Code',
-        category: 'simulated',
-        presetId: 'minimax',
-        region: 'cn',
-      }),
-      create(PlatformKindSchema, {
-        kind: 'qoder',
-        label: 'Qoder（全球区）',
-        category: 'simulated',
-        presetId: 'qoder',
-        region: 'global',
-      }),
-      create(PlatformKindSchema, {
-        kind: 'qoder',
-        label: 'Qoder（中国区）',
-        category: 'simulated',
-        presetId: 'qoder-cn',
-        region: 'cn',
-      }),
-    ],
-  }
-
-  /** 一条模拟客户端平台：地址与额度插件都是空串。 */
+  /** 一条模拟客户端平台：地址是空串（归代码）。 */
   function simulated(id: string, kind: string) {
     const upstream = create(UpstreamSchema, {
       id,
       kind,
       label: id,
       baseUrl: '',
-      quotaPlugin: '',
       isOpenPlatform: true,
       models: ['MiniMax-M2'],
     })
-    return <OpenPlatformFacts upstream={upstream} kinds={SIMULATED} registry={READY} />
+    return <OpenPlatformFacts upstream={upstream} registry={READY} />
   }
 
   it('地址与额度插件两行都不摆', () => {
