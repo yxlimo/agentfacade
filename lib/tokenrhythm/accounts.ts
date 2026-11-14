@@ -36,9 +36,6 @@ import { registerLoginFlow, type LoginContext, type LoginTicket, type SubmitInpu
 // 引着，地址放在外面，两边读的是同一份常量。
 import { TOKENRHYTHM_API_BASE } from "./config.ts";
 
-/** The platform id. */
-const PLATFORM = "tokenrhythm";
-
 /** One account: what logs in, and the key the inference uses. */
 export interface TokenRhythmCredential {
   account: string;
@@ -353,8 +350,9 @@ registerLoginFlow<TokenRhythmSession>("tokenrhythm", {
   // 会话在这里落库：面板那条路只写这一次。
   //
   // 推理用的 key 是另一回事：cookie 只读得到钱包，key 才是推理用的。key 由
-  // 用户自己在面板上填（见 writeTokenRhythmKey），网关不替人建一把 —— 平台
-  // 只把完整值给一次，用户看不到也换不掉。
+  // 用户在面板上填（开放平台的推理 key 走 writeOpenPlatformKey，存到
+  // key:provider:<账号>:key），网关不替人建一把 —— 平台只把完整值给一次，
+  // 用户看不到也换不掉。
   commit: async (ctx: LoginContext, session: TokenRhythmSession): Promise<string> => {
     saveSession(session, { force: true });
     return providerSecretId(ctx.accountId);

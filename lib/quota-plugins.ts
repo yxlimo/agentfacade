@@ -57,11 +57,3 @@ export {
   type QuotaProbe,
 };
 
-/**
- * 已经报过「这个平台的额度插件没登记」的那些。
- *
- * 一个平台的这个插件说一次：这句话是配置错误，不该跟着启动的次数刷屏，也
- * 不能把真正的故障淹掉。
- */
-const warnedUnknownPlugins = new Set<string>();
-

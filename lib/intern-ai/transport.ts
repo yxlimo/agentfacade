@@ -12,7 +12,7 @@
 //
 // 额度不在这里：墨点是控制台的接口，见 lib/intern-ai/quota.ts。
 
-import { INTERN_AI_DISCOVERY_API_BASE, internAiDiscoveryKey } from "./config.ts";
+import { internAiDiscoveryKey } from "./config.ts";
 import { loadSession, storedAccount } from "./auth.ts";
 import {
   listDiscoveryConsoleModels,
@@ -21,7 +21,6 @@ import {
   type InternAiCatalogModel,
 } from "./models.ts";
 import { CatalogCache } from "../router/catalog-cache.ts";
-import { openAiPlatformChat } from "../router/openai-platform.ts";
 
 /** 清单最多放多久。模型清单变得不快，半小时问一次够了。 */
 const CATALOG_TTL_MS = 30 * 60 * 1000;
@@ -100,32 +99,4 @@ export async function refreshInternAiCatalog(force = false, providerId = "intern
       await new Promise((r) => setTimeout(r, KEY_SETTLE_MS));
     }
   }
-}
-
-/* ------------------------------------------------------------------ *
- * 推理
- * ------------------------------------------------------------------ */
-
-/**
- * 发一个请求到推理端点。
- *
- * 请求体是 OpenAI 形状的，原样发过去；答案也是 OpenAI 形状的，原样回来。
- */
-export async function internAiChat(
-  body: Record<string, unknown>,
-  providerId = "intern-ai",
-  extraHeaders: Record<string, string> = {},
-  signal?: AbortSignal,
-): Promise<Response> {
-  return openAiPlatformChat(
-    {
-      id: "intern-ai",
-      label: "书生·端砚",
-      base: INTERN_AI_DISCOVERY_API_BASE,
-      key: internAiInferenceKey(providerId),
-    },
-    body,
-    extraHeaders,
-    signal,
-  );
 }

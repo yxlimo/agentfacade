@@ -800,23 +800,6 @@ export function deleteSecret(id: string): void {
   store().prepare("DELETE FROM secrets WHERE id = ?").run(id);
 }
 
-/* ------------------------------------------------------------------ *
- * The deleted providers
- * ------------------------------------------------------------------ */
-
-/** A provider the operator deleted: it stays deleted. */
-export function markProviderDeleted(id: string): void {
-  store()
-    .prepare("INSERT INTO deleted_provider (id, deleted_at) VALUES (?, ?) ON CONFLICT(id) DO NOTHING")
-    .run(id, Date.now());
-}
-
-/** Was this provider deleted? */
-export function providerDeleted(id: string): boolean {
-  const row = store().prepare("SELECT id FROM deleted_provider WHERE id = ?").get(id);
-  return row !== undefined;
-}
-
 /** Every secret whose id starts with the prefix. */
 export function listSecrets(prefix = ""): SecretRow[] {
   const rows = store()

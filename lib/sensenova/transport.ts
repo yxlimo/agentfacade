@@ -11,11 +11,10 @@
 //
 // 额度不在这里：那是控制台的接口，见 lib/sensenova/quota.ts。
 
-import { SENSENOVA_INFER_BASE, senseNovaApiKey } from "./config.ts";
+import { senseNovaApiKey } from "./config.ts";
 import { storedAccount } from "./auth.ts";
 import { listModels, type SenseNovaModel } from "./models.ts";
 import { CatalogCache } from "../router/catalog-cache.ts";
-import { openAiPlatformChat } from "../router/openai-platform.ts";
 
 /** 清单最多放多久。模型清单变得不快，半小时问一次够了。 */
 const CATALOG_TTL_MS = 30 * 60 * 1000;
@@ -72,33 +71,4 @@ export async function refreshSenseNovaCatalog(force = false, providerId = "sense
   } catch (e) {
     console.warn(`[SENSENOVA] 模型清单刷新失败：${(e as Error)?.message}`);
   }
-}
-
-/* ------------------------------------------------------------------ *
- * 推理
- * ------------------------------------------------------------------ */
-
-/**
- * 发一个请求到推理端点。
- *
- * 请求体是 OpenAI 形状的，原样发过去；答案也是 OpenAI 形状的，原样回来。
- * 上游报错了就把它的原话带回去 —— 平台自己的话比「上游失败了」有用。
- */
-export async function senseNovaChat(
-  body: Record<string, unknown>,
-  providerId = "sensenova",
-  extraHeaders: Record<string, string> = {},
-  signal?: AbortSignal,
-): Promise<Response> {
-  return openAiPlatformChat(
-    {
-      id: "sensenova",
-      label: "SenseNova",
-      base: SENSENOVA_INFER_BASE,
-      key: senseNovaInferenceKey(providerId),
-    },
-    body,
-    extraHeaders,
-    signal,
-  );
 }

@@ -8,7 +8,6 @@
 
 import crypto from "node:crypto";
 import { deleteProviderCredentials, deleteProviderRow, listProviders, provider } from "../providers.ts";
-import { getSecret } from "../store.ts";
 import { clearDeadSession } from "../session.ts";
 import { authLog, tokenFingerprint } from "../credential.ts";
 import { dataDir } from "../paths.ts";
@@ -26,15 +25,6 @@ import { zcodeStatus } from "../zcode/auth.ts";
 import { clearOpenPlatformKey } from "../open-platform-credentials.ts";
 import { openPlatformOf } from "../open-platforms.ts";
 import { fetchOpenPlatformModels } from "../open-platform-catalog.ts";
-import { senseNovaInferenceKey } from "../sensenova/transport.ts";
-import { internAiInferenceKey } from "../intern-ai/transport.ts";
-import {
-  forgetTokenRhythmCredential,
-  loadSession as loadTokenRhythmSession,
-  login as loginTokenRhythm,
-  tokenRhythmCredentialOf,
-} from "../tokenrhythm/accounts.ts";
-import { wallet as tokenRhythmWallet } from "../tokenrhythm/wallet.ts";
 import { forgetAccountSnapshot } from "./upstreams.ts";
 import { clearCooldown } from "../cooldown.ts";
 import { CredentialState } from "../gen/buddy/admin/v1/admin_pb.ts";
@@ -306,7 +296,7 @@ export function logoutAccount(accountId: string): { ok: boolean; message: string
   if (!id) return { ok: false, message: "需要提供账号 id", removed: 0 };
   const row = provider(id);
   if (!row) return { ok: false, message: `没有这个账号：${id}`, removed: 0 };
-  const removed = forgetAccountRecords(id, row.kind);
+  const removed = forgetAccountRecords(id);
   if (!removed) return { ok: true, message: "这个账号没有凭据", removed: 0 };
   console.log(`[ADMIN] ${id} 注销了，删掉 ${removed} 条凭据`);
   return { ok: true, message: `已注销，删除 ${removed} 条凭据`, removed };
@@ -318,13 +308,12 @@ export function logoutAccount(accountId: string): { ok: boolean; message: string
  * 两处都要删：账号自己名下那些、健康快照里它的那段。少删一处，那个账号就会
  * 带着旧身份回来 —— 快照里的额度会继续显示着一个已经不存在的账号。
  */
-export function forgetAccountRecords(accountId: string, kind?: string): number {
+export function forgetAccountRecords(accountId: string): number {
   let removed = deleteProviderCredentials(accountId);
   // 开放平台的凭据自己清一遍：那把 key 是这个账号的全部身份，删账号就得删它
   // —— 不然它就成了一条没人认领的孤儿记录（存凭据的地方换了位置也不怕）。
   clearOpenPlatformKey(accountId);
   forgetAccountSnapshot(accountId);
-  if (kind === "tokenrhythm") removed += forgetTokenRhythmCredential(accountId);
   // 冷却也一起删：账号 id 会被复用（下一个账号接着排队），留着这一行，新账号
   // 开局就在冷却里 —— 面板说它可用，网关说它冷却中。
   try {
@@ -345,7 +334,7 @@ export function deleteAccount(accountId: string): { ok: boolean; message: string
   if (!id) return { ok: false, message: "需要提供账号 id", removed: 0 };
   const row = provider(id);
   if (!row) return { ok: false, message: `没有这个账号：${id}`, removed: 0 };
-  const removed = forgetAccountRecords(id, row.kind);
+  const removed = forgetAccountRecords(id);
   deleteProviderRow(id);
   console.log(`[ADMIN] ${id} 删了，连 ${removed} 条凭据一起`);
   return { ok: true, message: removed > 0 ? `已删除该账号及其 ${removed} 条凭据` : "已删除", removed };
@@ -437,47 +426,6 @@ async function testTarget(target: CredentialTarget): Promise<{ ok: boolean; mess
       if (state === "authenticated") return { ok: true, message: "可用" };
       if (state === "expired") return { ok: false, message: "令牌已过期，需要重新登录" };
       return { ok: false, message: "未登录 ZCode" };
-    }
-    case "sensenova": {
-      // 会话与推理 key 是两回事：会话说的是登录态，推理 key 说的是干活的那把
-      // 钥匙。
-      if (target.form === "session") {
-        const session = getSecret<{ accessToken?: string }>(`session:provider:${p.id}`);
-        return session?.accessToken
-          ? { ok: true, message: "登录会话仍然有效" }
-          : { ok: false, message: "没有登录会话" };
-      }
-      const key = senseNovaInferenceKey(p.id);
-      return key
-        ? { ok: true, message: "推理 Key 已配置" }
-        : { ok: false, message: "未配置推理 Key" };
-    }
-    case "intern-ai": {
-      if (target.form === "session") {
-        const session = getSecret<{ token?: string }>(`session:provider:${p.id}`);
-        return session?.token
-          ? { ok: true, message: "登录会话仍然有效" }
-          : { ok: false, message: "没有登录会话" };
-      }
-      const key = internAiInferenceKey(p.id);
-      return key
-        ? { ok: true, message: "推理 Key 已配置" }
-        : { ok: false, message: "未配置推理 Key" };
-    }
-    case "tokenrhythm": {
-      const credential = tokenRhythmCredentialOf(p.id);
-      if (!credential) return { ok: false, message: "这个账号未配置凭据" };
-      if (target.form === "api_key") {
-        return credential.apiKey
-          ? { ok: true, message: "推理 Key 已配置" }
-          : { ok: false, message: "未配置推理 Key" };
-      }
-      if (target.form !== "session") return { ok: false, message: `不知道这条凭据的形态：${target.form}` };
-      // 会话：先看有没有存着的会话（本地），有才去问平台。
-      const session = loadTokenRhythmSession(p.id);
-      if (!session) return { ok: false, message: "这个账号没有登录态" };
-      const w = await tokenRhythmWallet(session);
-      return { ok: true, message: `可以登录，可用余额 ${w.availableCny} ${w.currency}` };
     }
     // 一把推理 key 加额度那几段的平台（七牛云、讯飞星火）与通用开放平台
     // （openai / anthropic）走同一个测试：它们的凭据形状是一样的。
@@ -586,10 +534,6 @@ async function refreshTarget(
     case "zcode":
       // ZCode 的令牌是 JWT，没有刷新通道：过期了只能重登。
       return { ok: false, message: "ZCode 的令牌没有刷新通道，过期后需要重新登录", generation: 0 };
-    case "tokenrhythm": {
-      await loginTokenRhythm(p.id);
-      return { ok: true, message: "重新登录已完成", generation: 0 };
-    }
     default:
       return { ok: false, message: `这条凭据不支持刷新：${id}`, generation: 0 };
   }

@@ -4,20 +4,16 @@
 // and the key, which calls the models. A key is only shown in full once, in
 // the answer that creates it, so the list is all masked.
 //
-// The key an account uses is the user's to fill in (see
-// writeTokenRhythmKey): the gateway does not build one. A key it built would
-// be one the user never sees and can never replace.
+// The inference key an account uses is the user's to fill in from the panel
+// (the open-platform write path): the gateway does not build one. A key it
+// built would be one the user never sees and can never replace.
 //
 // Creating a key is a write, and a write is checked: the session cookie, the
 // CSRF token sent twice, and the browser's fetch metadata. The headers for
 // that are in lib/tokenrhythm/accounts.ts.
 
 import { platformApi } from "./platform.ts";
-import {
-  saveTokenRhythmCredential,
-  tokenRhythmCredentialOf,
-  type TokenRhythmSession,
-} from "./accounts.ts";
+import type { TokenRhythmSession } from "./accounts.ts";
 
 export interface TokenRhythmApiKey {
   id: string;
@@ -89,24 +85,4 @@ export async function enableApiKey(session: TokenRhythmSession, id: string): Pro
     method: "POST",
     body: {},
   });
-}
-
-/**
- * The key of an account.
- *
- * The one that is already stored wins: a key that was rotated there has to
- * take effect.
- */
-export function writeTokenRhythmKey(providerId: string, apiKey: string): number {
-  const key = String(apiKey ?? "").trim();
-  const stored = tokenRhythmCredentialOf(providerId);
-  if (!key) {
-    // 没有记录就没什么可清的：别凭空造一条只有空 key 的凭据。
-    if (!stored) return 0;
-    saveTokenRhythmCredential(providerId, { apiKey: null });
-    return 0;
-  }
-  // 只改 key 那一格：账号与密码原样留着（把它们清掉等于把登录态清了）。
-  saveTokenRhythmCredential(providerId, { apiKey: key });
-  return 1;
 }
