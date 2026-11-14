@@ -65,6 +65,7 @@ const { SIMULATED_CLIENTS, platformCategoryOfKind } = await import("../lib/platf
 const { store, closeStore, migrateSimulatedClients, platformPresetRemoved } = await import(
   "../lib/store.ts"
 );
+const { quotaPluginForBaseUrl } = await import("../lib/quota-plugins.ts");
 
 const SEEDED = SIMULATED_CLIENTS.filter((c) => !c.hidden);
 
@@ -78,7 +79,7 @@ function snapshot(): string {
   return JSON.stringify(
     store()
       .prepare(
-        "SELECT id, label, base_url, models, models_auto, quota_plugin, kind, region, " +
+        "SELECT id, label, base_url, models, models_auto, kind, region, " +
           "created_at, updated_at FROM platform ORDER BY id",
       )
       .all(),
@@ -143,15 +144,15 @@ check(
   platformCategoryOfKind(seededRow?.kind ?? "") === "simulated",
   seededRow?.kind ?? "",
 );
-check("播种的行没有额度插件", seededRow?.quotaPlugin === "", JSON.stringify(seededRow?.quotaPlugin));
+// 额度插件没有「行上那一格」了：插件按地址认（地址空串 → 认不出 → 没有额度）。
 
 // 已有库的行不被任何启动逻辑改写：插一行目录空着的厂商行（以前那一轮播种会
 // 把它填上），重启之后它还是那样 —— 空的还是空的，那一格开关也没被动。
 store()
   .prepare(
     "INSERT INTO platform " +
-      "(id, label, base_url, models, models_auto, quota_plugin, kind, region, created_at, updated_at) " +
-      "VALUES (?, ?, ?, ?, ?, '', ?, '', ?, ?)",
+      "(id, label, base_url, models, models_auto, kind, region, created_at, updated_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?, '', ?, ?)",
   )
   .run(
     "vendor-keep",
@@ -309,8 +310,8 @@ const VENDOR_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "platform-migration-ven
   const fresh = store();
   fresh
     .prepare(
-      "INSERT INTO platform (id, label, base_url, models, quota_plugin, kind, created_at, updated_at) " +
-        "VALUES ('qiniu', '七牛云', 'https://stale.example/v1', ?, 'qiniu', 'qiniu', 1, 1)",
+      "INSERT INTO platform (id, label, base_url, models, kind, created_at, updated_at) " +
+        "VALUES ('qiniu', '七牛云', 'https://stale.example/v1', ?, 'qiniu', 1, 1)",
     )
     .run(JSON.stringify({ items: ["m1"], traits: { m1: { contextWindow: 8192 } }, fetchedAt: 0 }));
   fresh
@@ -333,7 +334,13 @@ check(
   vendorRow?.baseUrl === "https://api.qnaigc.com/v1",
   String(vendorRow?.baseUrl),
 );
-check("quota_plugin 原样留着（插件按行挂，不随 kind 迁移）", vendorRow?.quotaPlugin === "qiniu", String(vendorRow?.quotaPlugin));
+check(
+  "quota_plugin 列已退场（插件按地址认，地址就是迁移写进去的那台）",
+  vendorRow !== null &&
+    (store().prepare("PRAGMA table_info(platform)").all() as { name?: string }[]).every((c) => c.name !== "quota_plugin") &&
+    quotaPluginForBaseUrl(String(vendorRow?.baseUrl))?.id === "qiniu",
+  `${String(vendorRow?.baseUrl)} / ${String(quotaPluginForBaseUrl(String(vendorRow?.baseUrl ?? ""))?.id)}`,
+);
 check(
   "models（含 traits）原样留着（目录在行里，不属于 kind）",
   (vendorRow?.models.items ?? []).join(",") === "m1" &&
@@ -397,8 +404,8 @@ const TR_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "platform-migration-tokenrh
   const fresh = store();
   fresh
     .prepare(
-      "INSERT INTO platform (id, label, base_url, models, quota_plugin, kind, created_at, updated_at) " +
-        "VALUES ('tokenrhythm', 'TokenRhythm', 'https://tokenrhythm.studio/v1', ?, 'tokenrhythm', 'tokenrhythm', 1, 1)",
+      "INSERT INTO platform (id, label, base_url, models, kind, created_at, updated_at) " +
+        "VALUES ('tokenrhythm', 'TokenRhythm', 'https://tokenrhythm.studio/v1', ?, 'tokenrhythm', 1, 1)",
     )
     .run(JSON.stringify({ items: ["m1"], fetchedAt: 0 }));
   fresh
@@ -463,6 +470,142 @@ allPlatforms();
 
 closeStore();
 fs.rmSync(TR_DIR, { recursive: true, force: true });
+
+/* ------------------------------------------------------------------ *
+ * 三、七、额度插件改按地址认：quota_plugin 列退场（版本 4）
+ * ------------------------------------------------------------------ */
+
+section("版本 4：quota_plugin 列退场");
+
+// 老库的形状：行上还挂着插件 id。迁移只做一件事：把那一列删掉。
+//
+// 地址不碰：行上的 base_url 是用户的推理地址，指到自建端点或假上游都是合法
+// 且有文档的用法。地址对不上任何插件就是「没有额度」（未知），那比把用户的
+// 地址改回厂商地址轻得多 —— 后者等于把请求搬到真上游。
+const QP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "platform-migration-quota-plugin-"));
+{
+  process.env.BUDDY_DATA_DIR = QP_DIR;
+  const fresh = store();
+  fresh
+    .prepare(
+      "INSERT INTO platform (id, label, base_url, kind, created_at, updated_at) " +
+        "VALUES (?, ?, ?, 'openai', 1, 1)",
+    )
+    .run("empty-qiniu", "地址空着的七牛", "");
+  fresh
+    .prepare(
+      "INSERT INTO platform (id, label, base_url, kind, created_at, updated_at) " +
+        "VALUES (?, ?, ?, 'openai', 1, 1)",
+    )
+    .run("custom-base", "用户自己改过地址的七牛", "https://mirror.example/v1");
+  fresh
+    .prepare(
+      "INSERT INTO platform (id, label, base_url, kind, created_at, updated_at) " +
+        "VALUES (?, ?, ?, 'openai', 1, 1)",
+    )
+    .run("self-hosted", "自建端点的 TokenRhythm", "https://self-hosted.example/v1");
+  fresh.exec("PRAGMA user_version = 3");
+  // 老库还有那一列：退掉它之前先把 id 写回去（版本 4 的输入就是这个形状）。
+  fresh.exec("ALTER TABLE platform ADD COLUMN quota_plugin TEXT NOT NULL DEFAULT ''");
+  fresh
+    .prepare(
+      "UPDATE platform SET quota_plugin = 'qiniu' WHERE id = 'empty-qiniu'; " +
+        "UPDATE platform SET quota_plugin = 'qiniu' WHERE id = 'custom-base'; " +
+        "UPDATE platform SET quota_plugin = 'tokenrhythm-wallet' WHERE id = 'self-hosted';",
+    )
+    .run();
+  fresh.exec("PRAGMA user_version = 3");
+  closeStore();
+}
+
+allPlatforms();
+{
+  const columns = (store().prepare("PRAGMA table_info(platform)").all() as { name?: string }[]).map(
+    (c) => c.name ?? "",
+  );
+  check("quota_plugin 列没了", !columns.includes("quota_plugin"), columns.join(","));
+
+  // 地址空着的行：补上该插件的地址，这一行才认得出插件。
+  const empty = openPlatformOf("empty-qiniu");
+  check(
+    "地址空着的行补上了插件的地址，插件按它认出来",
+    empty?.baseUrl === "https://api.qnaigc.com/v1" &&
+      quotaPluginForBaseUrl(String(empty?.baseUrl ?? ""))?.id === "qiniu",
+    String(empty?.baseUrl),
+  );
+
+  // 用户自己填的地址：一个字都不动。
+  const custom = openPlatformOf("custom-base");
+  check(
+    "用户改过的地址原样留着（迁移不改用户的推理地址）",
+    custom?.baseUrl === "https://mirror.example/v1",
+    String(custom?.baseUrl),
+  );
+  check(
+    "地址对不上插件就落「没有额度」，不认成别的插件",
+    quotaPluginForBaseUrl(String(custom?.baseUrl ?? "")) === null,
+    String(quotaPluginForBaseUrl(String(custom?.baseUrl ?? ""))?.id),
+  );
+
+  // 自建端点那一行：同样不动，而且它对不上任何插件（未知额度，不是零）。
+  const selfHosted = openPlatformOf("self-hosted");
+  check(
+    "自建端点的地址原样留着",
+    selfHosted?.baseUrl === "https://self-hosted.example/v1",
+    String(selfHosted?.baseUrl),
+  );
+  check(
+    "自建端点认不出插件就是没有额度",
+    quotaPluginForBaseUrl(String(selfHosted?.baseUrl ?? "")) === null,
+    String(quotaPluginForBaseUrl(String(selfHosted?.baseUrl ?? ""))?.id),
+  );
+
+  // 幂等：重启一遍，什么都不要再动。
+  const again = JSON.stringify(store().prepare("SELECT id, base_url FROM platform ORDER BY id").all());
+  closeStore();
+  allPlatforms();
+  check("重跑一遍迁移：行还是迁完的样子", JSON.stringify(store().prepare("SELECT id, base_url FROM platform ORDER BY id").all()) === again, again);
+}
+closeStore();
+fs.rmSync(QP_DIR, { recursive: true, force: true });
+
+/* ------------------------------------------------------------------ *
+ * 版本 4 的地址跟着部署走：自建端点不能被填成厂商地址
+ * ------------------------------------------------------------------ */
+
+section("版本 4：自建部署填自己的地址");
+
+// 部署把 TokenRhythm 的推理地址指到自建端点（TOKENRHYTHM_INFER_BASE）。迁移
+// 给「地址空着的行」补地址时，补的必须是这台自建端点，不是厂商地址 ——
+// 填厂商地址等于把自建部署的流量指回真上游。
+const ENV_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "platform-migration-env-"));
+{
+  process.env.BUDDY_DATA_DIR = ENV_DIR;
+  process.env.TOKENRHYTHM_INFER_BASE = "https://self-hosted-tokenrhythm.example/v1";
+  const fresh = store();
+  fresh
+    .prepare(
+      "INSERT INTO platform (id, label, base_url, kind, created_at, updated_at) " +
+        "VALUES (?, ?, ?, 'openai', 1, 1)",
+    )
+    .run("tr-empty", "地址空着的 TokenRhythm", "");
+  fresh.exec("PRAGMA user_version = 3");
+  fresh.exec("ALTER TABLE platform ADD COLUMN quota_plugin TEXT NOT NULL DEFAULT ''");
+  fresh.prepare("UPDATE platform SET quota_plugin = 'tokenrhythm-wallet' WHERE id = 'tr-empty'").run();
+  fresh.exec("PRAGMA user_version = 3");
+  closeStore();
+
+  allPlatforms();
+  const row = openPlatformOf("tr-empty");
+  check(
+    "自建部署补的是自建地址，不是厂商地址",
+    row?.baseUrl === "https://self-hosted-tokenrhythm.example/v1",
+    String(row?.baseUrl),
+  );
+  delete process.env.TOKENRHYTHM_INFER_BASE;
+}
+closeStore();
+fs.rmSync(ENV_DIR, { recursive: true, force: true });
 
 /* ------------------------------------------------------------------ *
  * 四、删掉的预置平台不会长回来

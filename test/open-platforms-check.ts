@@ -235,7 +235,6 @@ const created = createOpenPlatform({
   id: "acme",
   label: "Acme",
   baseUrl: "https://api.acme.test/v1",
-  quotaPlugin: "qiniu",
 });
 check("开放平台加得进去", created.ok === true, created.message);
 check(
@@ -250,8 +249,8 @@ check(
 );
 const row = openPlatformOf("acme");
 check(
-  "这一行读得回来",
-  row?.label === "Acme" && row?.baseUrl === "https://api.acme.test/v1" && row?.quotaPlugin === "qiniu",
+  "这一行读得回来（行上没有插件格：插件按地址认）",
+  row?.label === "Acme" && row?.baseUrl === "https://api.acme.test/v1",
   JSON.stringify(row),
 );
 check("查得到这个平台", platformOfAny("acme")?.id === "acme", JSON.stringify(platformOfAny("acme")));
@@ -386,7 +385,7 @@ check("改得掉", renamed.ok === true, renamed.message);
 const afterEdit = openPlatformOf("acme");
 check("名字改了", afterEdit?.label === "Acme Cloud", String(afterEdit?.label));
 check("地址改了", afterEdit?.baseUrl === "https://api.acme.test/v2", String(afterEdit?.baseUrl));
-check("没给的字段没动", afterEdit?.quotaPlugin === "qiniu", String(afterEdit?.quotaPlugin));
+
 
 // 没给 base_url 时地址不能变成空串：这一格的「没给」靠 undefined，写成
 // String(x ?? "") 就等于「把地址清空」，只改名字的单会被地址校验挡掉。
@@ -403,30 +402,6 @@ check(
   String(openPlatformOf("acme")?.label),
 );
 
-// 没登记的插件 id：拒收，库里那一格原地不动 —— 存下去之后这个平台一条额度结论
-// 都不会有，而面板上看着「已选插件」。
-const badPluginId = updateOpenPlatform("acme", { quotaPlugin: "no-such-plugin" });
-check("没登记的插件 id 不收", badPluginId.ok === false, badPluginId.message);
-check(
-  "拒绝的机器码是「没有这个额度插件」，细节里带着那个 id 与登记过的几个",
-  badPluginId.code === "QUOTA_PLUGIN_UNKNOWN" &&
-    badPluginId.message.includes("no-such-plugin") &&
-    badPluginId.message.includes("qiniu"),
-  JSON.stringify(badPluginId),
-);
-check(
-  "库里那一格没被改",
-  openPlatformOf("acme")?.quotaPlugin === "qiniu",
-  String(openPlatformOf("acme")?.quotaPlugin),
-);
-
-// null 是「把这一格清空」，不是「别动它」。
-const nulled = updateOpenPlatform("acme", { quotaPlugin: null as unknown as string });
-check(
-  "quotaPlugin 给 null 存成空串",
-  nulled.ok === true && openPlatformOf("acme")?.quotaPlugin === "",
-  `${nulled.message} / ${String(openPlatformOf("acme")?.quotaPlugin)}`,
-);
 
 // 目录写不进去：目录归上游（拉下来才有）或归代码，不是写入口说了算。
 const modeled = updateOpenPlatform("acme", { models: ["m1", "m2"] } as never);
@@ -578,7 +553,6 @@ check(
   simulatedRow?.models.items.length === 0,
   JSON.stringify(simulatedRow?.models),
 );
-check("额度插件是空串", simulatedRow?.quotaPlugin === "", JSON.stringify(simulatedRow?.quotaPlugin));
 check("kind 就是预置那一类", simulatedRow?.kind === simulatedPreset.kind, JSON.stringify(simulatedRow?.kind));
 check(
   "表里的行数回到删之前",

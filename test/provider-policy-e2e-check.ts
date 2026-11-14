@@ -292,8 +292,8 @@ async function startGateway(expiryFirst = false): Promise<Gateway> {
   seed
     .prepare(
       "INSERT OR IGNORE INTO platform " +
-        "(id, label, base_url, models, quota_plugin, kind, region, created_at, updated_at) " +
-        "VALUES (?, ?, ?, ?, ?, ?, '', ?, ?)",
+        "(id, label, base_url, models, kind, region, created_at, updated_at) " +
+        "VALUES (?, ?, ?, ?, ?, '', ?, ?)",
     )
     .run(
       "tokenrhythm",
@@ -302,9 +302,7 @@ async function startGateway(expiryFirst = false): Promise<Gateway> {
       // 目录是上游那一份：路由要先有目录才接请求（这一行空着的话，请求会被
       // 「目录还没拿到」挡掉，测的就不是换租户了）。
       JSON.stringify({ items: ["deepseek-v4.1-flash-1017"], traits: {}, fetchedAt: 0 }),
-      // 迁移后的形状：kind=openai，行上指名钱包插件（余额到期优先按插件报的
-      // 快照挑账号）。
-      "tokenrhythm-wallet",
+      // 迁移后的形状：kind=openai（额度插件按地址认）。
       "openai",
       Date.now(),
       Date.now(),

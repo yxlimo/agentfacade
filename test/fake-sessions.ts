@@ -74,15 +74,12 @@ const VENDOR_ENV_BASE: Record<string, string> = {
 };
 for (const platform of on) {
   // 厂商那几行不再由代码补（平台行是用户在面板上自己建的），kind 也退场了：
-  // 测试自己造迁移后的形状（kind=openai + 常量地址 + 行上的额度插件）。模拟
+  // 测试自己造迁移后的形状（kind=openai + 规范地址，插件按地址认）。模拟
   // 客户端那一族启动时自己播出来，不归这里管。
   if (platform in VENDOR_QUOTA_PLUGINS) {
     const envName = VENDOR_ENV_BASE[platform];
     const envBase = envName ? process.env[envName] : undefined;
-    insertVendorPlatform(platform, platform, {
-      quotaPlugin: VENDOR_QUOTA_PLUGINS[platform],
-      ...(envBase ? { baseUrl: envBase } : {}),
-    });
+    insertVendorPlatform(platform, platform, envBase ? { baseUrl: envBase } : {});
   } else if (!isSimulatedClientId(platform)) {
     throw new Error(`TEST_UPSTREAMS 里的 ${platform} 既不是模拟客户端也不是已知厂商平台`);
   }

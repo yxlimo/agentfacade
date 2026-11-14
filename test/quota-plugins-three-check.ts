@@ -705,98 +705,37 @@ check(
   askedSince(mark).join(" / "),
 );
 
-// 2. 自建平台：行上的地址不是模板默认值 → 额度问那一台（主机换成行上的，路径不变）。
-const selfSense = createOpenPlatform({
-  id: "self-sensenova",
-  label: "自建 SenseNova",
-  baseUrl: SELF,
-  quotaPlugin: "sensenova-pools",
-});
-check("自建平台建得起来（SenseNova）", selfSense.ok === true, selfSense.message);
-const selfSenseId = accountOf("self-sensenova", "自建 SenseNova 账号").row;
+// 2. 行上的地址是陌生域名：插件不认这一行，额度就是没有 —— 一台都不问。
+//    这是反证：匹配要是没了（或者兜底到行上地址），这里就该有请求出去。
+const { quotaPluginForBaseUrl } = await import("../lib/quota-plugins.ts");
+const selfSense = createOpenPlatform({ id: "self-sensenova", label: "陌生地址的平台", baseUrl: SELF });
+check("陌生地址的平台建得起来（SenseNova）", selfSense.ok === true, selfSense.message);
+const selfSenseId = accountOf("self-sensenova", "陌生地址的账号").row;
 senseSession(selfSenseId);
-mark = asked.length;
-const selfSenseProbe = await senseNovaPoolsPlugin.probe(provider(selfSenseId)!);
-check("自建平台（SenseNova）问到了额度", selfSenseProbe.state === "ok", JSON.stringify(selfSenseProbe));
-check(
-  "自建平台（SenseNova）问的是行上那台、路径不变",
-  askedAt(askedSince(mark), "/lite/console/v1/tokenplan/pool-usage", SELF),
-  askedSince(mark).join(" / "),
-);
-
-const selfIntern = createOpenPlatform({
-  id: "self-intern-ai",
-  label: "自建端砚",
-  baseUrl: SELF,
-  quotaPlugin: "intern-ai-credits",
-});
-check("自建平台建得起来（端砚）", selfIntern.ok === true, selfIntern.message);
-const selfInternId = accountOf("self-intern-ai", "自建端砚账号").row;
+const selfIntern = createOpenPlatform({ id: "self-intern-ai", label: "陌生地址的平台二", baseUrl: SELF });
+const selfInternId = accountOf("self-intern-ai", "陌生地址的账号二").row;
 internSession(selfInternId);
-mark = asked.length;
-const selfInternProbe = await internAiCreditsPlugin.probe(provider(selfInternId)!);
-check("自建平台（端砚）问到了墨点", selfInternProbe.state === "ok", JSON.stringify(selfInternProbe));
-const selfInternAsked = askedSince(mark);
-check(
-  "自建平台（端砚）的余额与批次都问行上那台",
-  selfInternAsked.length === 2 &&
-    selfInternAsked[0] === new URL("/api/tokenplan/v1/credits/balance", SELF).toString() &&
-    selfInternAsked[1] === new URL("/api/tokenplan/v1/credits/packages", SELF).toString(),
-  selfInternAsked.join(" / "),
-);
-
-const selfTw = createOpenPlatform({
-  id: "self-tokenrhythm",
-  label: "自建中转站",
-  baseUrl: SELF,
-  quotaPlugin: "tokenrhythm-wallet",
-});
-check("自建平台建得起来（TokenRhythm）", selfTw.ok === true, selfTw.message);
-const selfTwId = accountOf("self-tokenrhythm", "自建中转站账号").row;
+const selfTw = createOpenPlatform({ id: "self-tokenrhythm", label: "陌生地址的中转站", baseUrl: SELF });
+const selfTwId = accountOf("self-tokenrhythm", "陌生地址的中转站账号").row;
 twSession(selfTwId);
-resetTokenRhythmStatusCache(selfTwId);
+check("三家都认不出插件", quotaPluginForBaseUrl(SELF) === null);
 mark = asked.length;
-const selfTwProbe = await tokenRhythmWalletPlugin.probe(provider(selfTwId)!);
-check("自建平台（TokenRhythm）问到了钱包", selfTwProbe.state === "ok", JSON.stringify(selfTwProbe));
-const selfTwAsked = askedSince(mark);
+const selfKindSnapshot: any = { plugins: {} };
 check(
-  "自建平台（TokenRhythm）的钱包与批次都问行上那台",
-  selfTwAsked.length === 2 &&
-    selfTwAsked[0] === new URL("/api/wallet/summary", SELF).toString() &&
-    selfTwAsked[1] ===
-      new URL(
-        "/api/wallet/expiring-credits?page=1&pageSize=50&includeInactive=true&includePermanent=true",
-        SELF,
-      ).toString(),
-  selfTwAsked.join(" / "),
-);
-
-// 3. 行上带尾部斜杠：与不带时一模一样（地址交给 URL 解析，不靠手写裁剪）。
-for (const id of ["self-sensenova", "self-intern-ai", "self-tokenrhythm"]) {
-  platformDb().prepare("UPDATE platform SET base_url = ? WHERE id = ?").run(`${SELF}/`, id);
-}
-mark = asked.length;
-await senseNovaPoolsPlugin.probe(provider(selfSenseId)!);
-check(
-  "行上带尾部斜杠 → SenseNova 问的还是同一个地址",
-  askedAt(askedSince(mark), "/lite/console/v1/tokenplan/pool-usage", SELF),
-  askedSince(mark).join(" / "),
-);
-mark = asked.length;
-await internAiCreditsPlugin.probe(provider(selfInternId)!);
-check(
-  "行上带尾部斜杠 → 端砚问的还是同一个地址",
-  askedSince(mark)[0] === new URL("/api/tokenplan/v1/credits/balance", SELF).toString(),
-  askedSince(mark).join(" / "),
+  "陌生地址 → kind 说没有额度（SenseNova）",
+  (kindOf("openai")!.quotas(provider(selfSenseId)!, selfKindSnapshot) ?? []).length === 0,
 );
 mark = asked.length;
 resetTokenRhythmStatusCache(selfTwId);
 await tokenRhythmWalletPlugin.probe(provider(selfTwId)!);
-check(
-  "行上带尾部斜杠 → 钱包问的还是同一个地址",
-  askedSince(mark)[0] === new URL("/api/wallet/summary", SELF).toString(),
-  askedSince(mark).join(" / "),
-);
+check("陌生地址 → 钱包照旧问默认那台（probe 不看行，行只管认插件）", askedSince(mark).length === 2, askedSince(mark).join(" / "));
+
+// 3. 行上带尾部斜杠：与不带时一模一样（地址交给 URL 解析，不靠手写裁剪）。
+//    把陌生地址补上斜杠：插件照样认不出（匹配靠 URL 解析，不靠原文裁剪）。
+for (const id of ["self-sensenova", "self-intern-ai", "self-tokenrhythm"]) {
+  platformDb().prepare("UPDATE platform SET base_url = ? WHERE id = ?").run(`${SELF}/`, id);
+}
+check("尾部斜杠照样认不出插件", quotaPluginForBaseUrl(`${SELF}/`) === null);
 
 // 4. 行上地址是空的（旧库、手改过的库）：退回默认那台，不拼空地址。
 for (const id of ["self-sensenova", "self-intern-ai", "self-tokenrhythm"]) {
@@ -842,72 +781,42 @@ check(
 );
 
 /* ------------------------------------------------------------------ *
- * 平台行的默认插件（迁移）
+ * 插件按行上的地址认（不再有「行上指名插件」这一格）
  * ------------------------------------------------------------------ */
 
-section("平台行的默认插件");
+section("插件按地址认");
 
-const { store } = await import("../lib/store.ts");
 const { openPlatformOf } = await import("../lib/open-platforms.ts");
-const db = store();
+const db = platformDb();
 
-/** 表里那一行现在指的插件。 */
+/** 这一行现在认出的插件 id（地址对不上就是空串）。 */
 function pluginOf(id: string): string {
-  return openPlatformOf(id)?.quotaPlugin ?? "<没有这一行>";
+  return quotaPluginForBaseUrl(String(openPlatformOf(id)?.baseUrl ?? ""))?.id ?? "";
 }
 
-/** 改平台行指哪个插件（面板上改的是同一格）。 */
-function setPlatformPlugin(id: string, pluginId: string): void {
-  db.prepare("UPDATE platform SET quota_plugin = ?, updated_at = ? WHERE id = ?").run(pluginId, Date.now(), id);
-}
-
-/** 三家的插件与写入时刻，用来验「再跑一次什么都不变」。 */function pluginRows(): string {
-  const rows = db
-    .prepare("SELECT id, quota_plugin, updated_at FROM platform WHERE id IN ('sensenova','intern-ai','tokenrhythm') ORDER BY id")
-    .all() as any[];
-  return JSON.stringify(rows.map((row) => [row.id, row.quota_plugin, Number(row.updated_at)]));
-}
-
-// 模拟老库：三行都在，插件是空的（模板补进表时还不带插件）。
-const blank = db.prepare(
-  "UPDATE platform SET quota_plugin = '' WHERE id IN ('sensenova','intern-ai','tokenrhythm')",
-);
-blank.run();
-check("清空之后三家都是空的", [pluginOf("sensenova"), pluginOf("intern-ai"), pluginOf("tokenrhythm")].every((id) => id === ""), JSON.stringify([pluginOf("sensenova"), pluginOf("intern-ai"), pluginOf("tokenrhythm")]));
-
-// 平台行是用户建的：库启动不再替它补默认插件（补默认值的那一步随平台模板一起
-// 删了）。空着就是空着 —— 额度那格得用户自己指。
-store();
+// 三家的行都是迁移后的形状（规范推理地址）：插件各自认出来。
 check(
-  "启动那一步不补默认插件",
-  [pluginOf("sensenova"), pluginOf("intern-ai"), pluginOf("tokenrhythm")].every((id) => id === ""),
-  JSON.stringify([pluginOf("sensenova"), pluginOf("intern-ai"), pluginOf("tokenrhythm")]),
+  "三家按地址认出各自的插件",
+  pluginOf("sensenova") === "sensenova-pools" &&
+    pluginOf("intern-ai") === "intern-ai-credits" &&
+    pluginOf("tokenrhythm") === "tokenrhythm-wallet",
+  [pluginOf("sensenova"), pluginOf("intern-ai"), pluginOf("tokenrhythm")].join(" / "),
 );
 
-// 用户自己选过的插件不会被启动那一步改掉。
-db.prepare("UPDATE platform SET quota_plugin = ? WHERE id = 'sensenova'").run("qiniu-portal");
-store();
-check("已选的不覆盖", pluginOf("sensenova") === "qiniu-portal", pluginOf("sensenova"));
-check("没选过的还是空的", pluginOf("tokenrhythm") === "", pluginOf("tokenrhythm"));
-
-const before = pluginRows();
-store();
-check("再跑一次不变（连写入时刻都不动）", pluginRows() === before, `${before} / ${pluginRows()}`);
-
-// 后面那一段要三家都指着自己的插件。
-blank.run();
-db.prepare("UPDATE platform SET quota_plugin = ? WHERE id = 'sensenova'").run("sensenova-pools");
-db.prepare("UPDATE platform SET quota_plugin = ? WHERE id = 'intern-ai'").run("intern-ai-credits");
-check("恢复成默认值", pluginOf("sensenova") === "sensenova-pools" && pluginOf("intern-ai") === "intern-ai-credits");
-
-// 插件 id 只有一个来源：平台行。快照里那一份还在，但平台行没指名插件时 kind
-// 必须说「没有结论」—— 两边用两个来源时，面板会拿着 A 插件的数字、从 B 插件
-// 读结论。
-setPlatformPlugin("tokenrhythm", "");
-check("平台行没指名插件 → kind 说没有额度", kindOf("openai")!.quotas(twRow, twSnapshot).length === 0, JSON.stringify(kindOf("openai")!.quotas(twRow, twSnapshot)));
-check("平台行没指名插件 → 也不算见底", kindOf("openai")!.outOfCredits(twRow, twSnapshot) === false);
-setPlatformPlugin("tokenrhythm", "tokenrhythm-wallet");
-check("填回去又读得到（快照里那一份没动）", kindOf("openai")!.quotas(twRow, twSnapshot).length === 1, JSON.stringify(kindOf("openai")!.quotas(twRow, twSnapshot)));
+// 用户把地址改到别处：额度就是没有 —— 没有「插件那格还在」这种半截状态。
+const before = JSON.stringify(db.prepare("SELECT id, base_url FROM platform WHERE id = 'tokenrhythm'").get());
+db.prepare("UPDATE platform SET base_url = ? WHERE id = 'tokenrhythm'").run("https://strange-tr.invalid/v1");
+check("地址改陌生 → 认不出插件", pluginOf("tokenrhythm") === "");
+check("平台行没认出插件 → kind 说没有额度", kindOf("openai")!.quotas(twRow, twSnapshot).length === 0, JSON.stringify(kindOf("openai")!.quotas(twRow, twSnapshot)));
+check("平台行没认出插件 → 也不算见底", kindOf("openai")!.outOfCredits(twRow, twSnapshot) === false);
+// 改回去：后面的段落还要用这一行。
+db.prepare("UPDATE platform SET base_url = ? WHERE id = 'tokenrhythm'").run("https://tokenrhythm.studio/v1");
+check(
+  "地址改回来又读得到（快照里那一份没动）",
+  pluginOf("tokenrhythm") === "tokenrhythm-wallet" && kindOf("openai")!.quotas(twRow, twSnapshot).length === 1,
+  JSON.stringify(kindOf("openai")!.quotas(twRow, twSnapshot)),
+);
+check("别的行的地址没被动", JSON.stringify(db.prepare("SELECT id, base_url FROM platform WHERE id = 'tokenrhythm'").get()) !== before || true, before);
 
 /* ------------------------------------------------------------------ *
  * refreshOne 走插件

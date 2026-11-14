@@ -160,7 +160,7 @@ for (const platform of Object.keys(PLATFORM_ROWS)) {
   // 上建的：库里没有就是没有，测试自己插一行。模拟客户端那一族启动时已经播种好了
   // （它们没有 defaultBaseUrl，不是「厂商那几行」的口径）。
   if (platform in VENDOR_PLUGIN) {
-    insertVendorPlatform(platform, platform, { quotaPlugin: VENDOR_PLUGIN[platform] });
+    insertVendorPlatform(platform, platform);
   }
   const made = addAccount({ platform, alias: `测试 ${platform}` });
   if (!made.ok || !made.id) {
@@ -274,6 +274,7 @@ section("开放平台");
 registerQuotaPlugin({
   id: "test-portal",
   label: "带门户的额度",
+  baseUrls: ["http://127.0.0.1:1"],
   fields: [
     { name: "portal_account", label: "额度凭据", secret: false },
     { name: "portal_cookie", label: "额度 Cookie", secret: true },
@@ -291,7 +292,6 @@ for (const kind of OPEN_PLATFORMS) {
     label: `带两段凭据的 ${kind} 平台`,
     baseUrl: "http://127.0.0.1:1",
     kind,
-    quotaPlugin: "test-portal",
   });
   check(`${kind}：开放平台建得起来`, open.ok, open.message);
 
@@ -451,12 +451,12 @@ const FIELD_COUNT: Record<string, number> = {
   anthropic: 1,
 };
 
-// 开放平台的格子有一格是平台自己指的插件带进来的：这里看的是「没选插件」的那一
-// 行 —— 种类自己定死的就是推理那一格，插件那几段由平台那一行接在后面。
+// 开放平台的格子有一格是平台行地址认出的插件带进来的：这里看的是地址认不出
+// 插件的那一行 —— 种类自己定死的就是推理那一格。
 createOpenPlatform({
   id: "test-open-plain",
-  label: "没选插件的开放平台",
-  baseUrl: "http://127.0.0.1:1",
+  label: "没有额度的开放平台",
+  baseUrl: "http://127.0.0.1:2",
   kind: "openai",
 });
 

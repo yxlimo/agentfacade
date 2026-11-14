@@ -44,7 +44,11 @@ interface CheckinOutcome {
  *     or HTTP 400 with { code: 10001 } when the day was already claimed —
  *     that too means today is signed in.
  */
-async function workbuddyCheckin(session: WorkBuddySession, report: string[], providerId: string): Promise<CheckinOutcome> {
+async function workbuddyCheckin(
+  session: WorkBuddySession,
+  report: string[],
+  providerId: string,
+): Promise<CheckinOutcome> {
   const status = await workbuddyApi(session, "/v2/billing/meter/checkin-activity-status", "POST", undefined, providerId);
   if (status.status !== 200) {
     // The status endpoint is the only place that says whether today is taken;
@@ -62,6 +66,13 @@ async function workbuddyCheckin(session: WorkBuddySession, report: string[], pro
   if (claim.status === 400 && businessCode(claim.body) === 10001) {
     report.push("今日已签到");
     return { credits: 0, signedIn: true };
+  }
+  if (claim.status === 0) {
+    // No answer at all: the request may or may not have landed upstream, so
+    // today's state is unknown — not "not signed". A refusal is a different
+    // thing: the platform answered and said no.
+    report.push("签到失败（上游没答上来）");
+    return { credits: 0, statusUnavailable: true };
   }
   if (claim.status < 200 || claim.status >= 300) {
     // The claim itself was refused: today really is not signed in.
@@ -307,8 +318,8 @@ async function workbuddyGrowthCentre(session: WorkBuddySession, report: string[]
 /**
  * Take the WorkBuddy credits that are waiting.
  *
- * The session belongs to the provider, not to the region: every account of the
- * kind gets its own check-in.
+ * The session belongs to the provider, not to the region: every account of
+ * the kind gets its own check-in.
  */
 export async function runWorkBuddyBenefits(providerId = "workbuddy-cn"): Promise<BenefitOutcome> {
   const report: string[] = [];
@@ -324,8 +335,18 @@ export async function runWorkBuddyBenefits(providerId = "workbuddy-cn"): Promise
     credits += checkin.credits;
     signedIn = checkin.signedIn;
     statusUnavailable = checkin.statusUnavailable;
+  } catch (e) {
+    // The upstream never answered: today's check-in state is unknown, not
+    // "not signed". Saying "not signed" is a claim we have no evidence for,
+    // and the panel takes it as one.
+    report.push(`异常：${(e as Error).message}`);
+    statusUnavailable = true;
+  }
+  try {
     credits += await workbuddyGrowthCentre(session, report, providerId);
   } catch (e) {
+    // The growth centre is a bonus on top of the check-in: its failure does
+    // not change what we know about the check-in state.
     report.push(`异常：${(e as Error).message}`);
   }
   return { upstream: providerId, ok: true, credits, signedIn, statusUnavailable, report, at: new Date().toISOString() };

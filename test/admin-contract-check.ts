@@ -295,10 +295,10 @@ const { QINIU_INFER_BASE } = await import("../lib/qiniu/config.ts");
   conn
     .prepare(
       "INSERT OR IGNORE INTO platform " +
-        "(id, label, base_url, models, quota_plugin, kind, region, created_at, updated_at) " +
-        "VALUES (?, ?, ?, ?, ?, 'openai', '', ?, ?)",
+        "(id, label, base_url, models, kind, region, created_at, updated_at) " +
+        "VALUES (?, ?, ?, ?, 'openai', '', ?, ?)",
     )
-    .run("qiniu", "qiniu", QINIU_INFER_BASE, "[]", "qiniu", Date.now(), Date.now());
+    .run("qiniu", "qiniu", QINIU_INFER_BASE, "[]", Date.now(), Date.now());
   conn.close();
 }
 

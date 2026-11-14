@@ -10,8 +10,8 @@
 import { store } from "../lib/store.ts";
 
 /**
- * 厂商那几家行上指的额度插件（kind=openai，插件是按行挂的）。星火没有额度
- * 接口，不指。与 lib/quota-plugin-registry.ts 登记的插件 id 一字不差。
+ * 厂商那几家的额度插件（按行上的地址认，不再有「行上指名插件」这一格）。
+ * 星火没有额度接口。与 lib/quota-plugin-registry.ts 登记的插件 id 一字不差。
  */
 export const VENDOR_QUOTA_PLUGINS: Readonly<Record<string, string>> = {
   qiniu: "qiniu",
@@ -38,12 +38,12 @@ const VENDOR_BASE_URLS: Record<string, string> = {
  * 插一行厂商平台（迁移后的形状：kind = `openai`，地址取常量表）。
  *
  * 目录是空的：目录从上游拉（这一族是方言族），建行的时候不预填 —— 面板上刷一次
- * 才有。额度插件跟着行走（quota_plugin 不随 kind 迁移），调用方要哪家用哪家的。
+ * 才有。额度插件按行上的地址认：地址写各家的规范推理地址，插件自己认出来。
  */
 export function insertVendorPlatform(
   kind: string,
   id = kind,
-  options: { baseUrl?: string; quotaPlugin?: string } = {},
+  options: { baseUrl?: string } = {},
 ): void {
   const declared = VENDOR_BASE_URLS[kind] ?? "";
   const baseUrl = options.baseUrl ?? declared;
@@ -54,17 +54,16 @@ export function insertVendorPlatform(
   store()
     .prepare(
       "INSERT INTO platform " +
-        "(id, label, base_url, models, quota_plugin, kind, region, created_at, updated_at) " +
-        "VALUES (?, ?, ?, ?, ?, 'openai', '', ?, ?) " +
+        "(id, label, base_url, models, kind, region, created_at, updated_at) " +
+        "VALUES (?, ?, ?, ?, 'openai', '', ?, ?) " +
         "ON CONFLICT(id) DO UPDATE SET base_url = excluded.base_url, kind = excluded.kind, " +
-        "quota_plugin = excluded.quota_plugin, updated_at = excluded.updated_at",
+        "updated_at = excluded.updated_at",
     )
     .run(
       id,
       id,
       baseUrl,
       JSON.stringify({ items: [], traits: {}, fetchedAt: 0 }),
-      options.quotaPlugin ?? "",
       now,
       now,
     );

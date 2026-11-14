@@ -22,7 +22,7 @@ const { kindOf, policiesOfKind } = await import("../lib/provider-kinds.ts");
 await import("../lib/kinds/index.ts");
 const { platformOfAny } = await import("../lib/platforms.ts");
 const { updateOpenPlatform, syncPlatformModels, openPlatformOf } = await import("../lib/open-platforms.ts");
-const { quotaPluginOf, quotaEndpointBase } = await import("../lib/quota-plugins.ts");
+const { quotaPluginOf, quotaPluginForBaseUrl } = await import("../lib/quota-plugins.ts");
 // 参考值那一层（共性表）：上游一个参数也没报时，公布的就是它那一份。
 const { commonTraitsOf } = await import("../lib/common-model-traits.ts");
 const { addAccount, provider: providerRow } = await import("../lib/providers.ts");
@@ -182,12 +182,10 @@ check(
 
 section("额度");
 
-// 额度只在平台那一行指名了插件的时候才读得出来。
-const named = updateOpenPlatform("qiniu", { quotaPlugin: qiniuQuotaPlugin.id });
-check("平台行指名了插件", named.ok === true, named.message);
+// 额度只在平台行的地址认出插件的时候才读得出来（七牛那行是规范推理地址）。
 
 // 厂商 kind 退场后，读额度的就是通用方言那一类（kindOf("openai")）：额度按
-// 平台行指名的插件读，kind 本身不再有七牛自己的那份声明。
+// 地址认出的插件读，kind 本身不再有七牛自己的那份声明。
 const kind = kindOf("openai");
 const views = kind?.quotas(PROVIDER, snapshotWith(okProbe(QUOTA))) ?? [];
 const credits = views[0]?.credits;
@@ -237,16 +235,16 @@ check(
   JSON.stringify(quotaConclusionOf(PROVIDER, snapshotWith(EMPTY_PROBE), "qiniu")),
 );
 
-section("没指名插件时是不知道");
+section("地址认不出插件时是不知道");
 
-// 用户还没在面板上选插件：不是「没有资源包」，是「没去问」。
-const cleared = updateOpenPlatform("qiniu", { quotaPlugin: "" });
-check("插件清掉了", cleared.ok === true, cleared.message);
+// 行上的地址改成陌生域名：插件不认这一行 —— 不是「没有资源包」，是「没去问」。
+const cleared = updateOpenPlatform("qiniu", { baseUrl: "https://strange.invalid/v1" });
+check("地址改成了陌生域名", cleared.ok === true, cleared.message);
 // 快照里那份数据还在，但没被指名就不该被读成额度 —— 问都没问过，
 // 读出一个数字等于替一个没问过的平台说话。
 const unasked = snapshotWith(okProbe(QUOTA));
 check(
-  "没指名插件 → 没有额度视图（快照里有份也不读）",
+  "地址认不出插件 → 没有额度视图（快照里有份也不读）",
   (kind?.quotas(PROVIDER, unasked) ?? []).length === 0,
   JSON.stringify(kind?.quotas(PROVIDER, unasked)),
 );
@@ -297,42 +295,42 @@ async function refreshed(): Promise<any> {
   return peekHealthSnapshot<any>()?.data;
 }
 
-// ① 平台行没指名插件 + 门户会回 401：一次也不该去敲。
+// ① 行上的地址是陌生域名（插件认不出）+ 门户会回 401：一次也不该去敲。
 portalStatus = 401;
 warns = [];
 const callsBeforeNone = portalCalls;
 const snapshotNone = await refreshed();
-check("没指名插件：一次门户都没敲", portalCalls === callsBeforeNone, String(portalCalls - callsBeforeNone));
+check("地址认不出插件：一次门户都没敲", portalCalls === callsBeforeNone, String(portalCalls - callsBeforeNone));
 check(
-  "没指名插件：快照里没有 qiniu 的份",
+  "地址认不出插件：快照里没有 qiniu 的份",
   !snapshotNone?.plugins?.qiniu?.[accountId],
   JSON.stringify(snapshotNone?.plugins?.qiniu),
 );
 check(
-  "没指名插件：日志里没有额度查询失败",
+  "地址认不出插件：日志里没有额度查询失败",
   !warns.some((line) => line.includes("额度查询失败")),
   warns.join(" | "),
 );
 const accountRow = providerRow(accountId)!;
 check(
-  "没指名插件：KIND 读出来是未知（不是 0）",
+  "地址认不出插件：KIND 读出来是未知（不是 0）",
   (kind?.quotas(accountRow, snapshotNone) ?? []).length === 0,
   JSON.stringify(kind?.quotas(accountRow, snapshotNone)),
 );
 check(
-  "没指名插件：不算用尽",
+  "地址认不出插件：不算用尽",
   kind?.outOfCredits(accountRow, snapshotNone) === false,
 );
 
-// ② 指名插件：额度落在插件桶里，键是插件 id 与账号 id。
+// ② 地址改回规范推理地址：插件认出来，额度落在插件桶里，键是插件 id 与账号 id。
 portalStatus = 200;
-const renamed = updateOpenPlatform("qiniu", { quotaPlugin: qiniuQuotaPlugin.id });
-check("平台行指名了插件（给真实账号）", renamed.ok === true, renamed.message);
+const renamed = updateOpenPlatform("qiniu", { baseUrl: "https://api.qnaigc.com/v1" });
+check("地址改回规范推理地址（插件认出来）", renamed.ok === true, renamed.message);
 const callsBeforeNamed = portalCalls;
 const snapshotNamed = await refreshed();
-check("指名插件：门户被问了一次", portalCalls === callsBeforeNamed + 1, String(portalCalls - callsBeforeNamed));
+check("地址认出插件：门户被问了一次", portalCalls === callsBeforeNamed + 1, String(portalCalls - callsBeforeNamed));
 check(
-  "指名插件：结论落在 snapshot.plugins[qiniu][账号]",
+  "地址认出插件：结论落在 snapshot.plugins[qiniu][账号]",
   snapshotNamed?.plugins?.["qiniu"]?.[accountId]?.state === "ok",
   JSON.stringify(snapshotNamed?.plugins?.["qiniu"]?.[accountId]),
 );
@@ -429,26 +427,14 @@ check(
 // 登记集中在 lib/quota-plugins.ts（引用即登记），没人登记的话额度全变「不知道」。
 check("额度插件登记了", quotaPluginOf("qiniu") === qiniuQuotaPlugin, String(quotaPluginOf("qiniu")?.id));
 check(
-  "行上地址还是原来的推理地址 → 额度问门户，不打推理主机",
-  quotaEndpointBase(PROVIDER, "https://portal.qiniu.com") === "https://portal.qiniu.com",
-  String(quotaEndpointBase(PROVIDER, "https://portal.qiniu.com")),
+  "行上的地址是七牛的规范推理地址 → 插件按它认出来",
+  quotaPluginForBaseUrl("https://api.qnaigc.com/v1")?.id === "qiniu",
+  String(quotaPluginForBaseUrl("https://api.qnaigc.com/v1")?.id ?? "无"),
 );
-{
-  // 反证：用户真把地址指到别处时，额度跟着行上地址走 —— 这个设计意图不能被
-  // 「迁移写的地址不算用户指到别处」这条规则砍掉。
-  updateOpenPlatform("qiniu", { baseUrl: "https://mirror.example.com/v1" });
-  check(
-    "行上地址指到别处 → 额度跟行上地址",
-    quotaEndpointBase(PROVIDER, "https://portal.qiniu.com") === "https://mirror.example.com/v1",
-    String(quotaEndpointBase(PROVIDER, "https://portal.qiniu.com")),
-  );
-  updateOpenPlatform("qiniu", { baseUrl: "https://api.qnaigc.com/v1" });
-  check(
-    "改回去 → 额度又回门户",
-    quotaEndpointBase(PROVIDER, "https://portal.qiniu.com") === "https://portal.qiniu.com",
-    String(quotaEndpointBase(PROVIDER, "https://portal.qiniu.com")),
-  );
-}
+check(
+  "门户地址由插件自己给（不看行上的地址）",
+  quotaPluginForBaseUrl("https://api.qnaigc.com/v1")?.probe === qiniuQuotaPlugin.probe,
+);
 
 /* ------------------------------------------------------------------ *
  * 模型目录：写死的那一份

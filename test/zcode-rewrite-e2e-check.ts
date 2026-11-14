@@ -304,8 +304,8 @@ section("准备：一个 ZCode 账号、一个发布模型");
   const now = Date.now();
   store()
     .prepare(
-      "INSERT INTO platform (id, label, base_url, models, models_auto, quota_plugin, kind, region, created_at, updated_at) " +
-        "VALUES ('zcode', 'zcode', ?, '[]', 0, '', 'zcode', '', ?, ?) " +
+      "INSERT INTO platform (id, label, base_url, models, models_auto, kind, region, created_at, updated_at) " +
+        "VALUES ('zcode', 'zcode', ?, '[]', 0, 'zcode', '', ?, ?) " +
         "ON CONFLICT(id) DO UPDATE SET base_url = excluded.base_url, kind = 'zcode', updated_at = excluded.updated_at",
     )
     .run(upstreamBase, now, now);

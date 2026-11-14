@@ -149,8 +149,8 @@ function insertMigratedPlatform(id: string, label: string, baseUrl: string): voi
   const now = Date.now();
   store()
     .prepare(
-      "INSERT INTO platform (id, label, base_url, models, quota_plugin, kind, region, created_at, updated_at) " +
-        "VALUES (?, ?, ?, ?, '', 'openai', '', ?, ?) " +
+      "INSERT INTO platform (id, label, base_url, models, kind, region, created_at, updated_at) " +
+        "VALUES (?, ?, ?, ?, 'openai', '', ?, ?) " +
         "ON CONFLICT(id) DO UPDATE SET label = excluded.label, base_url = excluded.base_url, " +
         "kind = excluded.kind, updated_at = excluded.updated_at",
     )

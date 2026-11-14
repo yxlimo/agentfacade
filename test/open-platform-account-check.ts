@@ -369,6 +369,7 @@ section("额度插件：发来的数组短了，整单不改");
 registerQuotaPlugin({
   id: "qiniu-portal",
   label: "门户额度",
+  baseUrls: ["https://api.portal-demo.test/v1"],
   fields: [
     { name: "portal_account", label: "门户账号", secret: true },
     { name: "portal_cookie", label: "门户 cookie", secret: true },
@@ -381,7 +382,6 @@ const portalPlatform = createOpenPlatform({
   id: "portal-demo",
   label: "Portal Demo",
   baseUrl: "https://api.portal-demo.test/v1",
-  quotaPlugin: "qiniu-portal",
 });
 check("带插件的开放平台建得起来", portalPlatform.ok === true, portalPlatform.message);
 

@@ -202,14 +202,14 @@ function kindIds(platform: string): string[] {
  * 方言与预置的模拟客户端）。这里要的是「表里有一行 kind=tokenrhythm 的平台」
  * —— 那是代码里的适配器，不是用户在面板上选的类型。
  */
-function insertPlatform(id: string, kind: string, baseUrl: string, quotaPlugin = ""): void {
+function insertPlatform(id: string, kind: string, baseUrl: string): void {
   const now = Date.now();
   store()
     .prepare(
-      "INSERT INTO platform (id, label, base_url, models, quota_plugin, kind, region, created_at, updated_at) " +
-        "VALUES (?, ?, ?, ?, ?, ?, '', ?, ?)",
+      "INSERT INTO platform (id, label, base_url, models, kind, region, created_at, updated_at) " +
+        "VALUES (?, ?, ?, ?, ?, '', ?, ?)",
     )
-    .run(id, id, baseUrl, JSON.stringify({ items: [], traits: {}, fetchedAt: 0 }), quotaPlugin, kind, now, now);
+    .run(id, id, baseUrl, JSON.stringify({ items: [], traits: {}, fetchedAt: 0 }), kind, now, now);
 }
 
 // 全新库启动后厂商那几行不在表里：平台行是用户在面板上自己建的，代码这边只
@@ -244,7 +244,7 @@ for (const id of ["qiniu", "tokenrhythm", "sensenova", "intern-ai"]) {
 
 // 已有库的行不被任何启动逻辑改写：插一行目录空着的厂商行，重启之后它还是那样
 // （以前那一轮播种会把它按来源填一遍）。
-insertPlatform("vendor-keep", "openai", "https://vendor-keep.test/v1", "qiniu");
+insertPlatform("vendor-keep", "openai", "https://api.qnaigc.com/v1");
 const vendorKeepBefore = JSON.stringify(openPlatformOf("vendor-keep"));
 closeStore();
 store();
@@ -260,29 +260,22 @@ check(
 
 section("0.1 额度请求打哪台");
 
-// 判据：行上的地址还是迁移写进去的那台原推理地址（那不是用户指到了别处），
-// 且行上指名了这家的插件 —— 两个都成立时，额度问插件自己那台（门户、控制台、
-// 钱包）；用户把行指到别处时，跟着行走。
-const { quotaEndpointBase, quotaPluginOf } = await import("../lib/quota-plugins.ts");
-const qiniuRow = { ...bareRow("qiniu"), platform: "qiniu" };
+// 判据：行上的地址对上哪个插件声明的地址，额度插件就是哪个 —— 用户不选，
+// 也没有「没选」这一说。对不上任何插件就是没有额度（不是「没配好」）。
+const { quotaPluginForBaseUrl } = await import("../lib/quota-plugins.ts");
 const qiniuBase = String(openPlatformOf("qiniu")?.baseUrl ?? "");
 check(
-  "前提：行上地址就是迁移写进去的原推理地址，插件也登记了",
-  qiniuBase === "https://api.qnaigc.com/v1" && quotaPluginOf("qiniu") !== null,
-  `${qiniuBase} / ${String(quotaPluginOf("qiniu")?.id ?? "无")}`,
-);
-check(
-  "行上的地址还是默认那台：额度问插件自己那台",
-  quotaEndpointBase(qiniuRow as any, QINIU_PORTAL_BASE) === QINIU_PORTAL_BASE,
-  quotaEndpointBase(qiniuRow as any, QINIU_PORTAL_BASE),
+  "前提：行上地址就是七牛的规范推理地址，插件按它认出来",
+  qiniuBase === "https://api.qnaigc.com/v1" && quotaPluginForBaseUrl(qiniuBase)?.id === "qiniu",
+  qiniuBase,
 );
 store()
   .prepare("UPDATE platform SET base_url = ? WHERE id = ?")
   .run("https://self-hosted.test/v1", "qiniu");
 check(
-  "行上的地址被改成自建端点：额度跟着行走",
-  quotaEndpointBase(qiniuRow as any, QINIU_PORTAL_BASE) === "https://self-hosted.test/v1",
-  quotaEndpointBase(qiniuRow as any, QINIU_PORTAL_BASE),
+  "行上的地址被改成陌生域名：没有额度插件（不是「没配好」）",
+  quotaPluginForBaseUrl("https://self-hosted.test/v1") === null,
+  String(quotaPluginForBaseUrl("https://self-hosted.test/v1")?.id ?? "无"),
 );
 // 改回去：后面几节还要用这一行。
 store().prepare("UPDATE platform SET base_url = ? WHERE id = ?").run(qiniuBase, "qiniu");
@@ -790,11 +783,10 @@ const { putHealthSnapshot } = await import("../lib/health-cache.ts");
 const quotaCreated = createOpenPlatform({
   id: "quota-demo",
   label: "Quota Demo",
-  baseUrl: upstreamBase,
-  // 插件在这一进程里登记过（kind 注册时一起进来的）：面板读的是平台行这一格。
-  quotaPlugin: "sensenova-pools",
+  // 额度插件按地址认：这一行用 SenseNova 的规范推理地址，插件才认得出。
+  baseUrl: "https://token.sensenova.cn/v1",
 });
-check("带额度插件的平台建得起来", quotaCreated.ok === true, quotaCreated.message);
+check("开放平台建得起来（地址对上插件，额度按它读）", quotaCreated.ok === true, quotaCreated.message);
 const quotaAccount = addAccount({ platform: "quota-demo" });
 const quotaAccountId = quotaAccount.id ?? "";
 setProviderKeys(quotaAccountId, ["sk-quota-demo"]);
@@ -943,7 +935,7 @@ section("10. 拿各家自己的推理 key 去问目录");
 const { saveSession: saveTokenRhythmSession } = await import("../lib/tokenrhythm/accounts.ts");
 
 // 中转站：推理 key 与门户会话是两个东西。问目录要带那把 key，不是 cookie。
-insertPlatform("relay-demo", "openai", upstreamBase, "tokenrhythm-wallet");
+insertPlatform("relay-demo", "openai", upstreamBase);
 const relayAccount = addAccount({ platform: "relay-demo" });
 const relayAccountId = relayAccount.id ?? "";
 check("中转站账号加得起来", relayAccount.ok === true && relayAccountId !== "", relayAccount.message);
@@ -985,11 +977,12 @@ check(
   JSON.stringify(openPlatformOf("relay-demo")?.models),
 );
 
-// 七牛云：两段凭据，推理用第一段。
-insertPlatform("qiniu-demo", "openai", upstreamBase, "qiniu");
+// 七牛云：行上的地址不是七牛的规范推理地址（是测试的假上游），额度插件不认
+// 这一行 —— 凭据只有推理 key 一段，多发的 cookie 不落库。
+insertPlatform("qiniu-demo", "openai", upstreamBase);
 const qiniuDemoAccount = addAccount({ platform: "qiniu-demo" });
 const qiniuKeyed = setProviderKeys(qiniuDemoAccount.id ?? "", ["sk-qiniu-infer", "PORTAL-COOKIE-QINIU"]);
-check("七牛：两段凭据都写进去了", qiniuKeyed.ok === true && qiniuKeyed.count === 2, qiniuKeyed.message);
+check("七牛：只写了推理 key（地址对不上插件，插件那一段没有）", qiniuKeyed.ok === true && qiniuKeyed.count === 1, qiniuKeyed.message);
 modelsStatus = 200;
 modelsPayload = { data: [{ id: "q-1" }] };
 seen.length = 0;
@@ -1008,20 +1001,8 @@ check(
 );
 check("七牛：目录写回了表里", rowIds("qiniu-demo").join(",") === "q-1", JSON.stringify(rowIds("qiniu-demo")));
 
-// 只配了门户 cookie 的七牛账号：不能推理，也就不去问目录。
-insertPlatform("cookie-demo", "openai", upstreamBase, "qiniu");
-const cookieAccount = addAccount({ platform: "cookie-demo" });
-setProviderKeys(cookieAccount.id ?? "", ["", "PORTAL-ONLY"]);
-seen.length = 0;
-const cookiePull = await refreshOpenPlatformCatalog("cookie-demo", { force: true });
-check(
-  "只有门户 cookie：报没有能用的 API key",
-  cookiePull.ok === false && /API key/.test(cookiePull.message),
-  cookiePull.message,
-);
-check("只有门户 cookie：没问上游", seen.length === 0, JSON.stringify(seen));
-
-// 没有 key：报那句话，不问上游。
+// 没有 key：报那句话，不问上游。（「只配了门户 cookie」的行不再造得出来：
+// 地址对不上插件时，门户 cookie 那一段凭据根本没有入口。）
 insertPlatform("nokey-demo", "openai", upstreamBase);
 addAccount({ platform: "nokey-demo" });
 seen.length = 0;
@@ -1589,56 +1570,18 @@ check(
   JSON.stringify(openPlatformOf("prefill-given")?.models.items),
 );
 
-// 三种给法是三件事（这一层是定规矩的地方）：
-//   不给这一格 = 这一类声明的默认插件；给了空串 = 不用插件；给了 id = 用这个。
-// 只剩两种方言，都没有默认插件：不给这一格建出来就是空串（不再是「这一类声明的
-// 默认插件」—— 那种 kind 已经不能建了）。
-const DEFAULT_PLUGIN_KIND = "openai";
-const defaultPluginRow = createOpenPlatform({
+// 额度插件没有「给不给」这一说了：按行上的地址认（createOpenPlatform 也不收
+// quota_plugin）。地址是哪家厂商的规范推理地址，插件就是哪家；陌生地址就是
+// 没有额度，不是「没配好」。
+const noPluginRow = createOpenPlatform({
   id: "plugin-default",
-  label: "默认插件",
+  label: "陌生地址的平台",
   baseUrl: upstreamBase,
-  kind: DEFAULT_PLUGIN_KIND,
-});
-check("不给插件：平台建得起来", defaultPluginRow.ok === true, defaultPluginRow.message);
-check(
-  "这一类没有默认插件，所以不给这一格建出来就是空串",
-  openPlatformOf("plugin-default")?.quotaPlugin === "",
-  String(openPlatformOf("plugin-default")?.quotaPlugin),
-);
-
-const emptyPluginRow = createOpenPlatform({
-  id: "plugin-empty",
-  label: "不用插件",
-  baseUrl: upstreamBase,
-  kind: DEFAULT_PLUGIN_KIND,
-  quotaPlugin: "",
-});
-check("给空串：平台建得起来", emptyPluginRow.ok === true, emptyPluginRow.message);
-check(
-  "空串是「不用插件」，不是默认那个",
-  openPlatformOf("plugin-empty")?.quotaPlugin === "",
-  String(openPlatformOf("plugin-empty")?.quotaPlugin),
-);
-
-const unknownPluginRow = createOpenPlatform({
-  id: "plugin-unknown",
-  label: "没登记的插件",
-  baseUrl: upstreamBase,
-  kind: DEFAULT_PLUGIN_KIND,
+  kind: "openai",
   quotaPlugin: "no-such-plugin",
 });
-check("没登记的插件被拒", unknownPluginRow.ok === false, unknownPluginRow.message);
-check(
-  "机器码是 QUOTA_PLUGIN_UNKNOWN",
-  unknownPluginRow.code === "QUOTA_PLUGIN_UNKNOWN",
-  String(unknownPluginRow.code),
-);
-check(
-  "被拒的那一行没写进表",
-  openPlatformOf("plugin-unknown") === null,
-  String(openPlatformOf("plugin-unknown")),
-);
+check("建平台不再收插件这一格：多给的格被忽略（平台照样建）", noPluginRow.ok === true, noPluginRow.message);
+check("那一行上没有插件格", openPlatformOf("plugin-default") !== null && quotaPluginForBaseUrl(openPlatformOf("plugin-default")!.baseUrl) === null);
 
 /* ------------------------------------------------------------------ *
  * 17. 三条判别力：目录归上游还是归代码

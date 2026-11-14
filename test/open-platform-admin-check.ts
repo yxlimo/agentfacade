@@ -296,7 +296,7 @@ check("它是一个开放平台", acme?.isOpenPlatform === true, show(acme?.isOp
 check("自建平台的 from_row 是 true", acme?.fromRow === true, show(acme?.fromRow));
 check("ListUpstreams 里的 kind 是 openai", acme?.kind === "openai", show(acme?.kind));
 check("没有账号时状态是没有凭据", acme?.state === UpstreamState.NO_CREDENTIAL, String(acme?.state));
-check("额度插件那一格是空的", acme?.quotaPlugin === "", show(acme?.quotaPlugin));
+// 行上没有插件那一格：插件按地址认（acme 的地址不指七牛 → 没有额度）。
 // 模型目录两格：报的是平台行里的那份（刚建的平台还没有目录）。
 const acmeRow = openPlatformOf("acme");
 check("新加的平台目录是空的", (acme?.models ?? []).length === 0, show(acme?.models));
@@ -415,118 +415,50 @@ check(
 );
 check("库里的名字没变", openPlatformOf("acme")?.label === "Acme Cloud", String(openPlatformOf("acme")?.label));
 
+// 额度插件不再有「选」这一说：地址对上哪家插件的规范推理地址，插件就是哪家。
+// 把地址改成七牛的那台：ListUpstreams 上这个平台的账号就该多出「额度 Cookie」
+// 那一段（插件按地址认出来，凭据跟着插件走）。
+const { quotaPluginForBaseUrl } = await import("../lib/quota-plugins.ts");
 const withPlugin = await guard(() => updatePlatform({
   id: "acme",
   label: "Acme Cloud",
-  baseUrl: "https://api.acme.test/v1",
-  quotaPlugin: "qiniu",
+  baseUrl: "https://api.qnaigc.com/v1",
 }));
-check("额度插件写得进去", withPlugin !== null, errDetail());
-check("插件写进库里了", openPlatformOf("acme")?.quotaPlugin === "qiniu", String(openPlatformOf("acme")?.quotaPlugin));
+check("地址改成七牛的规范推理地址", withPlugin !== null, errDetail());
+check("地址认出了七牛的插件", quotaPluginForBaseUrl("https://api.qnaigc.com/v1")?.id === "qiniu");
 const withPluginListed = (await listUpstreams()).find((u) => u.id === "acme");
 check(
-  "ListUpstreams 报的是那个插件",
-  withPluginListed?.quotaPlugin === "qiniu",
-  show(withPluginListed?.quotaPlugin),
+  "地址认出插件后，行上地址就是那台",
+  withPluginListed?.baseUrl === "https://api.qnaigc.com/v1",
+  show(withPluginListed?.baseUrl),
 );
-
-// 没登记的插件 id：拒绝保存。收下去之后这个平台一条额度结论都不会有，而面板上
-// 看着「已选插件」—— 静默不工作比拒绝保存更难查。
-const badPlugin = await guard(() => updatePlatform({
+// 改回一个陌生的地址：插件认不出，额度就是没有 —— 没有「已选插件」的半截状态。
+const backToStrange = await guard(() => updatePlatform({
   id: "acme",
   label: "Acme Cloud",
   baseUrl: "https://api.acme.test/v1",
-  quotaPlugin: "qiniu-portal",
 }));
-check("没登记的插件 id 被拒", badPlugin === null, show(badPlugin));
-check(
-  "机器码说的是没有这个额度插件",
-  errCode() === errorCodes.QUOTA_PLUGIN_UNKNOWN,
-  `${errCode()} / ${errDetail()}`,
-);
-check("细节里带着那个 id 与登记过的几个", errDetail().includes("qiniu-portal") && errDetail().includes("qiniu"), errDetail());
-// 被拒的那次什么都没写：库里、ListUpstreams 都是原来那个。
-check("被拒时没有答复", badPlugin === null, show(badPlugin));
-const afterBadPlugin = (await listUpstreams()).find((u) => u.id === "acme");
-check(
-  "库里那一格没被改",
-  openPlatformOf("acme")?.quotaPlugin === "qiniu",
-  String(openPlatformOf("acme")?.quotaPlugin),
-);
-check(
-  "ListUpstreams 报的还是原来那个",
-  afterBadPlugin?.quotaPlugin === "qiniu",
-  show(afterBadPlugin?.quotaPlugin),
-);
+check("地址改回陌生的那台", backToStrange !== null, errDetail());
+check("陌生地址认不出插件", quotaPluginForBaseUrl("https://api.acme.test/v1") === null);
 check(
   "名字与地址也没被顺手改掉",
   openPlatformOf("acme")?.label === "Acme Cloud" && openPlatformOf("acme")?.baseUrl === "https://api.acme.test/v1",
   show([openPlatformOf("acme")?.label, openPlatformOf("acme")?.baseUrl]),
 );
 
-// 空串 = 不选插件，那是合法的：清得掉。
-const clearedPlugin = await guard(() => updatePlatform({
-  id: "acme",
-  label: "Acme Cloud",
-  baseUrl: "https://api.acme.test/v1",
-  quotaPlugin: "",
-}));
-check("空串 = 不选插件，收得下", clearedPlugin !== null, errDetail());
-check("插件那一格清掉了", openPlatformOf("acme")?.quotaPlugin === "", String(openPlatformOf("acme")?.quotaPlugin));
-check(
-  "ListUpstreams 报的是空串",
-  (await listUpstreams()).find((u) => u.id === "acme")?.quotaPlugin === "",
-  show((await listUpstreams()).find((u) => u.id === "acme")?.quotaPlugin),
-);
-// 清完再选回来：下面的手工目录那一节要用带插件的平台。
-const restoredPlugin = await guard(() => updatePlatform({
-  id: "acme",
-  label: "Acme Cloud",
-  baseUrl: "https://api.acme.test/v1",
-  quotaPlugin: "qiniu",
-}));
-check("登记的插件选得回来", restoredPlugin !== null, errDetail());
-
-// AddPlatform 接 quota_plugin 了（契约里 AddPlatformRequest 有这一格，带
-// presence）：没给 = 这一类声明的默认插件；给了空串 = 不用插件；给了 id = 用
-// 那个（必须已登记，没登记就拒，一个字都不落库）。
-// 「不带 = 用这一类声明的默认插件」这一条现在没有可建的 kind 能演示：剩下的两种
-// 方言都没有默认插件（默认插件属于厂商那五家，它们已经不能建了）。所以这里只留
-// 「空串 = 不用插件」那半边，另一半靠厂商 kind 被拒来证明。
+// AddPlatform 不再收 quota_plugin（契约里那一格已经 reserved）：多给的格被忽略，
+// 平台照样建。
 const pluginEmpty = await guard(() => addPlatform({
   id: "acme-plugin-empty",
-  label: "不用插件的加平台",
+  label: "多给了一格的加平台",
   baseUrl: "https://api.acme.test/v1",
   kind: "openai",
   quotaPlugin: "",
-}));
-check("加平台：quota_plugin 给空串建得起来", pluginEmpty !== null, errDetail());
-check(
-  "空串是「不用插件」，不是默认那个",
-  openPlatformOf("acme-plugin-empty")?.quotaPlugin === "",
-  String(openPlatformOf("acme-plugin-empty")?.quotaPlugin),
-);
+} as never));
+check("加平台：多给的插件格被忽略，平台照样建", pluginEmpty !== null, errDetail());
+check("那一行上没有插件格", openPlatformOf("acme-plugin-empty") !== null);
 
-const pluginUnknown = await guard(() => addPlatform({
-  id: "acme-plugin-unknown",
-  label: "没登记的插件",
-  baseUrl: "https://api.acme.test/v1",
-  kind: "openai",
-  quotaPlugin: "no-such-plugin",
-}));
-check("加平台：没登记的插件被拒", pluginUnknown === null, show(pluginUnknown));
-check(
-  "机器码是 QUOTA_PLUGIN_UNKNOWN",
-  errCode() === errorCodes.QUOTA_PLUGIN_UNKNOWN,
-  `${errCode()} / ${errDetail()}`,
-);
-check(
-  "被拒的那一行没写进表",
-  openPlatformOf("acme-plugin-unknown") === null,
-  show(openPlatformOf("acme-plugin-unknown")),
-);
-
-// 这两个平台只是为了上面那几行断言：删掉，免得影响后面按行数比的那几节。
+// 这个平台只是为了上面那几行断言：删掉，免得影响后面按行数比的那几节。
 for (const id of ["acme-plugin-empty"]) {
   const dropped = await guard(() => deletePlatform({ id }));
   check(`为了那条断言建的平台删得掉：${id}`, dropped !== null, errDetail());
@@ -536,7 +468,6 @@ const manual = await guard(() => updatePlatform({
   id: "acme",
   label: "Acme Cloud",
   baseUrl: "https://api.acme.test/v1",
-  quotaPlugin: "qiniu",
 }));
 check("改平台走得通", manual !== null, errDetail());
 const manualRow = openPlatformOf("acme");
@@ -559,36 +490,23 @@ check(
 
 section("没给的格不动");
 
-// 面板对模拟客户端那一族故意不发这两格（地址由预置定死）。没有 presence 时
-// 「没给」与「给空串」是同一份字节，改一次名字就把库里的额度插件抹掉。
+// 面板对模拟客户端那一族故意不发地址那一格（地址由预置定死）。没有 presence 时
+// 「没给」与「给空串」是同一份字节，改一次名字就把库里的地址抹掉。
 const presenced = await guard(() => addPlatform({
   id: "presence-demo",
   label: "Presence Demo",
   baseUrl: "https://api.presence.test/v1",
 }));
 check("平台建得起来", presenced !== null, errDetail());
-// 模拟客户端那一行的额度插件先改成 qiniu：改名字之后必须还在。
-const pluginOnSimulated = await guard(() => updatePlatform({ id: "minimax", quotaPlugin: "qiniu" }));
-check("模拟客户端那一行也写得进插件", pluginOnSimulated !== null, show(pluginOnSimulated));
-check(
-  "库里那一格是 qiniu",
-  openPlatformOf("minimax")?.quotaPlugin === "qiniu",
-  String(openPlatformOf("minimax")?.quotaPlugin),
-);
 
-// 只送名字（面板对模拟客户端就是这样）：两格都不发。
+// 只送名字（面板对模拟客户端就是这样）：地址那一格不发。
 const renameOnly = await guard(() => updatePlatform({ id: "minimax", label: "只改个名" }));
 check("只送名字：ok", renameOnly !== null, show(renameOnly));
 const renamedSimulatedRow = openPlatformOf("minimax");
 check("名字改了", renamedSimulatedRow?.label === "只改个名", String(renamedSimulatedRow?.label));
-check(
-  "没给的额度插件没被抹掉",
-  renamedSimulatedRow?.quotaPlugin === "qiniu",
-  String(renamedSimulatedRow?.quotaPlugin),
-);
 check("没给的地址没被改", renamedSimulatedRow?.baseUrl === "", show(renamedSimulatedRow?.baseUrl));
 
-// 开放平台也一样：只送名字，地址与额度插件都留着。
+// 开放平台也一样：只送名字，地址留着。
 const labelOnly = await guard(() => updatePlatform({ id: "presence-demo", label: "Presence Demo 改" }));
 check("开放平台只送名字：ok", labelOnly !== null, show(labelOnly));
 check(
@@ -602,16 +520,6 @@ check(
   String(openPlatformOf("presence-demo")?.baseUrl),
 );
 
-// 只改额度插件：地址与名字都不动。
-const pluginOnly = await guard(() => updatePlatform({ id: "presence-demo", quotaPlugin: "sensenova-pools" }));
-check("只送插件：ok", pluginOnly !== null, show(pluginOnly));
-const pluginOnlyRow = openPlatformOf("presence-demo");
-check("插件写进去了", pluginOnlyRow?.quotaPlugin === "sensenova-pools", String(pluginOnlyRow?.quotaPlugin));
-check(
-  "名字与地址没被顺手改掉",
-  pluginOnlyRow?.label === "Presence Demo 改" && pluginOnlyRow?.baseUrl === "https://api.presence.test/v1",
-  show([pluginOnlyRow?.label, pluginOnlyRow?.baseUrl]),
-);
 // 名字没给是「别动它」，显式空串还是错（平台得有名字）：两件事不能糊成一件。
 const emptyLabel = await guard(() => updatePlatform({ id: "presence-demo", label: "" }));
 check(
@@ -625,25 +533,14 @@ check(
   String(openPlatformOf("presence-demo")?.label),
 );
 
-// 显式空串 = 清空。地址空串还是被地址校验拦下（平台得有地址），所以拆开断言：
-// 先看拦不拦，再看插件那一格清得掉。
+// 显式空串 = 清空：地址空串还是被地址校验拦下（平台得有地址）。
 const explicitEmpty = await guard(() => updatePlatform({
   id: "presence-demo",
   label: "Presence Demo 改",
   baseUrl: "",
-  quotaPlugin: "",
 }));
 check("地址显式空串被拒", explicitEmpty === null, show(explicitEmpty));
 check("被拒时库里的地址没变", openPlatformOf("presence-demo")?.baseUrl === "https://api.presence.test/v1", String(openPlatformOf("presence-demo")?.baseUrl));
-check("被拒时库里的插件也没变", openPlatformOf("presence-demo")?.quotaPlugin === "sensenova-pools", String(openPlatformOf("presence-demo")?.quotaPlugin));
-const clearPlugin = await guard(() => updatePlatform({ id: "presence-demo", quotaPlugin: "" }));
-check("插件显式空串收得下", clearPlugin !== null, show(clearPlugin));
-check("插件那一格清掉了", openPlatformOf("presence-demo")?.quotaPlugin === "", String(openPlatformOf("presence-demo")?.quotaPlugin));
-check(
-  "清插件没顺手把地址清掉",
-  openPlatformOf("presence-demo")?.baseUrl === "https://api.presence.test/v1",
-  String(openPlatformOf("presence-demo")?.baseUrl),
-);
 
 // 收尾：删掉这个平台、把模拟客户端那一行还原（后面几节拿它当模板平台的对照）。
 const droppedPresence = await guard(() => deletePlatform({ id: "presence-demo" }));
@@ -651,14 +548,8 @@ check("为这一节建的平台删得掉", droppedPresence !== null, errDetail()
 const restoredSimulated = await guard(() => updatePlatform({
   id: "minimax",
   label: SIMULATED_CLIENTS[0].label,
-  quotaPlugin: "",
 }));
 check("模拟客户端那一行还原得掉", restoredSimulated !== null, show(restoredSimulated));
-check(
-  "还原之后插件是空串",
-  openPlatformOf("minimax")?.quotaPlugin === "",
-  String(openPlatformOf("minimax")?.quotaPlugin),
-);
 
 /* ------------------------------------------------------------------ *
  * 4. 删平台
@@ -1022,7 +913,6 @@ check(
   show(openPlatformOf("minimax")?.models),
 );
 check("地址是空串", openPlatformOf("minimax")?.baseUrl === "", show(openPlatformOf("minimax")?.baseUrl));
-check("额度插件是空串", openPlatformOf("minimax")?.quotaPlugin === "", show(openPlatformOf("minimax")?.quotaPlugin));
 check("墓碑清掉了", platformPresetRemoved("minimax") === false, show(platformPresetRemoved("minimax")));
 check(
   "表里的行数回到删之前",
@@ -1198,7 +1088,6 @@ check(
 section("模板平台");
 
 const templateUpstream = (await listUpstreams()).find((u) => u.id === SIMULATED_CLIENTS[0].id);
-check("模板平台的额度插件是空串", templateUpstream?.quotaPlugin === "", show(templateUpstream?.quotaPlugin));
 check("模板平台不是开放平台", templateUpstream?.isOpenPlatform === false, show(templateUpstream?.isOpenPlatform));
 // 但它有表里的那一行（播种补的）：面板要能改名字、删它。isOpenPlatform 说的是
 // 「地址与额度插件归用户填」—— 两件事分开报，否则拿 isOpenPlatform 当判据的

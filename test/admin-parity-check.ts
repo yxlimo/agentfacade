@@ -198,7 +198,9 @@ setProviderEnabled(accountId, true);
 
 section("把 API key 填上：两边同时变成可用");
 
-setProviderKeys(accountId, ["sk-test-key"]);
+// 七牛的地址认出了插件，凭据是两段：数组短了服务端整单不改。第二段留空
+// （门户 cookie 本来就没有）。
+setProviderKeys(accountId, ["sk-test-key", ""]);
 
 const ready = platformAvailability("qiniu");
 check("判定 → ready", ready.state === "ready", ready.state);

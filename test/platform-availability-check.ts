@@ -714,9 +714,9 @@ function addVendorPlatform(id: string, kind: string, baseUrl: string): void {
   withDb((db) => {
     db.prepare(
       "INSERT OR IGNORE INTO platform " +
-        "(id, label, base_url, models, models_auto, quota_plugin, kind, region, created_at, updated_at) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?)",
-    ).run(id, id, baseUrl, "[]", 0, "", kind, now, now);
+        "(id, label, base_url, models, models_auto, kind, region, created_at, updated_at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, '', ?, ?)",
+    ).run(id, id, baseUrl, "[]", 0, kind, now, now);
   });
 }
 
@@ -725,9 +725,9 @@ function addOpenPlatform(id: string): void {
   const now = Date.now();
   withDb((db) => {
     db.prepare(
-      "INSERT INTO platform (id, label, base_url, models, models_auto, quota_plugin, created_at, updated_at) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-    ).run(id, "Zephyr", "https://example.invalid/v1", JSON.stringify({ items: [], fetchedAt: 0, source: "auto" }), 1, "", now, now);
+      "INSERT INTO platform (id, label, base_url, models, models_auto, created_at, updated_at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(id, "Zephyr", "https://example.invalid/v1", JSON.stringify({ items: [], fetchedAt: 0, source: "auto" }), 1, now, now);
   });
 }
 

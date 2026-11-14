@@ -227,15 +227,14 @@ const VENDOR_PLATFORMS: [string, string, string][] = [
   for (const [id, kind, baseUrl] of VENDOR_PLATFORMS) {
     db.prepare(
       "INSERT OR IGNORE INTO platform " +
-        "(id, label, base_url, models, models_auto, quota_plugin, kind, region, created_at, updated_at) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?)",
+        "(id, label, base_url, models, models_auto, kind, region, created_at, updated_at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, '', ?, ?)",
     ).run(
       id,
       id,
       baseUrl,
       JSON.stringify({ items: [], traits: {}, fetchedAt: 0, source: "auto" }),
       1,
-      "",
       kind,
       now,
       now,

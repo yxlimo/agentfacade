@@ -509,9 +509,9 @@ const gw = await startHarness({
     // 下面用面板的 SetUpstreamEnabled 把这两个新上游打开，其余默认就是关的。
     // 推理端点与控制台都指向假上游：一个字都不出机器。
     SENSENOVA_BASE: `${fakeBase}/sensenova/v1`,
-    SENSENOVA_PLATFORM_BASE: `${fakeBase}/sensenova`,
+    SENSENOVA_PLATFORM_BASE: `${fakeBase}`,
     INTERN_AI_DISCOVERY_API_BASE: `${fakeBase}/intern-ai/v1`,
-    INTERN_AI_DISCOVERY_BASE: `${fakeBase}/intern-ai`,
+    INTERN_AI_DISCOVERY_BASE: `${fakeBase}`,
     TOKENRHYTHM_API_BASE: `${fakeBase}/tokenrhythm`,
     MINIMAX_API_BASE: `${fakeBase}/minimax`,
     // 故意不给推理 key：先看看没有凭据时上游是什么状态。
@@ -595,15 +595,15 @@ async function enableUpstream(id: string): Promise<void> {
   const now = Date.now();
   const insert = conn.prepare(
     "INSERT OR IGNORE INTO platform " +
-      "(id, label, base_url, models, models_auto, quota_plugin, kind, region, created_at, updated_at) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?)",
+      "(id, label, base_url, models, models_auto, kind, region, created_at, updated_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?, '', ?, ?)",
   );
-  // 地址与网关那边一样（那一类默认指哪台）：额度请求认得「行上的地址还是默认
-  // 那台」，于是问控制台（假上游）而不是推理端点。
-  // 迁移后这两行的 kind 是 openai（厂商 kind 已退场）：地址写行上，额度插件跟着行。凭据
-  // = 推理 key（key:provider:<账号>:key）+ 插件要的段（这两家插件不要段）。
-  insert.run("sensenova", "sensenova", `${fakeBase}/sensenova/v1`, "[]", 1, "sensenova-pools", "openai", now, now);
-  insert.run("intern-ai", "intern-ai", `${fakeBase}/intern-ai/v1`, "[]", 1, "intern-ai-credits", "openai", now, now);
+  // 迁移后的形状：kind 是 openai（厂商 kind 已退场），额度插件按行上地址认 ——
+  // 假上游的地址与插件声明对不上时，这几行得直接用插件的规范地址吗？不用：
+  // 额度问的是插件自己那台（控制台常量），测试用 fetch 桩把它接住。
+  // 凭据 = 推理 key（key:provider:<账号>:key）+ 插件要的段（这两家插件不要段）。
+  insert.run("sensenova", "sensenova", `${fakeBase}/sensenova/v1`, "[]", 1, "openai", now, now);
+  insert.run("intern-ai", "intern-ai", `${fakeBase}/intern-ai/v1`, "[]", 1, "openai", now, now);
   conn.close();
 }
 
@@ -890,13 +890,23 @@ await admin("SetAccountEnabled", { accountId: SENSE_ID, enabled: true });
 
 section("额度");
 
+// 额度插件按行上的地址认：把两行的地址换成各家的规范推理地址，插件才认得出。
+// 控制台/Discovery 的地址是插件自己的常量（这里被 env 指到假上游），与行上
+// 地址无关；行上地址只管「认出哪家插件」。后面的段落只查额度，不再发推理
+// 请求，所以改完不用改回去。
+{
+  // 网关是另一个进程、另一个连接：直接写它那个库（db() 就是 DATA_DIR 那份）。
+  db().prepare("UPDATE platform SET base_url = 'https://token.sensenova.cn/v1' WHERE id = 'sensenova'").run();
+  db().prepare("UPDATE platform SET base_url = 'https://discovery-api.intern-ai.org.cn/v1' WHERE id = 'intern-ai'").run();
+}
+
 await refreshQuota();
 
 const withQuota = await admin("ListUpstreams");
 const senseUpstream = (withQuota.upstreams ?? []).find((u: any) => u.id === "sensenova");
 const internUpstream = (withQuota.upstreams ?? []).find((u: any) => u.id === "intern-ai");
 
-check("SenseNova 的额度是积分", Boolean(senseUpstream?.quota?.credits), JSON.stringify(senseUpstream?.quota));
+check("SenseNova 的额度是积分", Boolean(senseUpstream?.quota?.credits));
 check("SenseNova 没有余额（它不是中转站）", senseUpstream?.quota?.balance === undefined, JSON.stringify(senseUpstream?.quota));
 check(
   "SenseNova 的积分是活动积分（30 天到期的那种）",

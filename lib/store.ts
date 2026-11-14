@@ -22,6 +22,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { dbPath } from "./paths.ts";
+// 环境变量的白名单读取（叶子模块，不引 store）：迁移要按部署钉住的地址填行。
+import { readEnvValue } from "./env.ts";
 // 预置的模拟客户端目录（叶子模块，不引任何东西）：启动时按它把表里的行播出来。
 import { SIMULATED_CLIENTS } from "./platform-catalog.ts";
 // 凭据 id 的唯一算法（叶子模块）：迁移要按账号定位推理 key 原来存哪、挪到哪。
@@ -549,30 +551,69 @@ function migrateVendorKeyBackfill(db: DatabaseSync): void {
  * 新的判据是平台行的 base_url：对上哪个插件声明的地址，额度插件就是哪个 ——
  * 用户不选，也没有「没选」这一说。所以迁移做两件事，都只跑一次：
  *
- *   1. 把插件 id 补成地址。存量行上 `quota_plugin` 指着某个已知插件、而行上
- *      地址对不上任何插件的规范地址时，把该插件的规范地址写进行里 —— 行上
- *      那个旧值是我们当年写进去的，不是用户的信号；不补的话，这行迁完后额度
- *      全变「没有」。地址已经对上任何一家已知插件的不动：那是用户真的改过地址。
+ *   1. 只给「地址为空」的行补上规范地址。存量行上 `quota_plugin` 指着某个
+ *      已知插件、而行上地址空着时，把该插件的规范地址写进去 —— 空地址的行
+ *      本来也发不出去，补上才认得出额度插件。
+ *
+ *      **非空的地址一律不动。** 用户把某个平台指到自建端点或假上游是合法且
+ *      有文档的用法；把它改回厂商地址，等于把请求从用户指定的地方搬到真
+ *      上游（2026-11 review 的阻塞项）。地址认不出任何插件就是「没有额度」
+ *      —— 额度变未知是可接受的，动用户的推理地址不可接受。
  *
  *   2. 把列删掉（ALTER TABLE … DROP COLUMN：这列没索引、没约束，直接退）。
  *      列没了，老数据里残留的插件 id 也就彻底没了 —— 不留「界面没有、库里
  *      还有」的半截状态。
- *
- * 那张 id → 地址的小表是迁移自己带的，不引登记表：store 在依赖图的最底下，
- * 登记表（lib/quota-plugin-registry.ts）从类型那头引 quota-state，quota-state
- * 引 open-platforms，open-platforms 引 store —— 引回去就是环。
  *
  * 幂等：版本号到了就不再跑。新库没有这一列，判列存在时直接跳过（但版本号
  * 照推，免得后加的步骤把它当旧库重跑一遍）。
  */
 const QUOTA_PLUGIN_BY_BASE_VERSION = 4;
 
-const LEGACY_PLUGIN_BASES: Readonly<Record<string, string>> = {
-  "qiniu": "https://api.qnaigc.com/v1",
-  "sensenova-pools": "https://token.sensenova.cn/v1",
-  "intern-ai-credits": "https://discovery-api.intern-ai.org.cn/v1",
-  "tokenrhythm-wallet": "https://tokenrhythm.studio/v1",
-};
+/**
+ * 一个设置的值：环境变量先，面板写进库的那份其次，代码里的默认最后 ——
+ * 与 lib/config.ts 的 resolve() 同一套次序（包括「空串也算一个值」）。
+ *
+ * 为什么在 store 里自己读一遍：那些设置走 lib/config.ts，而 config.ts 引
+ * store.ts —— store 引回去就是环。所以这里只读自己需要的那几个键，次序照抄
+ * config.ts 的 resolve()。
+ */
+function legacySetting(key: string, fallback: string): string | null {
+  const fromEnv = readEnvValue(key);
+  const raw = fromEnv !== null ? fromEnv : getConfig(key) ?? fallback;
+  const trimmed = raw.replace(/\/+$/, "");
+  return trimmed === "" ? null : trimmed;
+}
+
+/**
+ * 插件 id → 该插件服务的那个平台地址（只给「地址为空」的行填）。
+ *
+ * 填的是**平台自己的推理地址**，不是插件的额度接口地址：
+ *
+ *   - 七牛的推理地址是代码里的常量（lib/qiniu/config.ts），没有环境变量。
+ *   - SenseNova、书生·端砚、TokenRhythm 的推理地址是设置（lib/sensenova/config.ts、
+ *     lib/intern-ai/config.ts、lib/tokenrhythm/config.ts 读的就是这三个键），
+ *     部署改了它就是真的在用另一台 —— 填死厂商地址等于把流量指回真上游。
+ *
+ * 填完这行认不认得出插件，取决于填的地址与插件声明的那个是不是同一台
+ * （各家的 quota-plugin.ts 里的 baseUrls）。认不出就是「没有额度」（未知）——
+ * 那比把用户的地址改掉轻得多。
+ */
+function legacyPluginBase(pluginId: string): string | null {
+  switch (pluginId) {
+    case "qiniu":
+      return "https://api.qnaigc.com/v1";
+    case "intern-ai-credits":
+      return legacySetting("INTERN_AI_DISCOVERY_API_BASE", "https://discovery-api.intern-ai.org.cn/v1");
+    case "sensenova-pools":
+      return legacySetting("SENSENOVA_BASE", "https://token.sensenova.cn/v1");
+    case "tokenrhythm-wallet": {
+      const apiBase = legacySetting("TOKENRHYTHM_API_BASE", "https://tokenrhythm.studio");
+      return legacySetting("TOKENRHYTHM_INFER_BASE", `${apiBase ?? "https://tokenrhythm.studio"}/v1`);
+    }
+    default:
+      return null;
+  }
+}
 
 function migrateQuotaPluginToBase(db: DatabaseSync): void {
   if (schemaVersion(db) >= QUOTA_PLUGIN_BY_BASE_VERSION) return;
@@ -583,26 +624,17 @@ function migrateQuotaPluginToBase(db: DatabaseSync): void {
       base_url?: string;
       quota_plugin?: string;
     }[];
-    const sameBase = (a: string, b: string): boolean => {
-      try {
-        const left = new URL(a);
-        const right = new URL(b);
-        return left.origin === right.origin && left.pathname === right.pathname;
-      } catch {
-        return a === b;
-      }
-    };
-    const known = Object.values(LEGACY_PLUGIN_BASES);
     const move = db.prepare("UPDATE platform SET base_url = ?, updated_at = ? WHERE id = ?");
     const now = Date.now();
     for (const row of rows) {
       const pluginId = String(row.quota_plugin ?? "").trim();
       if (!pluginId) continue;
       const base = String(row.base_url ?? "").trim();
-      // 地址已经指着某家已知插件的规范地址：不动，无论它是不是行上这一格指的
-      // 那家 —— 地址是现在的判据，行上的 id 已经过场了。
-      if (base && known.some((served) => sameBase(base, served))) continue;
-      const canonical = LEGACY_PLUGIN_BASES[pluginId];
+      // 行上有地址就是用户的地址，一个字都不动：把平台指到自建端点或假上游
+      // 是合法且有文档的用法，改回厂商地址等于把请求搬到真上游。地址认不出
+      // 任何插件的后果只是「没有额度」（未知），那比改掉用户的地址轻得多。
+      if (base) continue;
+      const canonical = legacyPluginBase(pluginId);
       if (!canonical) continue;
       move.run(canonical, now, String(row.id ?? ""));
     }
