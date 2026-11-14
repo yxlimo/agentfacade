@@ -170,52 +170,49 @@ async function save(dialog: Locator, browser: Browser): Promise<void> {
 }
 
 /**
- * 用合成 DragEvent 在页内走半场拖动：dragstart 起于第 from 行、dragover 悬到
- * 第 to 行，但不落手 —— 拖动过程的状态留在 DOM 里给断言看，之后由调用方
- * 决定 drop 还是 dragend。React 的处理器接的是原生事件冒泡，合成事件一样
- * 触发；DataTransfer 用构造器造（Chromium 支持）。
+ * 用真实指针序列在页内走半场拖动：mouse.down 起于第 from 行、分步 mouse.move
+ * 移到第 to 行上沿，不落手 —— 拖动过程的状态留在 DOM 里给断言看，之后由调用
+ * 方 mouse.up 落位（finishPointerDrag）。指针被 setPointerCapture 抓在起拖行
+ * 上，移出行外也收得到 move / up。
  *
- * dragover 的落点取第 to 行的上沿而不是中心：DragSortList 的悬停判定按各行
- * 中点切（`hoverFromPointer`），正中那一点会被切到下一行。dragstart 与
- * dragover 分两次 evaluate：dragstart 的 setState 要先渲染出去，dragover 的
- * 处理器才能看到拖动状态。
+ * 落点取第 to 行的上沿而不是中心：DragSortList 的悬停判定按各行中点切
+ * （`hoverFromPointer`），正中那一点会被切到下一行。移动分多步：组件靠
+ * pointermove 逐次算切行，一步到位收到的 move 不够。行位移只改 transform
+ * 不改行高，起拖前量一次的行几何整场有效。
  */
-async function startSyntheticDrag(
+async function startPointerDrag(
   browser: Browser,
   from: number,
   to: number,
 ): Promise<void> {
-  const rows =
-    "[...document.querySelectorAll('ul[aria-label=\"目标顺序\"] > li')]";
-  await browser.evaluate(
-    `(() => {
-      const rows = ${rows};
-      rows[${from}].dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer(), clientY: 0 }));
-    })()`,
+  const rects = await browser.evaluate<
+    Array<{ x: number; top: number; height: number }>
+  >(
+    `[...document.querySelectorAll('ul[aria-label="目标顺序"] > li')].map((li) => {
+      const r = li.getBoundingClientRect();
+      return { x: r.x + r.width / 2, top: r.top, height: r.height };
+    })`,
   );
-  await browser.evaluate(
-    `(() => {
-      const rows = ${rows};
-      const rect = rows[${to}].getBoundingClientRect();
-      rows[${to}].dispatchEvent(new DragEvent('dragover', {
-        bubbles: true, cancelable: true, dataTransfer: new DataTransfer(),
-        clientY: rect.top + 2,
-      }));
-    })()`,
+  const startY = rects[from].top + rects[from].height / 2;
+  const targetY = rects[to].top + 2;
+  await browser.mouse.move(rects[from].x, startY);
+  await browser.mouse.down();
+  const steps = 8;
+  for (let step = 1; step <= steps; step++) {
+    await browser.mouse.move(
+      rects[from].x,
+      startY + ((targetY - startY) * step) / steps,
+    );
+  }
+  // 等拖动状态的渲染追上指针：后面的断言读的是 DOM 里的拖拽态。
+  await browser.evaluate<null>(
+    'new Promise((resolve) => setTimeout(() => resolve(null), 50))',
   );
 }
 
-/** 收半场拖动：在列表上 drop，让次序真正提交。 */
-async function finishSyntheticDrag(browser: Browser): Promise<void> {
-  await browser.evaluate(
-    `(() => {
-      const list = document.querySelector('ul[aria-label="目标顺序"]');
-      const drop = new DragEvent('drop', {
-        bubbles: true, cancelable: true, dataTransfer: new DataTransfer(),
-      });
-      list.dispatchEvent(drop);
-    })()`,
-  );
+/** 收半场拖动：落手，让次序真正提交。 */
+async function finishPointerDrag(browser: Browser): Promise<void> {
+  await browser.mouse.up();
 }
 
 test('排序模式进出：点「排序」卡片换出排序列表，点「完成排序」卡片回来', async ({
@@ -252,7 +249,7 @@ test('排序模式进出：点「排序」卡片换出排序列表，点「完�
     for (const index of [0, 1, 2]) {
       const text = await sortRowText(dialog, index);
       expect(text).toContain(['t1', 't2', 't3'][index]);
-      await expect(rowAt(dialog, index)).toHaveAttribute('draggable', 'true');
+      await expect(browser).toHaveClass(rowAt(dialog, index), /touch-none/);
       await expect(rowAt(dialog, index).getByRole('textbox')).toHaveCount(0);
       await expect(rowAt(dialog, index).getByText(/^权重 /)).toHaveCount(0);
       await expect(
@@ -292,11 +289,11 @@ test('拖动换位即权重：排序模式里拖第 3 个到第 1 位，退出�
     await seedThreeTargets(screen, dialog);
     await enterSortMode(dialog);
 
-    // 拖第 3 行（t3）到第 1 行：合成拖拽，不用 dragTo —— 它总把落点摆在
-    // 目标行中心，而悬停判定按中点切，正中会被切到下一行（见 startSyntheticDrag
-    // 上方的注释；这里要的是「拖到第一位」）。
-    await startSyntheticDrag(browser, 2, 0);
-    await finishSyntheticDrag(browser);
+    // 拖第 3 行（t3）到第 1 行：真实指针拖放，落点在第 1 行上沿 —— 悬停
+    // 判定按中点切，正中会被切到下一行（见 startPointerDrag 上方的注释；
+    // 这里要的是「拖到第一位」）。
+    await startPointerDrag(browser, 2, 0);
+    await finishPointerDrag(browser);
 
     // 拖完排序列表里的次序立刻是 t3 / t1 / t2（还没退出）。
     for (const [index, modelId] of ['t3', 't1', 't2'].entries()) {
@@ -320,6 +317,45 @@ test('拖动换位即权重：排序模式里拖第 3 个到第 1 位，退出�
     expect(mine).toBeTruthy();
     expect(mine?.targets.map((t) => t.upstreamModel)).toEqual(['t3', 't1', 't2']);
     expect(mine?.targets.map((t) => t.weight)).toEqual([3, 2, 1]);
+  } finally {
+    await cleanup();
+  }
+});
+
+test('键盘：排序模式里 Alt+方向键换位，换位即权重跟着变', async ({
+  app,
+  screen,
+  browser,
+}) => {
+  await app.open();
+  await adminRpc('AddPlatform', {
+    id: PLATFORM_ID,
+    label: PLATFORM_LABEL,
+    kind: 'openai',
+    baseUrl: 'https://probe.example/v1',
+  });
+  try {
+    await openModelsPage(screen, browser);
+    const dialog = await openTargetTab(screen);
+    await seedThreeTargets(screen, dialog);
+    await enterSortMode(dialog);
+
+    // Alt+ArrowUp：焦点在第 2 行，把它挪到第 1 位。
+    await rowAt(dialog, 1).focus();
+    await rowAt(dialog, 1).press('Alt+ArrowUp');
+    expect(await sortRowText(dialog, 0)).toContain('t2');
+
+    // Alt+ArrowDown：再挪回第 2 位，次序复原。
+    await rowAt(dialog, 0).focus();
+    await rowAt(dialog, 0).press('Alt+ArrowDown');
+    expect(await sortRowText(dialog, 0)).toContain('t1');
+    expect(await sortRowText(dialog, 1)).toContain('t2');
+
+    // 换位即权重：退出后权重还是 3/2/1，归属没变。
+    await exitSortMode(dialog);
+    expect(await shownWeight(targetRow(dialog, 0))).toBe('权重 3');
+    expect(await shownWeight(targetRow(dialog, 1))).toBe('权重 2');
+    expect(await shownWeight(targetRow(dialog, 2))).toBe('权重 1');
   } finally {
     await cleanup();
   }
@@ -428,7 +464,7 @@ test('让位动画有 DOM 证据：拖动进行中其余行带 transition-transf
     await enterSortMode(dialog);
 
     // 半场拖动：起于第 3 行、悬到第 1 行，不落手。
-    await startSyntheticDrag(browser, 2, 0);
+    await startPointerDrag(browser, 2, 0);
 
     // 拖动进行中：被拖行（t3，现在的第 3 行）是 transition-none，其余行
     // 带 transition-transform —— 让位是滑过去的，不是松手才跳变。
@@ -451,7 +487,7 @@ test('让位动画有 DOM 证据：拖动进行中其余行带 transition-transf
     expect(transforms[1]).toContain('translateY');
 
     // 落手：次序真正换掉。
-    await finishSyntheticDrag(browser);
+    await finishPointerDrag(browser);
     for (const [index, modelId] of ['t3', 't1', 't2'].entries()) {
       expect(await sortRowText(dialog, index)).toContain(modelId);
     }

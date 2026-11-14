@@ -88,49 +88,64 @@ function sortOrder(browser: Browser): Promise<string[]> {
   );
 }
 
+/** 量一次拖拽列表的行几何（横向取行中点；位移只改 transform 不改行高，整场有效）。 */
+type RowRect = { x: number; top: number; height: number };
+
+async function rowRects(browser: Browser): Promise<RowRect[]> {
+  return await browser.evaluate<RowRect[]>(
+    `[...document.querySelectorAll('ul[aria-label="平台排序"] > li')].map((li) => {
+      const r = li.getBoundingClientRect();
+      return { x: r.x + r.width / 2, top: r.top, height: r.height };
+    })`,
+  );
+}
+
 /**
- * 把第 from 行拖到第 to 行：合成拖拽（dragstart → dragover → drop）。
+ * 用真实指针序列走半场拖动：mouse.down 起于第 from 行、分步 mouse.move 移到
+ * 第 to 行上沿，不落手 —— 拖动过程的状态留在 DOM 里给断言看，之后由调用方
+ * mouse.up 落位（finishPointerDrag）。
  *
- * 不用原生的 `dragTo`：它总把落点摆在目标行中心，而 DragSortList 的悬停判定
- * 按各行中点切（`hoverFromPointer`），正中那一点会被切到下一行 —— 拖到第一位
- * 会变成第二位。这里把 dragover 摆在第 to 行的上沿，悬停位就是第 to 行。
- * dragstart 和 dragover 分两次 evaluate：dragstart 的 setState 要先渲染出去，
- * dragover 的处理器才能看到拖动状态。
+ * 落点取第 to 行的上沿而不是中心：DragSortList 的悬停判定按各行中点切
+ * （`hoverFromPointer`），正中那一点会被切到下一行 —— 上沿的悬停位就是第
+ * to 行。移动分多步：组件靠 pointermove 逐次算切行，一步到位收到的 move
+ * 不够。指针被 setPointerCapture 抓在起拖行上，移出行外也收得到 move / up。
  */
+async function startPointerDrag(
+  browser: Browser,
+  from: number,
+  to: number,
+): Promise<void> {
+  const rects = await rowRects(browser);
+  const startY = rects[from].top + rects[from].height / 2;
+  const targetY = rects[to].top + 2;
+  await browser.mouse.move(rects[from].x, startY);
+  await browser.mouse.down();
+  const steps = 8;
+  for (let step = 1; step <= steps; step++) {
+    await browser.mouse.move(
+      rects[from].x,
+      startY + ((targetY - startY) * step) / steps,
+    );
+  }
+  // 等拖动状态的渲染追上指针：后面的断言读的是 DOM 里的拖拽态。
+  await browser.evaluate<null>(
+    'new Promise((resolve) => setTimeout(() => resolve(null), 50))',
+  );
+}
+
+/** 收半场拖动：落手，让次序真正提交。 */
+async function finishPointerDrag(browser: Browser): Promise<void> {
+  await browser.mouse.up();
+}
+
+/** 把第 from 行拖到第 to 行：完整的一次真实指针拖放。 */
 async function dragRowToIndex(
   browser: Browser,
   from: number,
   to: number,
 ): Promise<void> {
-  const rows =
-    "[...document.querySelectorAll('ul[aria-label=\"平台排序\"] > li')]";
-  await browser.evaluate(
-    `(() => {
-      const rows = ${rows};
-      rows[${from}].dispatchEvent(new DragEvent('dragstart', {
-        bubbles: true, cancelable: true, dataTransfer: new DataTransfer(), clientY: 0,
-      }));
-    })()`,
-  );
-  await browser.evaluate(
-    `(() => {
-      const rows = ${rows};
-      const rect = rows[${to}].getBoundingClientRect();
-      rows[${to}].dispatchEvent(new DragEvent('dragover', {
-        bubbles: true, cancelable: true, dataTransfer: new DataTransfer(),
-        clientY: rect.top + 2,
-      }));
-    })()`,
-  );
-  await browser.evaluate(
-    `(() => {
-      document
-        .querySelector('ul[aria-label="平台排序"]')
-        .dispatchEvent(new DragEvent('drop', {
-          bubbles: true, cancelable: true, dataTransfer: new DataTransfer(),
-        }));
-    })()`,
-  );
+  await startPointerDrag(browser, from, to);
+  await finishPointerDrag(browser);
 }
 
 /** 平台页表格里数据行的先后（行文本里都带着平台 id，按行文本认）。 */
@@ -170,30 +185,10 @@ test('拖动让位：拖动进行中其余行带 transition-transform 或 inline
   await enterSortMode(screen);
 
   const before = await sortOrder(browser);
-  // 半场拖动：dragstart 起于排序丙、dragover 悬到第一行，不落手。两次
-  // evaluate：dragstart 的 setState 要先渲染出去，dragover 才能看到拖动状态。
+  // 半场拖动：起于排序丙、悬到第一行，不落手。
   const from = before.indexOf('sort-gamma');
   expect(from).toBeGreaterThan(0);
-  const rowsSelector =
-    "[...document.querySelectorAll('ul[aria-label=\"平台排序\"] > li')]";
-  await browser.evaluate(
-    `(() => {
-      const rows = ${rowsSelector};
-      rows[${from}].dispatchEvent(new DragEvent('dragstart', {
-        bubbles: true, cancelable: true, dataTransfer: new DataTransfer(), clientY: 0,
-      }));
-    })()`,
-  );
-  await browser.evaluate(
-    `(() => {
-      const rows = ${rowsSelector};
-      const rect = rows[0].getBoundingClientRect();
-      rows[0].dispatchEvent(new DragEvent('dragover', {
-        bubbles: true, cancelable: true, dataTransfer: new DataTransfer(),
-        clientY: rect.top + 2,
-      }));
-    })()`,
-  );
+  await startPointerDrag(browser, from, 0);
 
   // 拖动进行中：被拖行（排序丙）跟指针（inline transform、无过渡），
   // 它上方的行已经让出位移（computeOffsets：hover < from 时 [hover, from)
@@ -224,15 +219,7 @@ test('拖动让位：拖动进行中其余行带 transition-transform 或 inline
   }
 
   // 落手收尾：次序真正换掉，页面不炸。
-  await browser.evaluate(
-    `(() => {
-      document
-        .querySelector('ul[aria-label="平台排序"]')
-        .dispatchEvent(new DragEvent('drop', {
-          bubbles: true, cancelable: true, dataTransfer: new DataTransfer(),
-        }));
-    })()`,
-  );
+  await finishPointerDrag(browser);
   const draggedOrder = await sortOrder(browser);
   expect(draggedOrder[0]).toBe('sort-gamma');
 
@@ -262,11 +249,12 @@ test('排序模式：点「排序」换出拖拽列表，点「完成排序」�
     'true',
   );
   await expect(screen.getByRole('table')).toBeHidden();
-  // 三个平台都在拖拽列表里，各自带着拖拽该有的属性。
+  // 三个平台都在拖拽列表里，各自带着拖拽该有的属性：整行可起拖
+  // （touch-action: none，触屏上按住拖动不被当成滚动）。
   for (const row of SEEDED) {
     const li = sortRow(screen, row.id);
     await expect(li).toBeVisible();
-    await expect(li).toHaveAttribute('draggable', 'true');
+    await expect(browser).toHaveClass(li, /touch-none/);
   }
 
   await screen.getByRole('button', { name: '完成排序' }).click();
