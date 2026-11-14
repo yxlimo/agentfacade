@@ -343,13 +343,14 @@ test('跨页一致：改完次序，额度页与签到页的行次序跟着走',
   );
   expect(balanceOrder.filter((id) => SEEDED_IDS.includes(id))).toEqual(seededOrder);
 
-  // 签到页：行的先后与平台页一致。
+  // 签到页：排的那三个是开放平台，没有签到能力 —— 能力过滤生效，整行
+  // 不出现（跨页一致的签到页次序断言在 panel-checkin.e2e 里，用
+  // 有签到能力的平台验）。
   await screen.getByRole('link', { name: '签到' }).click();
   await expect(screen.getByRole('heading', { name: '签到' })).toBeVisible();
-  const checkinOrder = await browser.evaluate<string[]>(
-    `[...document.querySelectorAll('ul[aria-label="平台签到"] > li')].map((li) => (li.getAttribute('aria-label') ?? '').split(' ')[0])`,
-  );
-  expect(checkinOrder.filter((id) => SEEDED_IDS.includes(id))).toEqual(seededOrder);
+  for (const id of SEEDED_IDS) {
+    await expect(screen.getByLabel(`${id} 签到行`, { exact: true })).toHaveCount(0);
+  }
 
   await cleanupAll();
 });

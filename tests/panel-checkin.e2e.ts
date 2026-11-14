@@ -1,5 +1,6 @@
-// tests/panel-checkin.e2e.ts — 签到页的端到端：一个平台一行、默认收起、点开看
-// 明细、没签到的平台占一行写「没有签到记录」、侧栏入口与总览的签到卡、立即签到。
+// tests/panel-checkin.e2e.ts — 签到页的端到端：只显示有签到能力的平台、
+// 摘要三态（已签 / 未签 / 未知）、默认收起点开看明细、侧栏入口与总览的
+// 签到卡、立即签到、行次序跟着平台次序走。
 //
 // 数据从哪来：行集合是平台清单（ListUpstreams），签到结论是真问回来的 ——
 // 网关的 GetBenefitStatus 读签到跑腿器上次的结果，RunBenefitNow 真的跑一遍。
@@ -17,14 +18,15 @@ import { execFileSync } from 'node:child_process';
 import { expect } from 'e2e';
 import type { Locator, Screen } from 'e2e';
 import { test } from '@e2e-dev/web';
-import { addAccount, adminRpc, dataDir, dropPlatform, login, seedOpenPlatform } from './panel.ts';
+import {
+  addAccount,
+  adminRpc,
+  dataDir,
+  dropPlatform,
+  login,
+  seedOpenPlatform,
+} from './panel.ts';
 import { startPanelUpstream, workbuddyCheckinControl } from './panel-upstream.ts';
-
-/** 现在的平台清单（签到页的行集合与次序都跟着它走）。 */
-async function listedPlatforms(): Promise<string[]> {
-  const answer = await adminRpc<{ upstreams: { id: string }[] }>('ListUpstreams');
-  return answer.upstreams.map((upstream) => upstream.id);
-}
 
 /** 签到页上平台那一行（行容器的 aria-label 恒为 `<平台id> 签到行`）。 */
 function rowOf(screen: Screen, id: string): Locator {
@@ -79,7 +81,7 @@ async function runBenefitsOnce(): Promise<string[]> {
   return answer.lines ?? [];
 }
 
-test('签到页一个平台一行：行的集合与次序跟着平台清单走，没结论的写「没有签到记录」', async ({
+test('签到页只显示有签到能力的平台：开放平台整行不出现，摘要用三态措辞', async ({
   app,
   screen,
 }) => {
@@ -87,7 +89,8 @@ test('签到页一个平台一行：行的集合与次序跟着平台清单走�
   const added = ['checkin-mike', 'checkin-alpha'];
   const accounts: string[] = [];
   try {
-    // 一家有签到结论的（workbuddy-cn 名下两个账号真跑了一遍），两家开放平台没有。
+    // 一家有签到结论的（workbuddy-cn 名下两个账号真跑了一遍，假上游的签到
+    // 状态路径没开 → 两个账号都是「未知」），两家开放平台没有签到能力。
     // 签到是账号的事：同一平台下的每个账号都签，行的结论是这一家平台合起来的。
     accounts.push(await seedWorkBuddyAccount('签到了的那家甲'));
     accounts.push(await seedWorkBuddyAccount('签到了的那家乙'));
@@ -97,24 +100,27 @@ test('签到页一个平台一行：行的集合与次序跟着平台清单走�
 
     await openCheckin(screen, app);
 
+    // 开放平台（openai 族）整行不出现 —— 不是占一行写「没有签到记录」。
+    for (const id of added) {
+      await expect(rowOf(screen, id)).toHaveCount(0);
+    }
+
+    // 行集合恰为有签到结论的平台：这一趟只有 workbuddy-cn 有账号。
     const list = screen.getByLabel('平台签到');
-    // 一行一个平台，次序 = 平台清单的次序（页面照清单原样摆）。
-    const expected = await listedPlatforms();
-    await expect(list.getByRole('listitem')).toHaveCount(expected.length);
     const labels: string[] = [];
-    for (let index = 0; index < expected.length; index += 1) {
+    const count = await list.getByRole('listitem').count();
+    for (let index = 0; index < count; index += 1) {
       labels.push(String(await list.getByRole('listitem').nth(index).getAttribute('aria-label')));
     }
-    expect(labels).toEqual(expected.map((id) => `${id} 签到行`));
+    expect(labels).toEqual(['workbuddy-cn 签到行']);
 
-    // 有结论的那家不再写「没有签到记录」；没结论的两家写「没有签到记录」，不是 0。
-    // 【等修复】后端 BenefitStatus.upstreamId 现在装的是账号 id，面板拿平台 id
-    // 去 join 永远不中（缺陷定位见交付记录）；be-admin 改完 proto 这条才转绿。
-    await expect(rowOf(screen, 'workbuddy-cn')).not.toContainText('没有签到记录');
-    for (const id of added) {
-      await expect(rowOf(screen, id)).toContainText('没有签到记录');
-      await expect(rowOf(screen, id)).not.toContainText('0');
-    }
+    // 摘要三态：两个账号都问过、都问出来「未知」→「今日签到状态未知」，
+    // 不是替它说「还没签」，也不是退役的「暂无新活动 / 平台不支持」。
+    await expect(rowOf(screen, 'workbuddy-cn')).toContainText('今日签到状态未知');
+    const summary = String(await rowOf(screen, 'workbuddy-cn').textContent());
+    expect(summary).not.toContain('暂无新活动');
+    expect(summary).not.toContain('平台不支持');
+    expect(summary).not.toContain('没有签到记录');
   } finally {
     workbuddyCheckinControl.reset();
     for (const account of accounts) {
@@ -173,18 +179,87 @@ test('默认收起，点开看明细，再收起明细区从 DOM 消失', async 
   }
 });
 
-test('空状态：没有签到结论的平台占一行，写「没有签到记录」，不带数字', async ({
+test('空状态：没有任何有签到能力的平台，整页一句「没有需要签到的平台」', async ({
   app,
   screen,
 }) => {
   await openCheckin(screen, app);
 
-  // zcode 不发积分、这一趟也没有它的账号：没有签到结论，但行还在。
-  const row = rowOf(screen, 'zcode');
-  await expect(row).toBeVisible();
-  await expect(row).toContainText('没有签到记录');
-  const text = String(await row.textContent());
-  expect(/\d/.test(text)).toBe(false);
+  // 这一趟没有任何账号：没有行，列表容器根本不渲染，整页一句话。
+  await expect(screen.getByLabel('平台签到')).toHaveCount(0);
+  await expect(rowOf(screen, 'zcode')).toHaveCount(0);
+  await expect(screen.getByText('没有需要签到的平台')).toBeVisible();
+});
+
+test('摘要三态之「今日已签到」：假上游答今天签过，行摘要跟着说已签', async ({
+  app,
+  screen,
+}) => {
+  const upstream = await startPanelUpstream();
+  let account = '';
+  try {
+    account = await seedWorkBuddyAccount('真签到了的那家');
+    // 假上游的签到状态路径打开：今天已签、连签 3 天 → checkin_state 是 SIGNED。
+    workbuddyCheckinControl.enabled = true;
+    await runBenefitsOnce();
+
+    await openCheckin(screen, app);
+
+    await expect(rowOf(screen, 'workbuddy-cn')).toContainText('今日已签到');
+    // 不是拿「未知」或「未签」冒充的：这一行确实说已签。
+    const summary = String(await rowOf(screen, 'workbuddy-cn').textContent());
+    expect(summary).not.toContain('未知');
+    expect(summary).not.toContain('尚未签到');
+    // 这一趟真的走过网关：签到状态问的是假上游。
+    const paths = upstream.hits.map((hit) => hit.path);
+    expect(paths).toContain('/v2/billing/meter/checkin-activity-status');
+  } finally {
+    workbuddyCheckinControl.reset();
+    if (account) await adminRpc('DeleteAccount', { id: account }).catch(() => {});
+  }
+});
+
+test('签到页的行次序跟着操作者排的那份平台次序走（跨页一致的签到页半边）', async ({
+  app,
+  screen,
+  browser,
+}) => {
+  await startPanelUpstream();
+  const accounts: string[] = [];
+  try {
+    // 两家有签到结论的平台：次序才有得比。问答失败没关系 —— 失败也是
+    // 「未知」的结论，行照样占位置。
+    const minimaxAccount = await addAccount('minimax', '次序探针甲');
+    await adminRpc('SetAccountEnabled', { accountId: minimaxAccount, enabled: true });
+    accounts.push(minimaxAccount);
+    accounts.push(await seedWorkBuddyAccount('次序探针乙'));
+    await runBenefitsOnce();
+
+    await app.open();
+    await login(screen);
+    // 直接把次序写进 localStorage（平台页拖出来存的就是这份），把 minimax
+    // 排到 workbuddy-cn 前面 —— 平台清单的默认次序不是这样，说明页面真读了。
+    await browser.evaluate<string>(
+      `window.localStorage.setItem('buddy.panel.platformOrder', ${JSON.stringify(
+        JSON.stringify(['minimax', 'workbuddy-cn']),
+      )})`,
+    );
+    await screen.getByRole('link', { name: '签到' }).click();
+    await expect(screen.getByRole('heading', { name: '签到' })).toBeVisible();
+
+    const order = await browser.evaluate<string[]>(
+      `[...document.querySelectorAll('ul[aria-label="平台签到"] > li')].map((li) => (li.getAttribute('aria-label') ?? '').split(' ')[0])`,
+    );
+    expect(order.filter((id) => ['minimax', 'workbuddy-cn'].includes(id))).toEqual([
+      'minimax',
+      'workbuddy-cn',
+    ]);
+  } finally {
+    workbuddyCheckinControl.reset();
+    for (const account of accounts) {
+      await adminRpc('DeleteAccount', { id: account }).catch(() => {});
+    }
+  }
 });
 
 test('侧栏入口：签到到 /checkin，总览的签到卡还在', async ({ app, screen, browser }) => {

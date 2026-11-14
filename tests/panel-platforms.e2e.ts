@@ -115,11 +115,14 @@ test('加账号：状态说出「没有可用凭据」这一条明确原因；�
   screen,
   browser,
 }) => {
+  // 先删一遍：上一条用例失败跳过收尾时，这里不能撞「已存在」。
+  await dropPlatform('e2e-account').catch(() => {});
   await seedOpenPlatform('e2e-account', 'E2E 账号站');
   await app.open();
   await openPlatforms(screen, browser);
 
-  const row = rowOf(screen, 'E2E 账号站');
+  try {
+    const row = rowOf(screen, 'E2E 账号站');
   await expect(row).toBeVisible();
   // 还没有账号时，状态那一格（第 3 列）说的是「加一个账号」。
   await expect(row.getByRole('cell').nth(2)).toContainText('这个平台还没有账号');
@@ -155,29 +158,36 @@ test('加账号：状态说出「没有可用凭据」这一条明确原因；�
   await expect(row.getByRole('cell').nth(3)).toContainText(
     '这个平台只有一个账号，策略不生效',
   );
-  // 展开之后账号还在：个数不给看，不等于账号看不到。
-  await row.click();
-  await expect(row.getByText('探针一号')).toBeVisible();
+  // 展开之后账号还在：个数不给看，不等于账号看不到。展开的落点是行首
+  // 那颗按钮（「生效策略」那格吃掉了点击，点行不展开）；展开出来的明细
+  // 是独立的 <tr>，不在行子树里，从整张表里找。
+  await row.getByRole('button', { name: '展开 e2e-account 的账号与凭据' }).click();
+  await expect(screen.getByText('探针一号')).toBeVisible();
   await expectSamePage(browser);
-
-  await dropPlatform('e2e-account');
+  } finally {
+    await dropPlatform('e2e-account').catch(() => {});
+  }
 });
 
 test('平台行的小字里没有 base URL，也没有类型', async ({ app, screen, browser }) => {
+  // 先删一遍：上一条用例失败跳过收尾时，这里不能撞「已存在」。
+  await dropPlatform('e2e-account').catch(() => {});
   await seedOpenPlatform('e2e-account', 'E2E 账号站');
   await app.open();
   await openPlatforms(screen, browser);
 
-  const row = rowOf(screen, 'E2E 账号站');
-  await expect(row).toBeVisible();
-  // 名字下的小字不给看 base URL（播种时填了 https://probe.example/v1）
-  // 与类型（openai 的名字是「OpenAI 兼容」）—— 摆出来只会让人以为能改。
-  await expect(row).not.toContainText('https://probe.example/v1');
-  await expect(row).not.toContainText('OpenAI 兼容');
-  // id 还在小字里：客户端路径里那一段得能认出来。
-  await expect(row).toContainText('e2e-account');
-
-  await dropPlatform('e2e-account');
+  try {
+    const row = rowOf(screen, 'E2E 账号站');
+    await expect(row).toBeVisible();
+    // 名字下的小字不给看 base URL（播种时填了 https://probe.example/v1）
+    // 与类型（openai 的名字是「OpenAI 兼容」）—— 摆出来只会让人以为能改。
+    await expect(row).not.toContainText('https://probe.example/v1');
+    await expect(row).not.toContainText('OpenAI 兼容');
+    // id 还在小字里：客户端路径里那一段得能认出来。
+    await expect(row).toContainText('e2e-account');
+  } finally {
+    await dropPlatform('e2e-account').catch(() => {});
+  }
 });
 
 test('删开放平台：确认框说清会连账号凭据一起清掉，删完列表立刻少一行', async ({
