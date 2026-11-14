@@ -62,6 +62,8 @@ type ModelDraft = {
    * 拖动一改位置，权重跟着重新算。
    */
   targets: {
+    /** 草稿内的行标识：排序的 FLIP 过渡靠它对号，不发给后端。 */
+    uid: string
     groupName: string
     upstreamModel: string
   }[]
@@ -71,6 +73,7 @@ function emptyTarget() {
   return {
     groupName: '',
     upstreamModel: '',
+    uid: crypto.randomUUID(),
   }
 }
 
@@ -164,6 +167,7 @@ export function toDraft(model: PublishedModel | undefined): ModelDraft {
     targets: model.targets.map((target) => ({
       groupName: target.groupName,
       upstreamModel: target.upstreamModel,
+      uid: crypto.randomUUID(),
     })),
   }
 }
@@ -559,7 +563,9 @@ export function ModelDialog({
                     退出后各字段的输入原样回来。 */}
                 <DragSortList
                   items={draft.targets}
-                  getId={(_, index) => String(index)}
+                  // 草稿里的稳定 id：排序的落位过渡按它在前后两帧对上同一行。
+                  // 用下标当 id 的话重排后每个位置拿到的 id 不变，位移差恒为零。
+                  getId={(target) => target.uid}
                   ariaLabel='目标顺序'
                   rowProps={(_, index) => ({
                     'data-target-row': String(index),

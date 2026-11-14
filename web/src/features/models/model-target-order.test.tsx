@@ -17,6 +17,7 @@ import {
 import { ModelDialog } from '@/features/models/model-dialog'
 import { mockAdminClient } from '@/test/mock-transport'
 import { renderWithClient } from '@/test/render'
+import { pointerDrag, stubRowGeometry } from '@/test/row-geometry'
 
 /** 一个开着的、已登录的上游。 */
 function usableUpstream(id: string, label: string) {
@@ -84,9 +85,12 @@ function threeTargets(): PublishedModel {
   })
 }
 
-/** 拖拽事件里那份搬运工：jsdom 没有 DataTransfer，凑一个够用的。 */
-function dataTransfer() {
-  return { setData: () => {}, getData: () => '', effectAllowed: '', dropEffect: '' }
+/**
+ * 拖拽走指针事件：悬停位按行高中点切，jsdom 里先钉住几何再拖。
+ */
+function dragRowTo(from: HTMLElement, toClientY: number) {
+  stubRowGeometry()
+  pointerDrag(from, toClientY)
 }
 
 /** 目标列表里的各行。 */
@@ -153,10 +157,7 @@ describe('目标的顺序即权重', () => {
     await screen.findByRole('list', { name: '目标顺序' })
 
     // 第一行拖到最后一行上：它换到那个位次。
-    const transfer = dataTransfer()
-    fireEvent.dragStart(rows()[0], { dataTransfer: transfer })
-    fireEvent.dragOver(rows()[2], { dataTransfer: transfer })
-    fireEvent.drop(rows()[2], { dataTransfer: transfer })
+    dragRowTo(rows()[0], 120)
 
     expect(listedCombos()).toEqual([
       'tokenrhythm / neohorse-1-9b',
@@ -214,6 +215,35 @@ describe('目标的顺序即权重', () => {
       ['glm-5.3-flash', 2],
       ['glm-5.3-air', 1],
     ])
+  })
+
+  it('重排后每行的 data-sort-id 跟着内容走：id 稳定且互不重复', async () => {
+    const user = userEvent.setup({ delay: null })
+    renderWithClient({ client: catalogClient(), children: dialog([]) })
+
+    await enterSortMode(user)
+    stubRowGeometry()
+
+    /** 排序模式下某内容所在行的 data-sort-id。 */
+    const sortIdOf = (content: string) =>
+      rows()
+        .find((row) => row.textContent?.includes(content))
+        ?.getAttribute('data-sort-id')
+
+    const flashId = sortIdOf('tokenrhythm / glm-5.3-flash')
+    const ids = rows().map((row) => row.getAttribute('data-sort-id'))
+    // 每行都有自己的 id：用下标当 id 的话这里就只有 '0' '1' '2'，重排
+    // 后永远对不上行，落位过渡量不出位移。
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(flashId).toBeDefined()
+
+    // 键盘换位：内容跟着自己的 id 走。
+    fireEvent.keyDown(rows()[0], { key: 'ArrowDown', altKey: true })
+    expect(sortIdOf('tokenrhythm / glm-5.3-flash')).toBe(flashId)
+
+    // 拖动换位：同理。
+    pointerDrag(rows()[0], 120)
+    expect(sortIdOf('tokenrhythm / glm-5.3-flash')).toBe(flashId)
   })
 
   it('目标卡片上不再有「上移 / 下移」按钮：排序只能进排序模式', async () => {

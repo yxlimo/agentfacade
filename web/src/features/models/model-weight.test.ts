@@ -26,8 +26,8 @@ describe('顺序与权重', () => {
       })
     )
     draft.targets = [
-      { groupName: 'minimax', upstreamModel: 'MiniMax-M2' },
-      { groupName: 'qoder-cn', upstreamModel: 'claude-sonnet-4' },
+      { groupName: 'minimax', upstreamModel: 'MiniMax-M2', uid: crypto.randomUUID() },
+      { groupName: 'qoder-cn', upstreamModel: 'claude-sonnet-4', uid: crypto.randomUUID() },
     ]
 
     const model = fromDraft(draft)
@@ -41,7 +41,7 @@ describe('顺序与权重', () => {
         strategy: 'single',
       })
     )
-    draft.targets = [{ groupName: 'minimax', upstreamModel: 'MiniMax-M2' }]
+    draft.targets = [{ groupName: 'minimax', upstreamModel: 'MiniMax-M2', uid: crypto.randomUUID() }]
 
     const model = fromDraft(draft)
     expect(model.strategy).toBe('single')
@@ -60,7 +60,8 @@ describe('顺序与权重', () => {
 
     // 读：开着关着都一样画，草稿里没有这一格。
     const draft = toDraft(model)
-    expect(draft.targets).toEqual([
+    // uid 是草稿内部的行标识，每行各有一个；这里只看内容字段。
+    expect(draft.targets.map(({ groupName, upstreamModel }) => ({ groupName, upstreamModel }))).toEqual([
       { groupName: 'minimax', upstreamModel: 'MiniMax-M2' },
       { groupName: 'qoder-cn', upstreamModel: 'claude-sonnet-4' },
     ])

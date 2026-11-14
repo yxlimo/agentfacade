@@ -10,8 +10,13 @@ import { cn } from '@/lib/utils'
 /**
  * 拖拽排序列表：平台页的排序模式与主路由弹窗的排序模式共用这一套。
  *
- * 拖动时被拖的行跟着指针走（inline transform，无过渡），它经过的行用
- * transition 平滑让位；松手落位，inline 样式清干净，行回到常规文档流。
+ * 拖动走 Pointer Events（不用 HTML5 DnD）：触屏上 draggable 根本不触发，
+ * 指针事件鼠标与触屏一套代码。pointerdown 起拖并 setPointerCapture，
+ * 指针移出行外也收得到 move / up；行上 touch-action: none，否则移动端
+ * 把按住拖动当成页面滚动，事件收不到。拖动时被拖的行跟着指针走
+ * （inline transform，无过渡），它经过的行用 transition 平滑让位；
+ * 松手落位，inline 样式清干净，行回到常规文档流。pointercancel（比如
+ * 浏览器中途接管手势）直接收尾，不留拖拽态与内联样式。
  * 次序变化（拖放落位、Alt+↑/↓）用 FLIP 补一段过渡，键盘换位也有动画。
  *
  * 放在 components/ 而不是 lib/：它是带渲染的共用交互组件，与 ui/ 里的
@@ -106,18 +111,14 @@ export function DragSortList<T>({
     return heights.length - 1
   }
 
-  const trackHover = (clientY: number, fallback?: number) => {
+  const trackHover = (clientY: number) => {
     setDrag((prev) => {
       if (!prev) return prev
       const heights = rowHeights()
-      // 测不出行高（jsdom、列表刚挂载）时退回「悬停在哪一行就是哪一位」。
-      // 不给 fallback（行间空隙里的 dragOver）时只跟指针，不动悬停位。
+      // 测不出行高（jsdom、列表刚挂载）时悬停位不动：没几何可切行。
+      // 指针路径的悬停位一律按中点切行（中点归本行）。
       const measurable = heights.some((h) => h > 0)
-      const hover = fallback === undefined
-        ? prev.hover
-        : measurable
-          ? hoverFromPointer(clientY, heights)
-          : fallback
+      const hover = measurable ? hoverFromPointer(clientY, heights) : prev.hover
       const dy = measurable ? clientY - startYRef.current : prev.dy
       if (hover === prev.hover && dy === prev.dy) return prev
       return {
@@ -173,23 +174,7 @@ export function DragSortList<T>({
       {hint ? (
         <p className='text-xs text-muted-foreground'>{hint}</p>
       ) : null}
-      <ul
-        ref={listRef}
-        aria-label={ariaLabel}
-        className='grid gap-1'
-        // 行与行之间的空隙上也收得到 dragOver：指针跟得上，drop 不落空。
-        onDragOver={(event) => {
-          if (!drag) return
-          event.preventDefault()
-          // 这里只让 drop 收得到、让被拖行跟得上指针：悬停位由行上的
-          // dragOver 说，冒泡到这里不能用旧值把它盖回去。
-          trackHover(event.clientY)
-        }}
-        onDrop={(event) => {
-          event.preventDefault()
-          finish(true)
-        }}
-      >
+      <ul ref={listRef} aria-label={ariaLabel} className='grid gap-1'>
         {items.map((item, index) => {
           const offset = drag?.offsets[index] ?? 0
           const dragging = drag?.from === index
@@ -201,31 +186,38 @@ export function DragSortList<T>({
                 rowRefs.current[index] = el
               }}
               data-sort-id={getId(item, index)}
-              draggable
               tabIndex={0}
-              onDragStart={(event) => {
+              onPointerDown={(event) => {
+                // 只认主键的按下：右键、多点触控的第二根手指不起拖。
+                if (event.button !== 0 || !event.isPrimary) return
+                // 行尾的动作按钮照常点：从按钮上按下去不是拖这一行。
+                if (
+                  (event.target as HTMLElement).closest(
+                    'button, a, input, select, textarea'
+                  )
+                ) {
+                  return
+                }
                 committedRef.current = false
                 startYRef.current = event.clientY
-                const heights = rowHeights()
+                // 抓住指针：移出行（甚至移出窗口）也照样收 move / up。
+                // jsdom 没有 setPointerCapture，可选调用。
+                event.currentTarget.setPointerCapture?.(event.pointerId)
                 setDrag({
                   from: index,
                   hover: index,
                   dy: 0,
-                  offsets: computeOffsets(index, index, 0, heights),
+                  offsets: computeOffsets(index, index, 0, rowHeights()),
                 })
-                event.dataTransfer?.setData('text/plain', String(index))
-                if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
               }}
-              onDragOver={(event) => {
-                if (!drag || drag.from === index) return
+              onPointerMove={(event) => {
+                if (!drag || drag.from !== index) return
+                // 压掉拖动引发的文本选择。
                 event.preventDefault()
-                trackHover(event.clientY, index)
+                trackHover(event.clientY)
               }}
-              onDrop={(event) => {
-                event.preventDefault()
-                finish(true)
-              }}
-              onDragEnd={() => finish(false)}
+              onPointerUp={() => finish(true)}
+              onPointerCancel={() => finish(false)}
               onKeyDown={(event) => {
                 if (!event.altKey) return
                 if (event.key === 'ArrowUp' && index > 0) {
@@ -246,7 +238,8 @@ export function DragSortList<T>({
                   : undefined
               }
               className={cn(
-                'flex items-center gap-2 rounded-md border px-3 py-2',
+                // touch-action: none：触屏上按住行拖动不能被浏览器当成滚动。
+                'flex touch-none items-center gap-2 rounded-md border px-3 py-2',
                 dragging
                   ? 'relative z-10 cursor-grabbing opacity-50 shadow-md transition-none'
                   : 'cursor-grab transition-transform duration-150'

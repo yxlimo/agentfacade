@@ -219,8 +219,8 @@ describe('元数据的继承', () => {
   it('没填全的目标不会发出去', () => {
     const draft = toDraft(undefined)
     draft.targets = [
-      { groupName: 'qoder', upstreamModel: '' },
-      { groupName: '', upstreamModel: 'claude' },
+      { groupName: 'qoder', upstreamModel: '', uid: crypto.randomUUID() },
+      { groupName: '', upstreamModel: 'claude', uid: crypto.randomUUID() },
     ]
     expect(fromDraft(draft).targets).toHaveLength(0)
   })

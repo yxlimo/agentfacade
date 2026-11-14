@@ -1,6 +1,6 @@
 import { create, type MessageInitShape } from '@bufbuild/protobuf'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { fireEvent, screen, within } from '@testing-library/react'
+import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
   AccountSchema,
@@ -19,6 +19,7 @@ import { UpstreamsPage } from '@/features/upstreams/index'
 import { PLATFORM_ORDER_KEY } from '@/lib/platform-order'
 import { mockAdminClient } from '@/test/mock-transport'
 import { renderWithClient } from '@/test/render'
+import { pointerDrag, stubRowGeometry } from '@/test/row-geometry'
 
 /** 一个平台：表里有行，账下有一个账号。 */
 function platform(
@@ -75,9 +76,10 @@ function clientWith(upstreams: Upstream[]) {
   })
 }
 
-/** 拖拽事件里那份搬运工：jsdom 没有 DataTransfer，凑一个够用的。 */
-function dataTransfer() {
-  return { setData: () => {}, getData: () => '', effectAllowed: '', dropEffect: '' }
+/** 拖拽走指针事件：悬停位按行高中点切，jsdom 里先钉住几何再拖。 */
+function dragRowTo(from: HTMLElement, toClientY: number) {
+  stubRowGeometry()
+  pointerDrag(from, toClientY)
 }
 
 /** 排序列表里各行平台的 id，按界面上的次序。 */
@@ -174,11 +176,9 @@ describe('平台页的排序模式', () => {
     await user.click(screen.getByRole('button', { name: '排序' }))
     const list = await screen.findByRole('list', { name: '平台排序' })
     const items = within(list).getAllByRole('listitem')
-    const transfer = dataTransfer()
 
-    fireEvent.dragStart(items[0], { dataTransfer: transfer })
-    fireEvent.dragOver(items[2], { dataTransfer: transfer })
-    fireEvent.drop(items[2], { dataTransfer: transfer })
+    // 第一行拖到最后一行上。
+    dragRowTo(items[0], 120)
 
     expect(listedIds()).toEqual(['beta', 'gamma', 'alpha'])
     expect(storedOrder()).toEqual(['beta', 'gamma', 'alpha'])
