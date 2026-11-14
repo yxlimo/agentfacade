@@ -20,9 +20,10 @@ import {
   dataDir,
   dropPlatform,
   login,
+  QINIU_BASE_URL,
   seedPlatform,
 } from './panel.ts';
-import { qiniuQuotaControl, qoderQuotaControl, startPanelUpstream, UPSTREAM_BASE } from './panel-upstream.ts';
+import { qoderQuotaControl, startPanelUpstream } from './panel-upstream.ts';
 
 /** 现在的平台清单（额度页的行集合与次序都跟着它走）。 */
 async function listedPlatforms(): Promise<string[]> {
@@ -287,45 +288,41 @@ test('同一个平台的几个账号额度不相加：各显各的数，页面�
   }
 });
 
-test('额度服务挂了：那一行照旧有归属与结论，不会悄悄变成 0 或者消失', async ({
+test('额度有结论（没填门户 cookie）：那一行照旧有归属与结论，不会悄悄变成 0 或者消失', async ({
   app,
   screen,
 }) => {
-  const upstream = await startPanelUpstream();
-  let account = '';
+  // 七牛插件那条路：额度插件按平台地址认（地址填七牛声明的规范推理地址就是
+  // 它）。账号只给了推理 key、没给门户 cookie：探测在发请求之前就翻成结论
+  // （missing，没填凭据）—— 不碰网络，答复是确定的。
+  // 注意：插件的门户地址是它自己声明的那台（portal.qiniu.com），不再跟平台行
+  // 走，所以「门户 500 → 未知」这一档在 e2e 里指不到假上游（见交付记录）。
   const platform = 'balance-portal-down';
+  let account = '';
   try {
-    // 七牛插件那条路：额度接口地址是平台行上的（openai 类没有默认门户），
-    // 指到本机就是可控制的。探测挂了要给出结论，走插件的快照桶 —— 没有
-    // 插件的种类探测失败拿不到结论，那是另一件事（见交付记录）。
     await seedPlatform({
       id: platform,
       label: '门户挂了的站',
       kind: 'openai',
-      baseUrl: `${UPSTREAM_BASE}/portal/`,
-      quotaPlugin: 'qiniu',
+      baseUrl: QINIU_BASE_URL,
     });
-    account = await addAccount(platform, '挂了的那家');
+    account = await addAccount(platform, '没填 cookie 的那家');
     await adminRpc('SetProviderKeys', {
       upstreamId: account,
-      keys: ['sk-e2e-portal-key', 'e2e-portal-cookie-down'], // privacy:allow — 编造的样例
+      keys: ['sk-e2e-portal-key', ''], // privacy:allow — 编造的样例（第二段空串占位：还没填门户 cookie）
     });
-    qiniuQuotaControl.enabled = true;
-    qiniuQuotaControl.mode = 'error';
 
     await openBalance(screen, app);
 
-    // 探测失败是快照里的一条结论（state unknown）：行还在，账号还在，
+    // 探测失败是快照里的一条结论（state missing）：行还在，账号还在，
     // 给的是那句话 —— 不写成 0，也不消失。
     const row = screen.getByLabel(`${platform} 额度行`, { exact: true });
     await expect(row).toBeVisible();
     await expect(row).toContainText('1 个账号');
-    await expect(row).toContainText('未知');
+    await expect(row).toContainText('还没填凭据');
     await expect(row).not.toContainText('没有账号');
     await expect(row).not.toContainText('剩 0 点');
-    upstream.reset();
   } finally {
-    qiniuQuotaControl.reset();
     if (account) await adminRpc('DeleteAccount', { id: account }).catch(() => {});
     await dropPlatform(platform).catch(() => {});
   }

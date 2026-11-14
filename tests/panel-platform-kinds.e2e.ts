@@ -5,12 +5,12 @@
 // 的清单里，而方言两种与预置的模拟客户端照旧在。
 //
 // 老平台行是另一件事：厂商那几种 kind 已经从代码里拿掉了，库里从前建的那些行
-// 由一次性数据迁移转成 `openai`（地址落进行里、额度插件保留）。所以这里验的是
+// 由一次性数据迁移转成 `openai`（规范推理地址落进行里）。所以这里验的是
 // 「转过来的那一行照旧好用」：显示、编辑、保存、凭据栏两段都还在。
 //
 // 行由 admin 接口铺（`tests/panel.ts` 的 `seedPlatform`），铺的就是迁移后的
-// 形状：`kind: "openai"` + 地址 + 原来那个额度插件（额度那一段凭据归插件，不归
-// kind）。
+// 形状：`kind: "openai"` + 七牛那台规范推理地址（额度插件按地址认出来，额度
+// 那一段凭据归插件，不归 kind）。
 
 import { expect } from 'e2e';
 import { test } from '@e2e-dev/web';
@@ -23,6 +23,7 @@ import {
   expectSamePage,
   login,
   markPage,
+  QINIU_BASE_URL,
   seedPlatform,
 } from './panel.ts';
 
@@ -60,16 +61,15 @@ async function openKindDropdown(screen: Screen): Promise<Locator> {
 }
 
 /** 服务端现在认的那一行（断言库里的状态，不只看这一页把它画成什么）。 */
-async function rowInStore(id: string): Promise<
-  | { id: string; label: string; kind: string; quotaPlugin: string }
-  | undefined
-> {
+async function rowInStore(
+  id: string,
+): Promise<{ id: string; label: string; kind: string; baseUrl: string } | undefined> {
   const list = await adminRpc<{
     upstreams?: Array<{
       id: string;
       label: string;
       kind: string;
-      quotaPlugin: string;
+      baseUrl: string;
     }>;
   }>('ListUpstreams');
   return (list.upstreams ?? []).find((item) => item.id === id);
@@ -170,14 +170,14 @@ test('迁移过来的老平台行：openai 形状照旧好用 —— 能显示�
   screen,
   browser,
 }) => {
-  // 迁移后的形状：厂商 kind 已经没了，老行改成 kind=openai，地址落进行里，额度
-  // 插件仍是原来那一格（七牛云资源包）。
+  // 迁移后的形状：厂商 kind 已经没了，老行改成 kind=openai，规范推理地址落在
+  // 行上。额度插件不再存平台上：地址对上七牛声明的地址，额度那一段凭据就跟着
+  // 匹配出来。
   await seedPlatform({
     id: 'e2e-migrated',
     label: 'E2E 迁移站',
     kind: 'openai',
-    baseUrl: 'https://legacy.example/v1',
-    quotaPlugin: 'qiniu',
+    baseUrl: QINIU_BASE_URL,
   });
   const account = await addAccount('e2e-migrated', '迁移一号');
   // 两段凭据按位置写：推理 Key，然后是额度插件要的那一格（七牛的门户 cookie）。
@@ -193,8 +193,8 @@ test('迁移过来的老平台行：openai 形状照旧好用 —— 能显示�
 
   const row = rowOf(screen, 'E2E 迁移站');
   await expect(row).toBeVisible();
-  // 额度插件那一格写在平台行上，不写在 kind 里：换 kind 不该把它弄丢。
-  await expect(row).toContainText('七牛云资源包');
+  // 平台卡上不再摆插件行（插件按地址匹配，卡片没有那一格了）：老行照旧摆在
+  // 列表里，能用就行。
 
   // 编辑能打开，改名字能保存（迁移后的行与自建的那行一样能改）。
   await row.getByRole('button', { name: '编辑' }).click();
@@ -225,11 +225,12 @@ test('迁移过来的老平台行：openai 形状照旧好用 —— 能显示�
   expect(badges).toContain('推理 Key');
   expect(badges).toContain('额度 Cookie');
 
-  // 库里那一行也真是这个形状：kind 换成 openai、额度插件还是原来那个。
+  // 库里那一行也真是这个形状：kind 换成 openai、规范推理地址落在行上 ——
+  // 额度插件就是按这个地址认出来的（地址对上谁，额度就是谁的）。
   const saved = await rowInStore('e2e-migrated');
   expect(saved?.label).toBe('E2E 迁移站改名');
   expect(saved?.kind).toBe('openai');
-  expect(saved?.quotaPlugin).toBe('qiniu');
+  expect(saved?.baseUrl).toBe(QINIU_BASE_URL);
 
   await dropPlatform('e2e-migrated');
 });

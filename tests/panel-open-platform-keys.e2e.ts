@@ -19,7 +19,7 @@ import { expect } from 'e2e';
 import { test } from '@e2e-dev/web';
 import type { Browser } from '@e2e-dev/web';
 import type { Locator, Screen } from 'e2e';
-import { addAccount, adminRpc, dropPlatform, login, seedPlatform } from './panel.ts';
+import { addAccount, adminRpc, dropPlatform, login, QINIU_BASE_URL, seedPlatform } from './panel.ts';
 import { UPSTREAM_BASE, startPanelUpstream } from './panel-upstream.ts';
 
 /** 弹窗里贴的那把推理 key —— 编造的样例。 */
@@ -161,13 +161,13 @@ test('开放平台凭据：插件那一格叫「额度 Cookie」（插件声明�
   await startPanelUpstream();
   const platform = 'e2e-open-keys-plugin';
   const label = 'E2E 开放平台二号站';
-  // 通用开放平台 + 七牛那个额度插件：插件要的那一段由平台这一行指名。
+  // 通用开放平台 + 地址填七牛声明的规范地址：额度插件按地址自动匹配出七牛，
+  // 它要的那一段就跟着出现在凭据弹窗里。
   await adminRpc('AddPlatform', {
     id: platform,
     label,
     kind: 'openai',
-    baseUrl: `${UPSTREAM_BASE}/v1`,
-    quotaPlugin: 'qiniu',
+    baseUrl: QINIU_BASE_URL,
   });
   const account = await addAccount(platform, '开放二号');
   try {

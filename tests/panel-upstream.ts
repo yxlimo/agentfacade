@@ -142,25 +142,6 @@ export const qoderQuotaControl = {
 };
 
 /**
- * 七牛门户资源包那一条查询（`QINIU_RESPACK_PATH`）的开关。形状同上：默认
- * 关着照旧 404；开了之后按门户 cookie（`Cookie` 头）报各账号剩多少。
- */
-export const qiniuQuotaControl = {
-  enabled: false,
-  /** ok：给资源包；error：500（门户挂了）。 */
-  mode: 'ok' as 'ok' | 'error',
-  delayMs: 0,
-  /** 哪份门户 cookie 剩多少 k tokens；没登记的账号按 0 算。 */
-  remaining: new Map<string, number>(),
-  reset(): void {
-    this.enabled = false;
-    this.mode = 'ok';
-    this.delayMs = 0;
-    this.remaining.clear();
-  },
-};
-
-/**
  * WorkBuddy 签到状态那一条（`/v2/billing/meter/checkin-activity-status`）的开关。
  *
  * 默认关着照旧 404：其余用例都是照着「没问到签到状态」的世界写的。要验签到页
@@ -311,42 +292,10 @@ async function handle(
   }
 
   // ── Qoder：账号状态与额度（额度页的用例打开；默认关着，见上） ──────────
-  // ── Qoder：账号状态与额度（额度页的用例打开；默认关着，见上） ──────────
-  // 七牛的门户资源包（额度插件的探测）：qiniuQuotaControl 开了才认。平台行的
-  // baseUrl 指到本机时，openai 类没有默认门户，额度就照行上那台问 —— 假上游
-  // 按账号的门户 cookie 认人，报各自的数。
-  if (qiniuQuotaControl.enabled && method === 'GET' && path === '/api/proxy/finance/janus/api/proxy/respack/v1/respack/month-overview') {
-    const answer = (): void => {
-      if (qiniuQuotaControl.mode === 'error') {
-        answerJson(500, { code: 500, message: 'portal down' });
-        return;
-      }
-      // lib/qiniu/quota.ts 认的形状：信封 code=200，data.records 是资源包。
-      const cookie = String(req.headers.cookie ?? '');
-      const remaining = qiniuQuotaControl.remaining.get(cookie) ?? 0;
-      answerJson(200, {
-        code: 200,
-        data: {
-          records: [
-            {
-              item_code: 'e2e-pack',
-              item_name: 'E2E 资源包',
-              zone_name: 'e2e-zone',
-              total_surplus: remaining,
-              month_used: 0,
-              month_remain: remaining,
-              respack_unit: 'k/tokens',
-              update_time: Math.floor(Date.now() / 1000),
-            },
-          ],
-        },
-      });
-    };
-    if (qiniuQuotaControl.delayMs > 0) setTimeout(answer, qiniuQuotaControl.delayMs);
-    else answer();
-    return;
-  }
-
+  // 注：七牛的门户资源包那一条曾在假上游上（额度插件的探测照平台行的 baseUrl
+  // 问）。插件改成按地址认之后，门户地址是插件自己声明的那台
+  // （portal.qiniu.com），不再跟平台行走 —— 假上游拦不到它了，那一段连着
+  // 开关一起退场；额度结论的 e2e 走「没填凭据」这条不碰网络的确定路径。
   if (qoderQuotaControl.enabled) {
     if (method === 'GET' && path === '/api/v3/user/status') {
       // checkAccountHealth 只认 id 与 whitelistStatus：PASS 就是账号能用。

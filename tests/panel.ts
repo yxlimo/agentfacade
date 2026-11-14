@@ -80,30 +80,28 @@ export async function seedOpenPlatform(id: string, label: string): Promise<strin
  * 铺一个平台，任一类都行，返回它的 id。
  *
  * `kind` 决定的是两件事：路由按它分派，登录也按它分派（哪一页、要不要链接）。
- * 额度插件给空串 = 不选插件：这些测试都不验额度，别让某一类的默认插件把建平台
- * 卡住或让它是另一件事的失败。
+ * 额度插件不是平台上选的：它按 `baseUrl` 对登记表里插件声明的地址自动匹配
+ * （`lib/quota-plugin-registry.ts`）。要验「额度那几段凭据」的用例把地址填成
+ * 某个插件声明的地址（比如七牛的 `https://api.qnaigc.com/v1`）—— 凭据栏里那
+ * 几行由匹配结果说了算；对不上任何插件的平台就是没有额度接口。
  */
 export async function seedPlatform(input: {
   id: string;
   label: string;
   kind: string;
   baseUrl?: string;
-  /**
-   * 平台行上那个额度插件 id。不给就是不用插件（空串）。
-   *
-   * 要验「额度那一段凭据」的用例自己指定 —— 凭据栏里那几行由插件说了算。
-   */
-  quotaPlugin?: string;
 }): Promise<string> {
   await adminRpc('AddPlatform', {
     id: input.id,
     label: input.label,
     kind: input.kind,
     baseUrl: input.baseUrl ?? 'https://probe.example/v1',
-    quotaPlugin: input.quotaPlugin ?? '',
   });
   return input.id;
 }
+
+/** 七牛插件声明的规范推理地址：把平台地址填成它，额度插件就是七牛那一个。 */
+export const QINIU_BASE_URL = 'https://api.qnaigc.com/v1';
 
 /** 在平台下加一个账号，返回账号 id（凭据落在它上面）。 */
 export async function addAccount(

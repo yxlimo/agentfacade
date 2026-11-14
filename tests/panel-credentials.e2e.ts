@@ -31,6 +31,7 @@ import {
   dataDir,
   dropPlatform,
   login,
+  QINIU_BASE_URL,
   seedPlatform,
 } from './panel.ts';
 
@@ -184,21 +185,21 @@ test('凭据栏：只有会话的平台（MiniMax Code）恰好一条，类型�
   }
 });
 
-test('凭据栏：迁移过来的平台（openai + 七牛额度插件）恰好两行 —— 推理 Key + 额度 Cookie', async ({
+test('凭据栏：地址对上七牛插件的平台（openai）恰好两行 —— 推理 Key + 额度 Cookie', async ({
   app,
   screen,
   browser,
 }) => {
-  // 厂商 kind 已经没了，老行迁移成 openai + 原来那个额度插件。凭据那两段因此
-  // 来自两个地方：推理那一把归 kind（openai），额度那一段归插件（platform 行上
-  // 的 quota_plugin）—— 这一条就是「额度逻辑本来就是插件」的证据。
+  // 厂商 kind 已经没了，老行迁成 openai + 规范推理地址。凭据那两段因此来自
+  // 两个地方：推理那一把归 kind（openai），额度那一段归插件 —— 插件按平台
+  // 地址自动匹配（地址填七牛声明的规范地址就是它），这条就是「额度那一段
+  // 由地址认出来」的证据。
   const platform = 'e2e-creds-migrated';
   await seedPlatform({
     id: platform,
     label: 'E2E 凭据四号站',
     kind: 'openai',
-    baseUrl: 'https://legacy.example/v1',
-    quotaPlugin: 'qiniu',
+    baseUrl: QINIU_BASE_URL,
   });
   const account = await addAccount(platform, '凭据四号');
   try {
