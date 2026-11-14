@@ -16,7 +16,7 @@ import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fromJsonString, toJsonString } from "@bufbuild/protobuf";
-import { TokenPlanWindowSchema, UpstreamQuotaSchema } from "../lib/gen/buddy/admin/v1/admin_pb.ts";
+import { TokenPlanWindowSchema, UpstreamQuotaSchema, CheckinState } from "../lib/gen/buddy/admin/v1/admin_pb.ts";
 import { startGateway as startHarness, type Gateway } from "./harness.ts";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -1057,6 +1057,31 @@ console.log("权益：签到那一行写什么");
     "没有可领活动不能写成「今日签到状态未知」",
     notSigned !== "今日签到状态未知",
     notSigned,
+  );
+
+  // 状态与那行字分开钉：面板从 checkinState 拿颜色，不靠解析那句话。
+  // WorkBuddy / MiniMax 从来不设 signedIn 时，这三条全会掉到 NOT_SIGNED ——
+  // 上游明明说了签过。修完后映射只有一条路：outcome.signedIn 决定 SIGNED。
+  const stateOf = async (outcome: Record<string, unknown>): Promise<number> => {
+    benefits.lastRun.lastOutcome = [outcome as any];
+    const res = await adminService.getBenefitStatus!({} as any, {} as any);
+    const row = res.benefits.find((b: any) => b.accountId === accountId);
+    return Number(row?.checkinState ?? -1);
+  };
+  check(
+    "签到了映射成 SIGNED",
+    (await stateOf({ upstream: accountId, ok: true, credits: 0, signedIn: true, report: [], at })) ===
+      CheckinState.SIGNED,
+  );
+  check(
+    "问不到映射成 UNKNOWN",
+    (await stateOf({ upstream: accountId, ok: true, credits: 0, statusUnavailable: true, report: [], at })) ===
+      CheckinState.UNKNOWN,
+  );
+  check(
+    "没签映射成 NOT_SIGNED",
+    (await stateOf({ upstream: accountId, ok: true, credits: 0, report: [], at })) ===
+      CheckinState.NOT_SIGNED,
   );
 }
 

@@ -39,6 +39,12 @@ function check(name: string, ok: boolean, detail = ""): void {
 
 /** 平台现在说的旅行状态。 */
 let travelState: Record<string, unknown> = {};
+/** 签到状态接口的回答（完整正文与状态码）。 */
+let checkinStatus = 200;
+let checkinStatusBody: Record<string, unknown> = { code: 0, msg: "OK", data: { today_checked_in: true, streak_days: 6 } };
+/** daily-checkin 的回答（完整正文与状态码）。 */
+let dailyClaimStatus = 200;
+let dailyClaimBody: Record<string, unknown> = { code: 0, msg: "OK", data: {} };
 /** 领礼物的回答。 */
 let claimStatus = 200;
 let claimBody: Record<string, unknown> = {};
@@ -73,7 +79,11 @@ const platform = http.createServer((req, res) => {
     return;
   }
   if (path.endsWith("/checkin-activity-status")) {
-    send(200, { code: 0, msg: "OK", data: { today_checked_in: true, streak_days: 6 } });
+    send(checkinStatus, checkinStatusBody);
+    return;
+  }
+  if (path.endsWith("/daily-checkin")) {
+    send(dailyClaimStatus, dailyClaimBody);
     return;
   }
   // 别的接口（任务、连签、盲盒）不在这一轮的范围里。
@@ -105,11 +115,15 @@ setSecret(`session:provider:${accountId}`, "session", {
 
 const { runWorkBuddyBenefits } = await import("../lib/workbuddy/benefits.ts");
 
-/** 跑一次签到，返回报告。 */
-async function run(): Promise<{ report: string[]; calls: string[] }> {
+/** 跑一次签到，返回结果。 */
+async function run(): Promise<{
+  report: string[];
+  calls: string[];
+  outcome: { signedIn?: boolean; statusUnavailable?: boolean; credits: number; ok: boolean };
+}> {
   calls.length = 0;
   const outcome = await runWorkBuddyBenefits(accountId);
-  return { report: outcome.report, calls: [...calls] };
+  return { report: outcome.report, calls: [...calls], outcome };
 }
 
 console.log("");
@@ -214,6 +228,59 @@ console.log("闲着才派它出去");
   check("没有派它走", !hit.some((c) => c.includes("travel/depart")), hit.join(","));
   check("说了它的状态", report.some((l) => l.includes("Buddy 状态：idle")), report.join(" | "));
 }
+
+console.log("");
+console.log("今天签没签");
+
+// 旧签名代码里这三条全是「今日尚未签到」：outcome 从来不带 signedIn，
+// 面板只能拿「没有新积分」顶上去 —— 上游明明说了签过。
+{
+  // 平台在状态接口里说今天签过了（today_checked_in: true，连签 n 天）。
+  checkinStatus = 200;
+  checkinStatusBody = { code: 0, msg: "OK", data: { today_checked_in: true, streak_days: 3 } };
+  const { outcome } = await run();
+  check("状态接口说签过了就是签过了", outcome.signedIn === true, JSON.stringify(outcome));
+}
+
+{
+  // 状态接口说没签，领取成功（data.credit 带回积分数）。
+  checkinStatusBody = { code: 0, msg: "OK", data: { today_checked_in: false } };
+  dailyClaimStatus = 200;
+  dailyClaimBody = { code: 0, msg: "OK", data: { credit: 5 } };
+  const { outcome } = await run();
+  check("领取成功就是签过了", outcome.signedIn === true, JSON.stringify(outcome));
+  check("积分数带回来了", outcome.credits === 5, String(outcome.credits));
+}
+
+{
+  // 状态接口说没签，领取接口答 400 code 10001 —— 今天已经领过。
+  dailyClaimStatus = 400;
+  dailyClaimBody = { code: 10001, msg: "already checked in" };
+  const { outcome } = await run();
+  check("「已领过」也是签过了", outcome.signedIn === true, JSON.stringify(outcome));
+}
+
+{
+  // 状态接口说没签，领取接口因为别的原因拒了：今天真的没签上。
+  dailyClaimStatus = 400;
+  dailyClaimBody = { code: 40001, msg: "something else" };
+  const { outcome } = await run();
+  check("领取被拒就是没签", outcome.signedIn === undefined, JSON.stringify(outcome));
+  check("领取被拒不是「问不到」", outcome.statusUnavailable === undefined, JSON.stringify(outcome));
+}
+
+{
+  // 状态接口答不上来：签没签是「不知道」，不能拿「没签」顶上去。
+  checkinStatus = 500;
+  dailyClaimStatus = 200;
+  dailyClaimBody = { code: 0, msg: "OK", data: { credit: 1 } };
+  const { outcome, calls: hit } = await run();
+  check("状态接口答不上来就是问不到", outcome.statusUnavailable === true, JSON.stringify(outcome));
+  check("问不到不猜，不发领取", !hit.some((c) => c.includes("daily-checkin")), hit.join(","));
+}
+
+// 状态接口答不上来时面板那一行最终是什么，在 test/admin-contract-check.ts 里
+// 走真的 adminService.getBenefitStatus 断（CheckinState.UNKNOWN）。
 
 console.log("");
 console.log(fail === 0 ? `全部通过（${pass} 项）` : `FAIL: ${fail} 项`);

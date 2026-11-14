@@ -18,30 +18,59 @@ function businessCode(body: any): number {
   return typeof code === "number" ? code : 0;
 }
 
-async function workbuddyCheckin(session: WorkBuddySession, report: string[], providerId: string): Promise<number> {
+/**
+ * What the check-in step found out.
+ *
+ * `signedIn` means the platform said today is already taken. `statusUnavailable`
+ * means we could not ask — that is "unknown", never "not signed".
+ */
+interface CheckinOutcome {
+  credits: number;
+  signedIn?: boolean;
+  statusUnavailable?: boolean;
+}
+
+/**
+ * How the platform answers the check-in (shapes from recorded replies; the
+ * account fields are placeholders):
+ *
+ *   POST /v2/billing/meter/checkin-activity-status ->
+ *     { code: 0, data: { today_checked_in: <bool>, streak_days: <number> } }
+ *   `today_checked_in: true` is the platform's own "already signed in today",
+ *   with the streak in `streak_days`.
+ *
+ *   POST /v2/billing/meter/daily-checkin ->
+ *     either { code: <n>, data: { credit: <number> } } on a fresh claim,
+ *     or HTTP 400 with { code: 10001 } when the day was already claimed —
+ *     that too means today is signed in.
+ */
+async function workbuddyCheckin(session: WorkBuddySession, report: string[], providerId: string): Promise<CheckinOutcome> {
   const status = await workbuddyApi(session, "/v2/billing/meter/checkin-activity-status", "POST", undefined, providerId);
   if (status.status !== 200) {
+    // The status endpoint is the only place that says whether today is taken;
+    // without it we would be guessing. Say "could not ask", not "not signed".
     report.push(`查签到状态失败（HTTP ${status.status}）`);
-    return 0;
+    return { credits: 0, statusUnavailable: true };
   }
   const info = dataOf(status.body) ?? {};
   if (info.today_checked_in) {
     report.push(`今日已签到（连签 ${info.streak_days ?? "?"} 天）`);
-    return 0;
+    return { credits: 0, signedIn: true };
   }
   const claim = await workbuddyApi(session, "/v2/billing/meter/daily-checkin", "POST", undefined, providerId);
   // 10001 means the day was already claimed — a normal outcome, not a failure.
   if (claim.status === 400 && businessCode(claim.body) === 10001) {
     report.push("今日已签到");
-    return 0;
+    return { credits: 0, signedIn: true };
   }
   if (claim.status < 200 || claim.status >= 300) {
+    // The claim itself was refused: today really is not signed in.
     report.push(`签到失败（HTTP ${claim.status}）：${claim.body?.msg ?? ""}`);
-    return 0;
+    return { credits: 0 };
   }
   const got = Number(dataOf(claim.body)?.credit ?? dataOf(claim.body)?.today_credit ?? 0);
   report.push(`签到成功 +${got} 积分`);
-  return Number.isFinite(got) ? got : 0;
+  return { credits: Number.isFinite(got) ? got : 0, signedIn: true };
 }
 
 /**
@@ -288,11 +317,16 @@ export async function runWorkBuddyBenefits(providerId = "workbuddy-cn"): Promise
     return { upstream: providerId, ok: false, credits: 0, report: ["未找到 WorkBuddy 登录态"], at: new Date().toISOString() };
   }
   let credits = 0;
+  let signedIn: boolean | undefined;
+  let statusUnavailable: boolean | undefined;
   try {
-    credits += await workbuddyCheckin(session, report, providerId);
+    const checkin = await workbuddyCheckin(session, report, providerId);
+    credits += checkin.credits;
+    signedIn = checkin.signedIn;
+    statusUnavailable = checkin.statusUnavailable;
     credits += await workbuddyGrowthCentre(session, report, providerId);
   } catch (e) {
     report.push(`异常：${(e as Error).message}`);
   }
-  return { upstream: providerId, ok: true, credits, report, at: new Date().toISOString() };
+  return { upstream: providerId, ok: true, credits, signedIn, statusUnavailable, report, at: new Date().toISOString() };
 }

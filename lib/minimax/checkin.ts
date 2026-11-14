@@ -10,6 +10,14 @@
 // The answer is a panel of seven days. A day that is claimable gives points;
 // the first day of a fresh streak gives a bonus on top. The claim is
 // idempotent: claiming twice reports "already claimed" rather than failing.
+// Both the panel (a today-marked day at status 3) and the claim reply
+// (claim_result 2) can say today is already done, and both count as signed in.
+//
+// The fetch targets below are not user input: the origin comes from
+// publicGatewayOrigin() — a config table with two fixed defaults, overridable
+// only by the operator's own settings (MINIMAX_PUBLIC_GATEWAY /
+// MINIMAX_API_BASE), which is the documented way a self-test aims the
+// sign-in at a fake upstream.
 
 import { createHash } from "node:crypto";
 import { configString } from "../config.ts";
@@ -370,9 +378,10 @@ export async function runMiniMaxBenefits(providerId = "minimax"): Promise<Benefi
       (claimedToday(panel) ? ", today claimed" : claimableDay(panel) ? ", today claimable" : ""),
   );
   if (claimedToday(panel)) {
+    // The panel itself says today is done: day with is_today and status 3.
     report.push("今日已签到");
     report.push(`连签 ${streak(panel)} 天`);
-    return { upstream, ok: true, credits: 0, report, at: new Date().toISOString() };
+    return { upstream, ok: true, credits: 0, signedIn: true, report, at: new Date().toISOString() };
   }
   const day = claimableDay(panel);
   if (!day) {
@@ -385,12 +394,14 @@ export async function runMiniMaxBenefits(providerId = "minimax"): Promise<Benefi
     return { upstream, ok: false, credits: 0, report, at: new Date().toISOString() };
   }
   if (claim.claim.claim_result === CLAIM_ALREADY_CLAIMED) {
+    // claim_result 2 is the platform's "today was already taken": the sign-in
+    // landed, just not from this request.
     report.push("今日已领过");
-    return { upstream, ok: true, credits: 0, report, at: new Date().toISOString() };
+    return { upstream, ok: true, credits: 0, signedIn: true, report, at: new Date().toISOString() };
   }
   const points = Number(claim.claim.points ?? day.points ?? 0);
   const bonus = Number(day.bonus_points ?? 0);
   report.push(`签到 +${points} 点${bonus ? `（含奖励 ${bonus}）` : ""}`);
   report.push(`连签 ${streak(claim.claim.panel ?? panel)} 天`);
-  return { upstream, ok: true, credits: points, report, at: new Date().toISOString() };
+  return { upstream, ok: true, credits: points, signedIn: true, report, at: new Date().toISOString() };
 }

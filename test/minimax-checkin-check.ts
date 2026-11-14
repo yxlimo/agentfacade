@@ -95,6 +95,82 @@ check("已经领过是 2", CLAIM_ALREADY_CLAIMED === 2);
 check("状态 1/2/3 的意思没变", SIGNIN_UPCOMING === 1 && SIGNIN_CLAIMABLE === 2 && SIGNIN_CLAIMED === 3);
 
 console.log("");
+console.log("runMiniMaxBenefits 会说今天签没签（假上游，不碰真平台）");
+
+// 修复前：面板说「今日已签到」和「今日已领过」的两条路都不带 signedIn，
+// 面板只能拿「今日尚未签到」顶上去 —— 上游明明说了签过。
+{
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const http = await import("node:http");
+  // 先定数据目录再引入 store：store 在模块加载时读 BUDDY_DATA_DIR。
+  process.env.BUDDY_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "test-minimax-checkin-"));
+  const { setSecret } = await import("../lib/store.ts");
+  const { addAccount } = await import("../lib/providers.ts");
+  const accountId = String(addAccount({ platform: "minimax" }).id);
+  setSecret(`session:provider:${accountId}`, "session", {
+    accessToken: "access_test",
+    refreshToken: "refresh_test",
+    expiresAtMs: Date.now() + 24 * 3600 * 1000,
+    generation: 1,
+    uid: "u1",
+    nickname: "n",
+    domain: "127.0.0.1",
+    region: "cn",
+  });
+
+  let statusHttp = 200;
+  let statusPanel: SigninPanel | null = null;
+  let claimReply: Record<string, unknown> = {};
+  const upstream = http.createServer((req, res) => {
+    const p = (req.url ?? "").split("?")[0];
+    const send = (status: number, body: unknown): void => {
+      res.writeHead(status, { "content-type": "application/json" });
+      res.end(JSON.stringify(body));
+    };
+    if (p === "/v1/api/user/info") return send(200, { data: { userInfo: { realUserID: "42" } } });
+    if (p.endsWith("/signin/status")) return send(statusHttp, { code: 0, data: statusPanel });
+    if (p.endsWith("/signin/claim")) return send(200, { code: 0, data: claimReply });
+    send(200, {});
+  });
+  await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  const port = (upstream.address() as { port: number }).port;
+  // 签到的宿主有自己单独的旋钮，就是为了这类测试能单独对准假上游。
+  process.env.MINIMAX_PUBLIC_GATEWAY = `http://127.0.0.1:${port}`;
+
+  const { runMiniMaxBenefits } = await import("../lib/minimax/checkin.ts");
+
+  // 面板说今天签了：is_today 那天 status 3。
+  statusPanel = done;
+  claimReply = {};
+  let outcome = await runMiniMaxBenefits(accountId);
+  check("面板说今天签了 → signedIn", outcome.signedIn === true, JSON.stringify(outcome));
+
+  // 今天能领，领取成功。
+  statusPanel = fresh;
+  claimReply = { claim_result: CLAIM_CLAIMED, points: 1424, day_no: 1 };
+  outcome = await runMiniMaxBenefits(accountId);
+  check(
+    "领取成功 → signedIn",
+    outcome.signedIn === true && outcome.credits === 1424,
+    JSON.stringify(outcome),
+  );
+
+  // 领取接口答「已领过」（claim_result 2）：签已经落了，只是不是这一轮。
+  claimReply = { claim_result: CLAIM_ALREADY_CLAIMED, points: 0 };
+  outcome = await runMiniMaxBenefits(accountId);
+  check("「已领过」→ signedIn", outcome.signedIn === true, JSON.stringify(outcome));
+
+  // 状态接口答不上来：ok false，面板最终说「不知道」。
+  statusHttp = 500;
+  outcome = await runMiniMaxBenefits(accountId);
+  check("状态接口答不上来 → ok false", outcome.ok === false, JSON.stringify(outcome));
+
+  upstream.close();
+}
+
+console.log("");
 console.log(`pass=${pass} fail=${fail}`);
 if (fail) {
   console.log(problems.map((p) => `  - ${p}`).join("\n"));
