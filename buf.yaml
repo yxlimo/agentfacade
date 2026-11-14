@@ -9,6 +9,11 @@ lint:
     - RPC_REQUEST_STANDARD_NAME
     - RPC_RESPONSE_STANDARD_NAME
     - RPC_REQUEST_RESPONSE_UNIQUE
+  # CheckinState 的零值就叫「不知道」：没问过与问不出来是同一件事，另起一个
+  # UNSPECIFIED 只会多出第四种状态。这条只在那个文件上免检。
+  ignore_only:
+    ENUM_ZERO_VALUE_SUFFIX:
+      - proto/buddy/admin/v1/admin.proto
 breaking:
   use:
     - FILE

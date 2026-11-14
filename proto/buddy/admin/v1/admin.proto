@@ -924,6 +924,22 @@ message DeletePublishedModelResponse {
 
 // ── 每日权益 ──────────────────────────────────────────────────────────────
 
+// 这个账号今天签到没有。
+//
+// 三态，不是两态：「今天签了」「今天还没签」「不知道」。「不知道」不许当成
+// 「还没签」—— 那是把没问过说成没有。
+enum CheckinState {
+  // 零值就叫「不知道」，不另起一个 UNSPECIFIED：没问过与问不出来是同一件事，
+  // 多一个「未指定」只会让人把没填的当第四种状态。
+  //
+  // 没问过，或者问了但拿不到结论（接口报错、没有签到端点、答复认不出）。
+  CHECKIN_STATE_UNKNOWN = 0;
+  // 今天这个账号确实完成过签到动作。
+  CHECKIN_STATE_SIGNED = 1;
+  // 今天没签。
+  CHECKIN_STATE_NOT_SIGNED = 2;
+}
+
 message GetBenefitStatusRequest {}
 
 message BenefitStatus {
@@ -931,12 +947,20 @@ message BenefitStatus {
   string upstream_id = 1;
   // 账号 id。签到是账号的事：一个平台可能有多个账号，各自有各自的签到记录。
   string account_id = 7;
-  // 今日已签到 / 活动已领 / 暂无新活动
+  // 给人看的一句话（今日已签到 / 今日尚未签到 …）。判断状态只看
+  // checkin_state，不许解析这句话。
   string summary = 2;
   repeated string lines = 3;
   int64 checked_at = 4;
   int32 credits = 5;
   bool ok = 6;
+  // 今天签到没有。
+  //
+  // SIGNED = 今天这个账号确实完成过签到动作，不要求本次加了积分（签到可以
+  // 不给分，credits 为 0 不妨碍它是 SIGNED）。
+  //
+  // UNKNOWN = 没问过，或者问了但拿不到结论。不要把它写成 NOT_SIGNED。
+  CheckinState checkin_state = 8;
 }
 
 message GetBenefitStatusResponse {

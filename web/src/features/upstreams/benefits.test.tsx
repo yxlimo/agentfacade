@@ -62,8 +62,10 @@ function platform(
 }
 
 /** 一个签到状态。 */
+// `$typeName` is a literal on the message type: spreading it into MessageInit
+// makes `undefined` assignments from Partial clash with it, so it is omitted.
 function benefit(
-  overrides: Partial<BenefitStatus> = {}
+  overrides: Partial<Omit<BenefitStatus, '$typeName'>> = {}
 ): BenefitStatus {
   return create(BenefitStatusSchema, {
     upstreamId: 'minimax',

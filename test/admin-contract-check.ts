@@ -1033,14 +1033,30 @@ console.log("权益：签到那一行写什么");
     signedInNoCredits !== "今日暂无新活动",
     signedInNoCredits,
   );
+  // 问不出来 ≠ 没签：平台把签到状态放在够不着的地方时，面板只能说「不知道」，
+  // 不能替平台说它今天没签到。
+  const statusUnavailable = await summaryOf({
+    upstream: accountId,
+    ok: true,
+    credits: 0,
+    statusUnavailable: true,
+    report: [],
+    at,
+  });
+  check("问不出来就是「今日签到状态未知」", statusUnavailable === "今日签到状态未知", statusUnavailable);
   check(
-  "平台不支持",
-  (await summaryOf({ upstream: accountId, ok: true, credits: 0, statusUnavailable: true, report: [], at })) ===
-  "平台不支持",
+    "问不出来不能写成「今日尚未签到」",
+    statusUnavailable !== "今日尚未签到",
+    statusUnavailable,
   );
+  // 没有可领活动时也说清今天签没签：平台答得上、今天没签，就写「今日尚未签到」，
+  // 不能拿「不知道」顶上去。
+  const notSigned = await summaryOf({ upstream: accountId, ok: true, credits: 0, report: [], at });
+  check("没有可领活动就是「今日尚未签到」", notSigned === "今日尚未签到", notSigned);
   check(
-    "别的就是「今日暂无新活动」",
-    (await summaryOf({ upstream: accountId, ok: true, credits: 0, report: [], at })) === "今日暂无新活动",
+    "没有可领活动不能写成「今日签到状态未知」",
+    notSigned !== "今日签到状态未知",
+    notSigned,
   );
 }
 

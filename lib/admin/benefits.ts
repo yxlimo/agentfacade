@@ -8,6 +8,7 @@ import { BenefitsRunner } from "../router/benefits.ts";
 import type { BenefitUpstream } from "../benefits.ts";
 import { listProviders } from "../providers.ts";
 import { kindOf } from "../provider-kinds.ts";
+import { platformOfAny } from "../platforms.ts";
 // The kinds register themselves; importing the file is what makes them known.
 import "../kinds/index.ts";
 
@@ -23,15 +24,26 @@ import "../kinds/index.ts";
 export const BENEFITS_INTERVAL_MS = configNumber("BENEFITS_INTERVAL_MS", 60 * 60 * 1000);
 
 /**
+ * 这个平台有没有签到这回事。
+ *
+ * 判据是平台那一种类有没有登记签到（注册表里的 benefits）：没登记的种类不发
+ * 积分，问它也是白问。第三方开放平台（openai / anthropic 那一类）就是这种，
+ * 它们在签到页上不占位置。
+ */
+export function platformHasBenefits(platform: string): boolean {
+  return Boolean(kindOf(platformOfAny(platform)?.kind ?? "")?.benefits);
+}
+
+/**
  * 参与签到的账号，而且得是开着的。
  *
- * 哪些种类给积分是种类自己说的（注册表里的 benefits）：没登记的种类不发积分，
+ * 哪些平台给积分是种类自己说的（注册表里的 benefits）：没登记的种类不发积分，
  * 问它也是白问。
  */
 export function benefitUpstreams(): BenefitUpstream[] {
   if (configFlag("BENEFITS_DISABLED", false)) return [];
   return listProviders()
-    .filter((row) => row.enabled && Boolean(kindOf(row.kind)?.benefits))
+    .filter((row) => row.enabled && platformHasBenefits(row.platform))
     .map((row) => row.id);
 }
 

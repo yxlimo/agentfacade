@@ -10,7 +10,7 @@ import {
   RunBenefitNowResponseSchema,
   UpstreamSchema,
 } from '@/gen/buddy/admin/v1/admin_pb'
-import type { BenefitStatus } from '@/gen/buddy/admin/v1/admin_pb'
+import { CheckinState, type BenefitStatus } from '@/gen/buddy/admin/v1/admin_pb'
 import { CheckinPage } from '@/features/benefits/checkin-page'
 import { mockAdminClient } from '@/test/mock-transport'
 import { renderWithClient } from '@/test/render'
@@ -34,7 +34,11 @@ function platformList(upstreams: ReturnType<typeof platform>[]) {
 }
 
 /** 一条签到状态。 */
-function benefit(overrides: Partial<BenefitStatus> = {}): BenefitStatus {
+// `$typeName` is a literal on the message type: spreading it into MessageInit
+// makes `undefined` assignments from Partial clash with it, so it is omitted.
+function benefit(
+  overrides: Partial<Omit<BenefitStatus, '$typeName'>> = {},
+): BenefitStatus {
   return create(BenefitStatusSchema, {
     upstreamId: 'minimax',
     accountId: '1',
@@ -83,10 +87,16 @@ function setup(options: Options = {}) {
  * 一个平台一行，默认收起。
  */
 describe('签到页', () => {
-  it('没有签到记录的平台也占一行', async () => {
+  it('答复里没有的平台不占一行，有签到的平台占一行', async () => {
     const { client } = setup({
-      upstreams: [platform('minimax'), platform('qoder-cn')],
-      benefits: [benefit({ upstreamId: 'minimax', accountId: 'a1' })],
+      upstreams: [platform('minimax'), platform('qiniu')],
+      benefits: [
+        benefit({
+          upstreamId: 'minimax',
+          accountId: 'a1',
+          checkinState: CheckinState.SIGNED,
+        }),
+      ],
     })
 
     renderWithClient({ client, children: <CheckinPage /> })
@@ -96,13 +106,96 @@ describe('签到页', () => {
     })
     expect(within(minimax).getByText('今日已签到')).toBeInTheDocument()
 
-    const qoder = screen.getByRole('listitem', { name: 'qoder-cn 签到行' })
-    expect(within(qoder).getByText('没有签到记录')).toBeInTheDocument()
+    // 第三方开放平台没有签到，后端不把它放进答复，页面也就不给它占一行。
+    expect(screen.queryByRole('listitem', { name: 'qiniu 签到行' })).toBeNull()
+  })
+
+  it('平台行聚合：全签、全没签、混合比例、有未知', async () => {
+    const { client: allSigned } = setup({
+      upstreams: [platform('minimax')],
+      benefits: [
+        benefit({ accountId: 'a1', checkinState: CheckinState.SIGNED }),
+        benefit({ accountId: 'a2', checkinState: CheckinState.SIGNED }),
+      ],
+    })
+    renderWithClient({ client: allSigned, children: <CheckinPage /> })
+    expect(
+      within(await screen.findByRole('listitem', { name: 'minimax 签到行' })).getByText(
+        '今日已签到',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('平台行聚合：全没签 → 今日尚未签到', async () => {
+    const { client } = setup({
+      upstreams: [platform('minimax')],
+      benefits: [
+        benefit({ accountId: 'a1', checkinState: CheckinState.NOT_SIGNED }),
+        benefit({ accountId: 'a2', checkinState: CheckinState.NOT_SIGNED }),
+      ],
+    })
+    renderWithClient({ client, children: <CheckinPage /> })
+    expect(
+      within(await screen.findByRole('listitem', { name: 'minimax 签到行' })).getByText(
+        '今日尚未签到',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('平台行聚合：混合时说清比例', async () => {
+    const { client } = setup({
+      upstreams: [platform('minimax')],
+      benefits: [
+        benefit({ accountId: 'a1', checkinState: CheckinState.SIGNED }),
+        benefit({ accountId: 'a2', checkinState: CheckinState.NOT_SIGNED }),
+        benefit({ accountId: 'a3', checkinState: CheckinState.NOT_SIGNED }),
+      ],
+    })
+    renderWithClient({ client, children: <CheckinPage /> })
+    expect(
+      within(await screen.findByRole('listitem', { name: 'minimax 签到行' })).getByText(
+        '3 个账号中 1 个已签到',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('平台行聚合：有未知且没全签 → 今日签到状态未知', async () => {
+    const { client } = setup({
+      upstreams: [platform('minimax')],
+      benefits: [
+        benefit({ accountId: 'a1', checkinState: CheckinState.SIGNED }),
+        benefit({ accountId: 'a2', checkinState: CheckinState.UNKNOWN }),
+      ],
+    })
+    renderWithClient({ client, children: <CheckinPage /> })
+    expect(
+      within(await screen.findByRole('listitem', { name: 'minimax 签到行' })).getByText(
+        '今日签到状态未知',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('反证：UNKNOWN 不算「尚未签到」', async () => {
+    const { client } = setup({
+      upstreams: [platform('minimax')],
+      benefits: [
+        benefit({ accountId: 'a1', checkinState: CheckinState.UNKNOWN }),
+        benefit({ accountId: 'a2', checkinState: CheckinState.UNKNOWN }),
+      ],
+    })
+    renderWithClient({ client, children: <CheckinPage /> })
+    const row = await screen.findByRole('listitem', { name: 'minimax 签到行' })
+    expect(within(row).getByText('今日签到状态未知')).toBeInTheDocument()
+    expect(within(row).queryByText('今日尚未签到')).toBeNull()
   })
 
   it('平台显示名用 label，没有 label 用 id', async () => {
     const { client } = setup({
       upstreams: [platform('minimax', 'MiniMax'), platform('qoder-cn')],
+      benefits: [
+        benefit({ upstreamId: 'minimax', accountId: 'a1', checkinState: CheckinState.SIGNED }),
+        benefit({ upstreamId: 'qoder-cn', accountId: 'b1' }),
+      ],
     })
 
     renderWithClient({ client, children: <CheckinPage /> })
@@ -183,6 +276,7 @@ describe('签到页', () => {
   it('点「立即签到」调 RunBenefitNow 并逐条显示返回的 lines', async () => {
     const { client, runCalls, statusCalls } = setup({
       upstreams: [platform('minimax')],
+      benefits: [benefit({ upstreamId: 'minimax', accountId: 'a1' })],
       runLines: ['minimax: +12 点', 'qoder-cn: +8 点'],
     })
 

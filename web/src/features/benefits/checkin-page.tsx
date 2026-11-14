@@ -10,16 +10,19 @@ import { PlatformCheckinRow } from '@/features/benefits/platform-checkin-row'
 import type { BenefitStatus } from '@/gen/buddy/admin/v1/admin_pb'
 
 /**
- * 签到页：一个平台一行，收起时只给摘要，点开看逐条明细。
+ * 签到页：一个平台一行，收起时给状态，点开看逐条明细。
  *
- * 行集合取平台清单（`ListUpstreams`），签到状态按平台 id 并进去：没有签到
- * 记录的平台照样占一行，写「没有签到记录」，不写成 0。
+ * 行集合来自后端的答复：签到是账号的事，答复里只有「签得到」的账号 ——
+ * 没有签到能力的平台（第三方开放平台那一族）压根不出现在答复里，页面也就不
+ * 给它占一行。次序照操作者自己排的那一份（平台页上拖出来的），平台名从平台
+ * 清单里取。
  */
 export function CheckinPage() {
   const platforms = useUpstreams()
   const status = useBenefitStatus()
   const run = useRunBenefitNow()
 
+  // 答复里的账号按平台归堆：upstreamId 是平台，accountId 是账号。
   const benefits = useMemo(() => {
     const map = new Map<string, BenefitStatus[]>()
     for (const benefit of status.data?.benefits ?? []) {
@@ -42,13 +45,23 @@ export function CheckinPage() {
     return map
   }, [platforms.data])
 
-  // 一行一个平台，次序照操作者自己排的那一份（平台页上拖出来的）。
-  const rows = useOrderedPlatforms(
-    useMemo(() => platforms.data?.upstreams ?? [], [platforms.data]),
-  ).map((upstream) => ({
-    upstreamId: upstream.id,
-    title: upstream.label?.trim() || upstream.id,
-  }))
+  // 平台名从清单里取（清单里有这个平台才拿得到名字），次序也照清单排 ——
+  // 但哪些平台占一行由答复决定，不由清单决定。
+  const ordered = useOrderedPlatforms(platforms.data?.upstreams ?? [])
+  const rows = useMemo(() => {
+    const names = new Map<string, string>()
+    for (const upstream of platforms.data?.upstreams ?? []) {
+      names.set(upstream.id, upstream.label?.trim() || upstream.id)
+    }
+    const ids = ordered
+      .map((upstream) => upstream.id)
+      .filter((id) => benefits.has(id))
+    // 清单里没有的平台（刚删掉的）也占位置：答复里还有它。
+    for (const id of benefits.keys()) {
+      if (!ids.includes(id)) ids.push(id)
+    }
+    return ids.map((id) => ({ upstreamId: id, title: names.get(id) ?? id }))
+  }, [benefits, ordered, platforms.data])
 
   const runLines = run.data?.lines ?? []
 
@@ -62,7 +75,7 @@ export function CheckinPage() {
         </Button>
       }
     >
-      {platforms.isPending ? (
+      {platforms.isPending || status.isPending ? (
         <div>
           <p className='mb-4 text-sm text-muted-foreground'>正在读取签到状态…</p>
           <ul aria-label='平台签到' className='grid gap-3'>
@@ -80,7 +93,7 @@ export function CheckinPage() {
         <ErrorState error={status.error} onRetry={() => status.refetch()} />
       ) : rows.length === 0 ? (
         <p className='rounded-lg border px-4 py-12 text-center text-sm text-muted-foreground'>
-          网关没有返回任何平台
+          没有需要签到的平台
         </p>
       ) : (
         <>
@@ -119,7 +132,7 @@ export function CheckinPage() {
                 key={row.upstreamId}
                 upstreamId={row.upstreamId}
                 title={row.title}
-                benefits={benefits.get(row.upstreamId)}
+                benefits={benefits.get(row.upstreamId) ?? []}
                 accountAliases={accountAliases}
               />
             ))}

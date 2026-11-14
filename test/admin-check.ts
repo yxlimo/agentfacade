@@ -753,6 +753,22 @@ console.log("权益、目录与日志");
 const benefitStatus = await call("GetBenefitStatus", {}, token);
 check("权益状态答得上来", benefitStatus.status === 200 && Array.isArray(list(benefitStatus.body?.benefits)));
 
+// 第三方开放平台（kind 是 openai / anthropic 那一族，这里建了 qiniu 的账号）
+// 没登记签到，它们的账号不进权益答复 —— 签到页上不占位置。qoder 是登记了
+// 签到的，得还在。
+const { platformHasBenefits } = await import("../lib/admin/benefits.ts");
+const benefitRows = list(benefitStatus.body?.benefits);
+check(
+  "权益答复里没有不签到的平台",
+  benefitRows.every((row: any) => platformHasBenefits(row.upstreamId)),
+  JSON.stringify(benefitRows.map((row: any) => row.upstreamId)),
+);
+check(
+  "权益答复里有登记签到的平台",
+  benefitRows.some((row: any) => row.upstreamId === "qoder"),
+  JSON.stringify(benefitRows.map((row: any) => row.upstreamId)),
+);
+
 const runBenefit = await call("RunBenefitNow", {}, token);
 check("立刻签到答得上来", runBenefit.status === 200 && runBenefit.body?.ok !== undefined, JSON.stringify(runBenefit.body));
 
