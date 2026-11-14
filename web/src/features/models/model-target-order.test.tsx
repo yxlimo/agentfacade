@@ -96,6 +96,18 @@ function rows(): HTMLElement[] {
   ).getAllByRole('listitem')
 }
 
+/** 进排序模式：目标压成一行，拖着排。 */
+async function enterSortMode(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('tab', { name: /平台目标/ }))
+  await user.click(screen.getByRole('button', { name: '排序' }))
+  await screen.findByRole('list', { name: '目标顺序' })
+}
+
+/** 排序模式下各行的「平台组 / 上游模型」，按显示的次序。 */
+function listedCombos(): string[] {
+  return rows().map((row) => row.textContent ?? '')
+}
+
 /** 界面上各行的上游模型 id，按显示的次序。 */
 function listedModels(): string[] {
   return rows().map((row) => {
@@ -124,7 +136,7 @@ function dialog(submitted: PublishedModel[]) {
 }
 
 describe('目标的顺序即权重', () => {
-  it('拖动一行放到另一行上：次序跟着换，权重按新的位次重算', async () => {
+  it('排序模式下拖动一行放到另一行上：次序跟着换，权重按新的位次重算', async () => {
     const user = userEvent.setup({ delay: null })
     const submitted: PublishedModel[] = []
     renderWithClient({ client: catalogClient(), children: dialog(submitted) })
@@ -137,13 +149,23 @@ describe('目标的顺序即权重', () => {
     ])
     expect(listedWeights()).toEqual(['权重 3', '权重 2', '权重 1'])
 
+    await user.click(screen.getByRole('button', { name: '排序' }))
+    await screen.findByRole('list', { name: '目标顺序' })
+
     // 第一行拖到最后一行上：它换到那个位次。
     const transfer = dataTransfer()
-    const source = rows()[0].querySelector('[data-drag-handle]') as HTMLElement
-    fireEvent.dragStart(source, { dataTransfer: transfer })
+    fireEvent.dragStart(rows()[0], { dataTransfer: transfer })
     fireEvent.dragOver(rows()[2], { dataTransfer: transfer })
     fireEvent.drop(rows()[2], { dataTransfer: transfer })
 
+    expect(listedCombos()).toEqual([
+      'tokenrhythm / neohorse-1-9b',
+      'workbuddy-cn / glm-5.3-air',
+      'tokenrhythm / glm-5.3-flash',
+    ])
+
+    // 退出排序：回到完整卡片，顺序与权重都照新的位次。
+    await user.click(screen.getByRole('button', { name: '完成排序' }))
     expect(listedModels()).toEqual([
       'neohorse-1-9b',
       'glm-5.3-air',
@@ -166,20 +188,21 @@ describe('目标的顺序即权重', () => {
     ])
   })
 
-  it('焦点在行上时 Alt + 下箭头把这一行往下挪一位', async () => {
+  it('排序模式下焦点在行上时 Alt + 下箭头把这一行往下挪一位', async () => {
     const user = userEvent.setup({ delay: null })
     const submitted: PublishedModel[] = []
     renderWithClient({ client: catalogClient(), children: dialog(submitted) })
 
-    await user.click(screen.getByRole('tab', { name: /平台目标/ }))
+    await enterSortMode(user)
     fireEvent.keyDown(rows()[0], { key: 'ArrowDown', altKey: true })
 
-    expect(listedModels()).toEqual([
-      'neohorse-1-9b',
-      'glm-5.3-flash',
-      'glm-5.3-air',
+    expect(listedCombos()).toEqual([
+      'tokenrhythm / neohorse-1-9b',
+      'tokenrhythm / glm-5.3-flash',
+      'workbuddy-cn / glm-5.3-air',
     ])
 
+    await user.click(screen.getByRole('button', { name: '完成排序' }))
     await user.click(screen.getByRole('button', { name: '保存' }))
     expect(
       submitted[0].targets.map((target) => [
@@ -193,27 +216,35 @@ describe('目标的顺序即权重', () => {
     ])
   })
 
-  it('行尾的「下移」把下一行挪上来，第一行的「上移」是灰的', async () => {
+  it('目标卡片上不再有「上移 / 下移」按钮：排序只能进排序模式', async () => {
     const user = userEvent.setup({ delay: null })
     const submitted: PublishedModel[] = []
     renderWithClient({ client: catalogClient(), children: dialog(submitted) })
 
     await user.click(screen.getByRole('tab', { name: /平台目标/ }))
-    expect(screen.getByRole('button', { name: '上移目标 1' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '下移目标 3' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: '上移目标 1' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '下移目标 1' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '下移目标 3' })).not.toBeInTheDocument()
+    expect(
+      screen.queryByLabelText(/^上移 |^下移 /)
+    ).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: '下移目标 1' }))
+    // 排序按钮在，能进出。
+    await user.click(screen.getByRole('button', { name: '排序' }))
+    expect(await screen.findByRole('list', { name: '目标顺序' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '完成排序' }))
 
+    // 退出后各字段的输入原样回来。
     expect(listedModels()).toEqual([
-      'neohorse-1-9b',
       'glm-5.3-flash',
+      'neohorse-1-9b',
       'glm-5.3-air',
     ])
 
     await user.click(screen.getByRole('button', { name: '保存' }))
     expect(submitted[0].targets.map((target) => target.upstreamModel)).toEqual([
-      'neohorse-1-9b',
       'glm-5.3-flash',
+      'neohorse-1-9b',
       'glm-5.3-air',
     ])
   })

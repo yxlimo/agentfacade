@@ -1,7 +1,7 @@
 import { Fragment, useMemo, useState } from 'react'
 import { useIsFetching } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { ChevronRight, GripVertical, Plus } from 'lucide-react'
+import { ChevronRight, Plus } from 'lucide-react'
 import { PageShell } from '@/components/layout/page-shell'
 import {
   EmptyState,
@@ -62,6 +62,7 @@ import { BenefitsPanel } from '@/features/upstreams/benefits-panel'
 import { ProviderAccounts } from '@/features/upstreams/provider-accounts'
 import { ProviderPolicySelect } from '@/features/upstreams/provider-policy'
 import { ProviderKeysDialog } from '@/features/accounts/provider-keys-dialog'
+import { DragSortList } from '@/components/drag-sort-list'
 import {
   providerKeyAccess,
   providerKindsFrom,
@@ -656,7 +657,9 @@ export function UpstreamsPage() {
 }
 
 /**
- * 排序模式下的平台列表：一行一个平台，拖着走，或者用行尾那两个按钮挪。
+ * 排序模式下的平台列表：一行一个平台，拖着走（行让位），或者用行尾那两个
+ * 按钮挪。拖拽、让位动画与键盘换位都是共用那套（DragSortList），这里只给
+ * 内容与动作。
  *
  * 只在这一模式下出现：退出后行回到表格里，点行展开、按钮可点。
  * 次序只存进浏览器，不传后端。
@@ -668,68 +671,28 @@ function PlatformSortList({
   platforms: Upstream[]
   onMove: (from: number, to: number) => void
 }) {
-  /** 正在拖的那一行（平台 id）。 */
-  const [dragging, setDragging] = useState<string | null>(null)
-
   return (
-    <div className='grid gap-2 p-3'>
-      <p className='text-xs text-muted-foreground'>拖动行调整顺序</p>
-      <ul aria-label='平台排序' className='grid gap-1'>
-        {platforms.map((upstream, index) => {
-          const last = index === platforms.length - 1
+    <div className='p-3'>
+      <DragSortList
+        items={platforms}
+        getId={(upstream) => upstream.id}
+        ariaLabel='平台排序'
+        hint='拖动行调整顺序'
+        rowProps={(upstream) => ({ 'data-platform-id': upstream.id })}
+        renderItem={(upstream) => (
+          <>
+            <span className='text-sm font-medium'>
+              {upstream.label || upstream.id}
+            </span>
+            <span className='font-mono text-xs break-all text-muted-foreground'>
+              {upstream.id}
+            </span>
+          </>
+        )}
+        rowActions={(upstream, index, total) => {
+          const last = index === total - 1
           return (
-            <li
-              key={upstream.id}
-              data-platform-id={upstream.id}
-              draggable
-              tabIndex={0}
-              onDragStart={(event) => {
-                setDragging(upstream.id)
-                event.dataTransfer?.setData('text/plain', upstream.id)
-                if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
-              }}
-              // 只有落在别的一行上才算一次换位：不 preventDefault 就收不到 drop。
-              onDragOver={(event) => {
-                if (dragging !== null && dragging !== upstream.id) {
-                  event.preventDefault()
-                }
-              }}
-              onDrop={(event) => {
-                event.preventDefault()
-                const from = platforms.findIndex((row) => row.id === dragging)
-                setDragging(null)
-                if (from < 0 || from === index) return
-                onMove(from, index)
-              }}
-              onDragEnd={() => setDragging(null)}
-              // 键盘上另有一条：焦点在行上时 Alt + 上/下箭头。
-              onKeyDown={(event) => {
-                if (!event.altKey) return
-                if (event.key === 'ArrowUp' && index > 0) {
-                  event.preventDefault()
-                  onMove(index, index - 1)
-                }
-                if (event.key === 'ArrowDown' && !last) {
-                  event.preventDefault()
-                  onMove(index, index + 1)
-                }
-              }}
-              className={`flex cursor-grab items-center gap-2 rounded-md border px-3 py-2 ${
-                dragging === upstream.id ? 'opacity-50' : ''
-              }`}
-            >
-              <GripVertical
-                aria-hidden
-                className='size-4 shrink-0 text-muted-foreground'
-              />
-              <div className='grid min-w-0 flex-1 gap-0.5'>
-                <span className='text-sm font-medium'>
-                  {upstream.label || upstream.id}
-                </span>
-                <span className='font-mono text-xs break-all text-muted-foreground'>
-                  {upstream.id}
-                </span>
-              </div>
+            <>
               <Button
                 size='sm'
                 variant='outline'
@@ -748,10 +711,11 @@ function PlatformSortList({
               >
                 下移
               </Button>
-            </li>
+            </>
           )
-        })}
-      </ul>
+        }}
+        onMove={onMove}
+      />
     </div>
   )
 }

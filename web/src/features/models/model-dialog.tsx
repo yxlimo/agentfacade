@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { GripVertical, Plus, Trash2 } from 'lucide-react'
+import { Plus, Trash2 } from 'lucide-react'
 import { create } from '@bufbuild/protobuf'
 import {
   PublishedModelSchema,
@@ -27,6 +27,7 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { DragSortList } from '@/components/drag-sort-list'
 import { ModelPicker } from '@/features/models/model-picker'
 import { GroupPicker } from '@/features/models/group-picker'
 import { intFieldProblem } from '@/lib/int-field'
@@ -241,8 +242,8 @@ export function ModelDialog({
 }: ModelDialogProps) {
   const [draft, setDraft] = useState<ModelDraft>(() => toDraft(model))
   const [tab, setTab] = useState('basic')
-  /** 正在拖的那一行（草稿里的行号）。 */
-  const [dragging, setDragging] = useState<number | null>(null)
+  /** 排序模式：目标压成一行只看「平台组 / 上游模型」，拖着排完再回卡片。 */
+  const [sorting, setSorting] = useState(false)
 
   useEffect(() => {
     if (open) setDraft(toDraft(model))
@@ -543,166 +544,149 @@ export function ModelDialog({
           </TabsContent>
 
           <TabsContent value='targets' className='grid gap-3'>
-            {targetsMissing ? (
+            {targetsMissing && !sorting ? (
               <p className='text-xs text-destructive'>
                 至少要有一个填全的目标：平台组和平台模型 id 都要填。
               </p>
             ) : null}
-            <p className='text-xs text-muted-foreground'>
-              拖动行调整顺序，排在前面的先接
-            </p>
-            <ul aria-label='目标顺序' className='grid gap-2'>
-              {draft.targets.map((target, index) => {
-                const last = index === draft.targets.length - 1
-                const weight = weights.get(index)
-                return (
-                  <li
-                    key={index}
-                    data-target-row={index}
-                    aria-label={`目标 ${index + 1}`}
-                    tabIndex={0}
-                    // 键盘上的另一条路：焦点在行上时 Alt + 上/下箭头。
-                    onKeyDown={(event) => {
-                      if (!event.altKey) return
-                      if (event.key === 'ArrowUp' && index > 0) {
-                        event.preventDefault()
-                        moveTarget(index, index - 1)
-                      }
-                      if (event.key === 'ArrowDown' && !last) {
-                        event.preventDefault()
-                        moveTarget(index, index + 1)
-                      }
-                    }}
-                    // 落在别的一行上才算一次换位：不 preventDefault 收不到 drop。
-                    onDragOver={(event) => {
-                      if (dragging !== null && dragging !== index) {
-                        event.preventDefault()
-                      }
-                    }}
-                    onDrop={(event) => {
-                      event.preventDefault()
-                      const from = dragging
-                      setDragging(null)
-                      if (from === null || from === index) return
-                      moveTarget(from, index)
-                    }}
-                    className={cn(
-                      'grid gap-2 rounded-lg border p-3',
-                      dragging === index && 'opacity-50'
-                    )}
-                  >
-                    <div className='flex flex-wrap items-center gap-2'>
-                      {/* 拖拽把手单独一个元素可拖：整张卡片可拖会抢掉输入框里
-                          选字的拖动手势。 */}
-                      <span
-                        data-drag-handle=''
-                        draggable
-                        aria-hidden='true'
-                        onDragStart={(event) => {
-                          setDragging(index)
-                          event.dataTransfer?.setData(
-                            'text/plain',
-                            String(index)
-                          )
-                          if (event.dataTransfer) {
-                            event.dataTransfer.effectAllowed = 'move'
-                          }
-                        }}
-                        onDragEnd={() => setDragging(null)}
-                        className='cursor-grab text-muted-foreground'
+            {sorting ? (
+              <>
+                <p className='text-xs text-muted-foreground'>
+                  拖动行调整顺序，排在前面的先接
+                </p>
+                {/* 排序模式下每行只留「平台组 / 上游模型」，拖拽、让位动画与
+                    Alt + 上/下箭头都走共用那套（DragSortList）。草稿不动：
+                    退出后各字段的输入原样回来。 */}
+                <DragSortList
+                  items={draft.targets}
+                  getId={(_, index) => String(index)}
+                  ariaLabel='目标顺序'
+                  rowProps={(_, index) => ({
+                    'data-target-row': String(index),
+                    'aria-label': `目标 ${index + 1}`,
+                  })}
+                  renderItem={(target) => (
+                    <>
+                      <span className='font-mono text-sm font-medium'>
+                        {target.groupName.trim() || '平台组未填'}
+                      </span>
+                      <span className='font-mono text-xs break-all text-muted-foreground'>
+                        {' / '}
+                        {target.upstreamModel.trim() || '平台模型未填'}
+                      </span>
+                    </>
+                  )}
+                  onMove={moveTarget}
+                />
+                <Button
+                  variant='outline'
+                  size='sm'
+                  className='w-fit'
+                  onClick={() => setSorting(false)}
+                >
+                  完成排序
+                </Button>
+              </>
+            ) : (
+              <>
+                <p className='text-xs text-muted-foreground'>
+                  顺序就是先后，排在前面的先接。要拖动排序就点下面的按钮
+                </p>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  className='w-fit'
+                  onClick={() => setSorting(true)}
+                >
+                  排序
+                </Button>
+                <ul aria-label='目标顺序' className='grid gap-2'>
+                  {draft.targets.map((target, index) => {
+                    const weight = weights.get(index)
+                    return (
+                      <li
+                        key={index}
+                        data-target-row={index}
+                        aria-label={`目标 ${index + 1}`}
+                        className='grid gap-2 rounded-lg border p-3'
                       >
-                        <GripVertical className='size-4' />
-                      </span>
-                      <span className='text-sm font-medium'>
-                        目标 {index + 1}
-                      </span>
-                      {weight === undefined ? null : (
-                        <span className='text-xs text-muted-foreground'>
-                          权重 {weight}
-                        </span>
-                      )}
-                      <span className='ms-auto flex items-center gap-1'>
-                        <Button
-                          size='sm'
-                          variant='outline'
-                          aria-label={`上移目标 ${index + 1}`}
-                          disabled={index === 0}
-                          onClick={() => moveTarget(index, index - 1)}
-                        >
-                          上移
-                        </Button>
-                        <Button
-                          size='sm'
-                          variant='outline'
-                          aria-label={`下移目标 ${index + 1}`}
-                          disabled={last}
-                          onClick={() => moveTarget(index, index + 1)}
-                        >
-                          下移
-                        </Button>
-                        <Button
-                          variant='ghost'
-                          size='sm'
-                          aria-label={`删除目标 ${index + 1}`}
-                          disabled={draft.targets.length === 1}
-                          onClick={() =>
-                            setDraft((prev) => ({
-                              ...prev,
-                              targets: prev.targets.filter(
-                                (_, i) => i !== index
-                              ),
-                            }))
-                          }
-                        >
-                          <Trash2 />
-                          删除
-                        </Button>
-                      </span>
-                    </div>
-                    <div className='grid gap-2 sm:grid-cols-2'>
-                      <div className='grid gap-2'>
-                        <Label htmlFor={`target-group-${index}`}>平台组</Label>
-                        <GroupPicker
-                          id={`target-group-${index}`}
-                          value={target.groupName}
-                          onChange={(value) =>
-                            patchTarget(index, {
-                              groupName: value,
-                              // 换了组，上一个组的模型 id 就不再作数。
-                              upstreamModel: '',
-                            })
-                          }
-                        />
-                      </div>
-                      <div className='grid gap-2'>
-                        <Label htmlFor={`target-model-${index}`}>
-                          平台模型 id
-                        </Label>
-                        <ModelPicker
-                          id={`target-model-${index}`}
-                          groupName={target.groupName}
-                          value={target.upstreamModel}
-                          takenModelIds={takenModelIds(index)}
-                          onChange={(value) =>
-                            patchTarget(index, { upstreamModel: value })
-                          }
-                        />
-                      </div>
-                    </div>
-                    {duplicated.has(index) ? (
-                      <p className='text-xs text-destructive'>
-                        {`${target.groupName.trim()} / ${target.upstreamModel.trim()} 已经有一行了（第 ${(duplicated.get(index) ?? 0) + 1} 个目标）`}
-                      </p>
-                    ) : null}
-                    {!targetFilled(target) ? (
-                      <p className='text-xs text-destructive'>
-                        这一行还没填全：平台组和平台模型 id 都要填。
-                      </p>
-                    ) : null}
-                  </li>
-                )
-              })}
-            </ul>
+                        <div className='flex flex-wrap items-center gap-2'>
+                          <span className='text-sm font-medium'>
+                            目标 {index + 1}
+                          </span>
+                          {weight === undefined ? null : (
+                            <span className='text-xs text-muted-foreground'>
+                              权重 {weight}
+                            </span>
+                          )}
+                          <span className='ms-auto flex items-center gap-1'>
+                            <Button
+                              variant='ghost'
+                              size='sm'
+                              aria-label={`删除目标 ${index + 1}`}
+                              disabled={draft.targets.length === 1}
+                              onClick={() =>
+                                setDraft((prev) => ({
+                                  ...prev,
+                                  targets: prev.targets.filter(
+                                    (_, i) => i !== index
+                                  ),
+                                }))
+                              }
+                            >
+                              <Trash2 />
+                              删除
+                            </Button>
+                          </span>
+                        </div>
+                        <div className='grid gap-2 sm:grid-cols-2'>
+                          <div className='grid gap-2'>
+                            <Label htmlFor={`target-group-${index}`}>
+                              平台组
+                            </Label>
+                            <GroupPicker
+                              id={`target-group-${index}`}
+                              value={target.groupName}
+                              onChange={(value) =>
+                                patchTarget(index, {
+                                  groupName: value,
+                                  // 换了组，上一个组的模型 id 就不再作数。
+                                  upstreamModel: '',
+                                })
+                              }
+                            />
+                          </div>
+                          <div className='grid gap-2'>
+                            <Label htmlFor={`target-model-${index}`}>
+                              平台模型 id
+                            </Label>
+                            <ModelPicker
+                              id={`target-model-${index}`}
+                              groupName={target.groupName}
+                              value={target.upstreamModel}
+                              takenModelIds={takenModelIds(index)}
+                              onChange={(value) =>
+                                patchTarget(index, { upstreamModel: value })
+                              }
+                            />
+                          </div>
+                        </div>
+                        {duplicated.has(index) ? (
+                          <p className='text-xs text-destructive'>
+                            {`${target.groupName.trim()} / ${target.upstreamModel.trim()} 已经有一行了（第 ${(duplicated.get(index) ?? 0) + 1} 个目标）`}
+                          </p>
+                        ) : null}
+                        {!targetFilled(target) ? (
+                          <p className='text-xs text-destructive'>
+                            这一行还没填全：平台组和平台模型 id 都要填。
+                          </p>
+                        ) : null}
+                      </li>
+                    )
+                  })}
+                </ul>
+              </>
+            )}
             <Button
               variant='outline'
               size='sm'
