@@ -1,10 +1,5 @@
-import type {
-  QuotaPlugin,
-  Upstream,
-} from '@/gen/buddy/admin/v1/admin_pb'
-import type { QuotaRegistry } from '@/features/accounts/provider-key-fields'
+import type { Upstream } from '@/gen/buddy/admin/v1/admin_pb'
 import { hasQuota, quotaStateText, QuotaSummary } from '@/features/balance/quota'
-import { quotaPluginForBaseUrl } from '@/lib/quota-match'
 import { formatLocalMoment } from '@/lib/format'
 
 /** 一次「刷新模型目录」的结果：服务端给的，面板照它显示。 */
@@ -20,12 +15,13 @@ export type RefreshOutcome = {
  * 面板知道的都以服务端给的为准：
  *
  *   地址、模型目录、上次拉取的时刻        Upstream（ListUpstreams）
- *   额度插件与它的地址声明                额度插件登记表（ListQuotaPlugins）
+ *   额度插件（id、名字、要哪几段凭据）    Upstream.quota_plugin_*（服务端
+ *                                        按地址匹配好）
  *   额度现在的结论                        Upstream.quota.quotaState
  *
- * 额度插件按平台地址匹配（不是平台上选的）：对不上任何插件的平台就是没有
- * 额度接口 —— 额度区整块不摆，不报错，也不提示。模拟客户端（预置的那几条）
- * 不摆地址：它们靠 id 与 kind 从清单里认出来（两个 Qoder 的 kind 相同）。
+ * quota_plugin_id 空 = 这个平台没有额度接口：额度区整块不摆，不报错，也不
+ * 提示。模拟客户端（预置的那几条）不摆地址：它们靠 id 与 kind 从清单里认
+ * 出来（两个 Qoder 的 kind 相同）。
  *
  * 额度按服务端给的结论说：`ok` 给数字，其余各说一句（额度用尽、平台说这个账号
  * 不能用、凭据被拒、被限流、还没填凭据、未知），没有结论就不说这一栏。
@@ -33,26 +29,18 @@ export type RefreshOutcome = {
  */
 export function OpenPlatformFacts({
   upstream,
-  registry,
   refresh,
 }: {
   upstream: Upstream
-  /** 额度插件登记表：三档（加载中 / 取不到 / 到手）。 */
-  registry: QuotaRegistry
   /** 上一次刷新模型目录的结果。 */
   refresh?: RefreshOutcome
 }) {
-  // 额度插件按地址匹配；登记表没到手 / 取不到的时候认不出来，额度区整块不摆
-  // （那种时候说「没有插件」是错的）。匹配不到就是没有额度接口：不显示、不报
-  // 错、不提示。
-  const plugin =
-    registry.status === 'ready'
-      ? quotaPluginForBaseUrl(registry.plugins, upstream.baseUrl)
-      : undefined
+  // quota_plugin_id 空 = 没有额度接口：额度区整块不摆（不显示、不报错、不提示）。
+  const hasPlugin = upstream.quotaPluginId !== ''
   return (
     <div className='grid gap-0.5 text-xs whitespace-normal text-muted-foreground'>
       <span>{modelLine(upstream)}</span>
-      {plugin ? quotaLine(upstream, plugin) : null}
+      {hasPlugin ? quotaLine(upstream, upstream.quotaPluginLabel) : null}
       {refresh ? (
         <span className={refresh.ok ? undefined : 'text-destructive'}>
           刷新：{refresh.message}
@@ -92,10 +80,10 @@ function modelLine(upstream: Upstream): string {
  *   其余值（服务端新加的） 原样显示
  *   空串（没有结论）     整栏不显示
  *
- * 结论只看 `quotaState`。数字那几行带插件名：能走到这一栏说明插件已经匹配到
- * 了，名字直接用它。
+ * 结论只看 `quotaState`。数字那几行带插件名：能走到这一栏说明平台有额度
+ * 接口，名字用平台行带来的那个。
  */
-function quotaLine(upstream: Upstream, plugin: QuotaPlugin) {
+function quotaLine(upstream: Upstream, pluginLabel: string) {
   const quota = upstream.quota
   if (!quota) return null
 
@@ -113,7 +101,7 @@ function quotaLine(upstream: Upstream, plugin: QuotaPlugin) {
   if (!hasQuota(quota)) return null
   return (
     <div className='grid gap-0.5'>
-      <span>额度：{plugin.label}</span>
+      <span>额度：{pluginLabel}</span>
       <QuotaSummary quota={quota} align='start' />
     </div>
   )

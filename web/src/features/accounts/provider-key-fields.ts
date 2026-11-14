@@ -1,6 +1,8 @@
-import type { CredentialField, QuotaPlugin } from '@/gen/buddy/admin/v1/admin_pb'
+import type {
+  CredentialField,
+  QuotaPluginField,
+} from '@/gen/buddy/admin/v1/admin_pb'
 import { describeError } from '@/lib/errors'
-import { quotaPluginForBaseUrl } from '@/lib/quota-match'
 
 /**
  * 面板上填凭据的格子。
@@ -49,19 +51,6 @@ export type ProviderKinds =
       status: 'ready'
       of: (kind: string) => { title: string; fields: ProviderKeyField[] } | null
     }
-
-/**
- * 额度插件登记表的状态。
- *
- * 开放平台的凭据有几格由登记表决定：登记表没到手就不知道有几格。
- */
-export type QuotaRegistry =
-  /** 还在加载。 */
-  | { status: 'pending' }
-  /** 取不到：带着服务端/传输层给的那句话。 */
-  | { status: 'error'; message: string }
-  /** 到手了：面板能拿到的全部插件。 */
-  | { status: 'ready'; plugins: QuotaPlugin[] }
 
 /**
  * 能不能填凭据：这一类平台的凭据入口的状态。
@@ -127,43 +116,21 @@ function toField(field: CredentialField): ProviderKeyField {
 }
 
 /**
- * 额度插件登记表的状态：从查询结果翻译成面板要的三档。
- *
- * 只有这一处翻译：调用点不自己判 isPending / isError，免得几处各写一遍。
- */
-export function quotaRegistryFrom(query: {
-  /** 查询还在加载（还没有数据）。 */
-  isPending: boolean
-  /** 查询失败了。 */
-  isError: boolean
-  /** 失败的原因。 */
-  error: unknown
-  /** 到手时的全部插件。 */
-  plugins?: QuotaPlugin[]
-}): QuotaRegistry {
-  if (query.isPending) return { status: 'pending' }
-  if (query.isError) {
-    return { status: 'error', message: describeError(query.error) }
-  }
-  return { status: 'ready', plugins: query.plugins ?? [] }
-}
-
-/**
  * 这一类平台的凭据入口：能不能填凭据，填哪几格。
  *
  * 判据：
  *
  *   - 开放平台（面板上加的表里那一行）：第一格是推理用的 API key（由种类声明
- *     说），后面几格按平台地址匹配出来的额度插件的 fields 顺序，一段一段写。
- *     地址对不上任何插件，就只有推理那一格（不提示、不报错）。
+ *     说），后面几格是平台行带来的额度插件那几段（Upstream.quota_plugin_fields，
+ *     服务端按地址匹配好）。空数组 = 这个平台没有额度接口：只有推理那一格，
+ *     不提示、不报错。
  *   - 模板平台：格子由种类的声明说。声明里一格都没有（会话型的那些：MiniMax
  *     Code、Qoder、WorkBuddy、ZCode）就不给入口 —— 它们的凭据是登录会话，贴
  *     key 服务端会拒。
  *
- * 开放平台那一类还要等两份登记表：格子数由它们决定，没到手就只知道有推理那一
- * 格。这时候开弹窗，用户一保存就发上去一个长度 1 的 keys 数组，而服务端
- * setProviderKeys 是按位置写的 —— 插件那几段就被当成空串清掉了。那是静默的
- * 数据丢失，不是显示问题。所以没到手就不给开那个弹窗。
+ * 「格子数说不准就不放行」的语义保留在种类登记表这一档上：没到手就 loading，
+ * 取不到就 failed，弹窗都开不了。插件那几段跟着平台行走（ListUpstreams 到手
+ * 时它们已经在），不再有单独的插件登记表要等。
  */
 export function providerKeyAccess(input: {
   /** 这一类上游的 kind。 */
@@ -172,12 +139,12 @@ export function providerKeyAccess(input: {
   isOpenPlatform: boolean
   /** 平台的名字：开放平台的标题用它。 */
   platformLabel?: string
-  /** 平台的地址：额度插件按它匹配（对不上就没有插件那几段）。 */
-  baseUrl?: string
+  /** 平台行带来的额度插件那几段（Upstream.quota_plugin_fields）。 */
+  quotaPluginFields?: QuotaPluginField[]
+  /** 平台行带来的插件名字（Upstream.quota_plugin_label）：提示语用它。 */
+  quotaPluginLabel?: string
   /** 种类登记表的状态。 */
   kinds: ProviderKinds
-  /** 额度插件登记表的状态。 */
-  registry: QuotaRegistry
 }): ProviderKeyAccess {
   // 种类登记表先判：没有它连推理那一格叫什么都不知道。
   if (input.kinds.status === 'pending') return { status: 'loading' }
@@ -188,10 +155,10 @@ export function providerKeyAccess(input: {
     }
   }
   const declared = input.kinds.of(input.kind)
-  // 开放平台先判：它的格子是「种类那一格 + 按地址匹配出来的插件那几段」，
+  // 开放平台先判：它的格子是「种类那一格 + 平台行带来的插件那几段」，
   // 不是照声明整份抄（声明里只有推理那一格）。
   if (input.isOpenPlatform) return openPlatformAccess(input, declared)
-  // 模板平台：格子由种类声明定死，不看插件登记表。
+  // 模板平台：格子由种类声明定死，不看额度插件。
   if (!declared || declared.fields.length === 0) return { status: 'none' }
   return {
     status: 'ready',
@@ -206,44 +173,31 @@ export function providerKeyAccess(input: {
 }
 
 /**
- * 开放平台的凭据入口：推理那一格（来自种类声明）加上按平台地址匹配出来的插件那几段。
+ * 开放平台的凭据入口：推理那一格（来自种类声明）加上平台行带来的插件那几段。
  *
- * 插件那几段是数据不是代码：插件按平台地址匹配，所以格子数到运行时才定得
- * 下来。登记表没到手就不放行 —— 见 providerKeyAccess 的说明。
+ * 插件那几段是数据不是代码：服务端按平台地址匹配好放在 Upstream 上，这里
+ * 照单全收。空数组就是没有额度接口 —— 那不是错误，也不是没配好。
  */
 function openPlatformAccess(
   input: {
     platformLabel?: string
-    baseUrl?: string
-    registry: QuotaRegistry
+    quotaPluginFields?: QuotaPluginField[]
+    quotaPluginLabel?: string
   },
   declared: { title: string; fields: ProviderKeyField[] } | null
 ): ProviderKeyAccess {
-  if (input.registry.status === 'pending') return { status: 'loading' }
-  if (input.registry.status === 'error') {
-    return {
-      status: 'failed',
-      message: `插件列表取不到，凭据格子数不确定：${input.registry.message}`,
-    }
-  }
-  // 插件按地址匹配：对不上任何插件就是没有额度接口，凭据里只有推理那一格。
-  // 不提示「没有插件」—— 那不是错误，也不是没配好。
-  const plugin = quotaPluginForBaseUrl(
-    input.registry.plugins,
-    input.baseUrl ?? ''
-  )
   const fields: ProviderKeyField[] = (declared?.fields ?? []).map((field) => ({
     ...field,
     id: `open-platform-${field.id}`,
   }))
   // 插件的 fields 一段就是一段凭据：顺序与服务端写进去的顺序一样。
-  for (const field of plugin?.fields ?? []) {
+  for (const field of input.quotaPluginFields ?? []) {
     fields.push({
       id: `open-platform-plugin-${field.name}`,
       // 名字只有一处产出：插件自己的声明，经契约原样过来（与凭据行上那一格
       // 同一个值）。label 空着（老答复）就显示 name 原样，面板不替它编中文。
       label: field.label || field.name,
-      hint: `额度插件「${plugin?.label || plugin?.id || ''}」要的一段凭据`,
+      hint: `额度插件「${input.quotaPluginLabel || ''}」要的一段凭据`,
     })
   }
   return {

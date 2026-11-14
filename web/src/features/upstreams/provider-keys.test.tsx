@@ -8,16 +8,14 @@ import {
   ListAccountsResponseSchema,
   ListCredentialsResponseSchema,
   ListPublishedModelsResponseSchema,
-  ListQuotaPluginsResponseSchema,
   ListUpstreamsResponseSchema,
   ProviderPolicy,
   QuotaPluginFieldSchema,
-  QuotaPluginSchema,
   SetProviderKeysResponseSchema,
   UpstreamSchema,
   UpstreamState,
 } from '@/gen/buddy/admin/v1/admin_pb'
-import type { Account, QuotaPlugin, Upstream } from '@/gen/buddy/admin/v1/admin_pb'
+import type { Account, Upstream } from '@/gen/buddy/admin/v1/admin_pb'
 import { UpstreamsPage } from '@/features/upstreams/index'
 import { upstreamKeys } from '@/features/upstreams/api'
 import { mockAdminClient } from '@/test/mock-transport'
@@ -626,12 +624,13 @@ describe('凭据弹窗按平台渲染格子', () => {
     return create(UpstreamSchema, { ...base, ...extra })
   }
 
-  /** 一个假客户端：把每次提交的 keys 记下来（按位置，一个不差）。 */
-  function clientOf(
-    upstream: Upstream,
-    sent: string[][],
-    plugins: QuotaPlugin[] = []
-  ) {
+  /**
+   * 一个假客户端：把每次提交的 keys 记下来（按位置，一个不差）。
+   *
+   * 插件那几段跟着平台行走（Upstream.quota_plugin_*），不再有单独的
+   * 插件登记表要 mock：格子数由上游那一行说。
+   */
+  function clientOf(upstream: Upstream, sent: string[][]) {
     return mockAdminClient({
       ListProviderKinds: listProviderKinds,
       ListUpstreams: () =>
@@ -639,8 +638,6 @@ describe('凭据弹窗按平台渲染格子', () => {
       ListAccounts: () => create(ListAccountsResponseSchema, { accounts: [] }),
       ListCredentials: () =>
         create(ListCredentialsResponseSchema, { credentials: [] }),
-      ListQuotaPlugins: () =>
-        create(ListQuotaPluginsResponseSchema, { plugins }),
       // 删平台之前要扫一遍主路由模型。
       ListPublishedModels: () =>
         create(ListPublishedModelsResponseSchema, { models: [] }),
@@ -784,37 +781,31 @@ describe('凭据弹窗按平台渲染格子', () => {
     })
   })
 
-  it('开放平台：推理 key 在前，插件的那几段按 fields 的顺序在后', async () => {
+  it('开放平台：推理 key 在前，插件的那几段按平台行的顺序在后', async () => {
     const user = userEvent.setup({ delay: null })
     const sent: string[][] = []
-    const plugins = [
-      create(QuotaPluginSchema, {
-        id: 'demo-plugin',
-        label: '演示插件',
-        baseUrls: ['https://api.example.com/v1'],
-        fields: [
-          create(QuotaPluginFieldSchema, {
-            name: 'first',
-            label: '第一段',
-            secret: true,
-          }),
-          create(QuotaPluginFieldSchema, {
-            name: 'second',
-            label: '第二段',
-            secret: false,
-          }),
-        ],
-      }),
-    ]
 
     renderWithClient({
       client: clientOf(
         platformOf('my-open', 'openai', '我的开放平台', {
           isOpenPlatform: true,
           baseUrl: 'https://api.example.com/v1',
+          quotaPluginId: 'demo-plugin',
+          quotaPluginLabel: '演示插件',
+          quotaPluginFields: [
+            create(QuotaPluginFieldSchema, {
+              name: 'first',
+              label: '第一段',
+              secret: true,
+            }),
+            create(QuotaPluginFieldSchema, {
+              name: 'second',
+              label: '第二段',
+              secret: false,
+            }),
+          ],
         }),
-        sent,
-        plugins
+        sent
       ),
       children: <UpstreamsPage />,
     })
@@ -839,30 +830,24 @@ describe('凭据弹窗按平台渲染格子', () => {
     const user = userEvent.setup({ delay: null })
     const sent: string[][] = []
     // 七牛那个插件的真形状（lib/qiniu/quota-plugin.ts 的声明）：名字只有那一处
-    // 产出，经 ListQuotaPlugins 原样到面板。面板不拿 name 兜，也不自己编中文。
-    const plugins = [
-      create(QuotaPluginSchema, {
-        id: 'qiniu',
-        label: '七牛云资源包',
-        baseUrls: ['https://api.example.com/v1'],
-        fields: [
-          create(QuotaPluginFieldSchema, {
-            name: 'account',
-            label: '额度 Cookie',
-            secret: true,
-          }),
-        ],
-      }),
-    ]
+    // 产出，经 Upstream.quota_plugin_* 原样到面板。面板不拿 name 兜，也不自己编中文。
 
     renderWithClient({
       client: clientOf(
         platformOf('my-open', 'openai', '我的开放平台', {
           isOpenPlatform: true,
           baseUrl: 'https://api.example.com/v1',
+          quotaPluginId: 'qiniu',
+          quotaPluginLabel: '七牛云资源包',
+          quotaPluginFields: [
+            create(QuotaPluginFieldSchema, {
+              name: 'account',
+              label: '额度 Cookie',
+              secret: true,
+            }),
+          ],
         }),
-        sent,
-        plugins
+        sent
       ),
       children: <UpstreamsPage />,
     })
@@ -884,11 +869,12 @@ describe('凭据弹窗按平台渲染格子', () => {
     })
   })
 
-  it('开放平台：地址对不上任何插件：只有推理那一格', async () => {
+  it('开放平台：quota_plugin_id 空（没有额度接口）：只有推理那一格', async () => {
     const user = userEvent.setup({ delay: null })
     const sent: string[][] = []
 
     renderWithClient({
+      // 平台行不带插件三格（服务端按地址匹配没对上，全空）：没有额度接口。
       client: clientOf(
         platformOf('my-open', 'openai', '我的开放平台', {
           isOpenPlatform: true,
@@ -916,33 +902,6 @@ describe('凭据弹窗按平台渲染格子', () => {
     })
   })
 
-  it('开放平台：对不上的地址没有提示：也只有推理那一格', async () => {
-    const user = userEvent.setup({ delay: null })
-    const sent: string[][] = []
-
-    renderWithClient({
-      client: clientOf(
-        platformOf('my-open', 'openai', '我的开放平台', {
-          isOpenPlatform: true,
-          baseUrl: 'https://api.example.com/v1',
-        }),
-        sent
-      ),
-      children: <UpstreamsPage />,
-    })
-
-    await openDialog(user, 'my-open')
-
-    expect(await screen.findByLabelText('推理 Key')).toBeInTheDocument()
-
-    await user.type(screen.getByLabelText('推理 Key'), 'sk-infer')
-    await user.click(screen.getByRole('button', { name: '保存' }))
-
-    await waitFor(() => {
-      expect(sent).toEqual([['sk-infer']])
-    })
-  })
-
   it('开放平台：插件不要额外的凭据（额度走登录会话）：只有推理那一格', async () => {
     const user = userEvent.setup({ delay: null })
     const sent: string[][] = []
@@ -952,17 +911,12 @@ describe('凭据弹窗按平台渲染格子', () => {
         platformOf('my-open', 'openai', '我的开放平台', {
           isOpenPlatform: true,
           baseUrl: 'https://api.example.com/v1',
+          quotaPluginId: 'sensenova-pools',
+          quotaPluginLabel: 'SenseNova 积分池',
+          // 额度用的是登录会话，不另填凭据。
+          quotaPluginFields: [],
         }),
-        sent,
-        [
-          create(QuotaPluginSchema, {
-            id: 'sensenova-pools',
-            label: 'SenseNova 积分池',
-            baseUrls: ['https://api.example.com/v1'],
-            // 额度用的是登录会话，不另填凭据。
-            fields: [],
-          }),
-        ]
+        sent
       ),
       children: <UpstreamsPage />,
     })
@@ -982,21 +936,18 @@ describe('凭据弹窗按平台渲染格子', () => {
     })
   })
 
-  it('SenseNova：选出额度插件也不往上加格子（仍是一格）', async () => {
+  it('SenseNova：平台行带着插件三格也不往上加格子（仍是一格）', async () => {
     const user = userEvent.setup({ delay: null })
     const sent: string[][] = []
 
     renderWithClient({
+      // 模板平台的格子由种类声明定死：平台行即使带着插件三格，也不往上加格子。
       client: clientOf(
-        platformOf('sensenova', 'sensenova', 'SenseNova'),
-        sent,
-        [
-          create(QuotaPluginSchema, {
-            id: 'sensenova-pools',
-            label: 'SenseNova 积分池',
-            fields: [],
-          }),
-        ]
+        platformOf('sensenova', 'sensenova', 'SenseNova', {
+          quotaPluginId: 'sensenova-pools',
+          quotaPluginLabel: 'SenseNova 积分池',
+        }),
+        sent
       ),
       children: <UpstreamsPage />,
     })
@@ -1046,19 +997,19 @@ describe('凭据弹窗按平台渲染格子', () => {
  * 写的（keys[i+1] ?? ""）—— 插件那几段就被当成空串清掉了。那是静默的数据
  * 丢失，不是显示问题。所以登记表没到手就不给开那个弹窗。
  */
-describe('开放平台的凭据入口：登记表没到手就不给开', () => {
+describe('凭据入口：格子数说不准就不给开', () => {
   beforeEach(() => {
     toastSuccess.mockClear()
     toastError.mockClear()
     window.history.replaceState(null, '', '/')
   })
 
-  /** 额度插件登记表那个 RPC 的处理器。 */
-  type PluginsHandler = NonNullable<
-    Parameters<typeof mockAdminClient>[0]['ListQuotaPlugins']
+  /** 种类登记表那个 RPC 的处理器。 */
+  type KindsHandler = NonNullable<
+    Parameters<typeof mockAdminClient>[0]['ListProviderKinds']
   >
 
-  /** 一个开放平台：选了「演示插件」，那个插件要两段凭据。 */
+  /** 一个开放平台：平台行带着插件那几段，但推理那一格还等种类声明。 */
   function openPlatform(): Upstream {
     return create(UpstreamSchema, {
       id: 'my-open',
@@ -1071,44 +1022,61 @@ describe('开放平台的凭据入口：登记表没到手就不给开', () => {
       accounts: [accountOf('my-open-1', 'my-open', '账号一')],
       isOpenPlatform: true,
       baseUrl: 'https://api.example.com/v1',
+      quotaPluginId: 'demo-plugin',
+      quotaPluginLabel: '演示插件',
+      quotaPluginFields: [
+        create(QuotaPluginFieldSchema, {
+          name: 'account',
+          label: '额度 Cookie',
+          secret: true,
+        }),
+      ],
     })
   }
 
-  /** 一个假客户端：额度插件登记表按给的处理器来。 */
-  function openClient(listPlugins: PluginsHandler) {
+  /** 一个假客户端：种类登记表按给的处理器来，其余照常。 */
+  function clientWithKinds(
+    upstream: Upstream,
+    listKinds: KindsHandler
+  ) {
     return mockAdminClient({
-      ListProviderKinds: listProviderKinds,
+      ListProviderKinds: listKinds,
       ListUpstreams: () =>
-        create(ListUpstreamsResponseSchema, { upstreams: [openPlatform()] }),
+        create(ListUpstreamsResponseSchema, { upstreams: [upstream] }),
       ListAccounts: () => create(ListAccountsResponseSchema, { accounts: [] }),
       ListCredentials: () =>
         create(ListCredentialsResponseSchema, { credentials: [] }),
-    ListQuotaPlugins: listPlugins,
-    ListPublishedModels: () =>
-      create(ListPublishedModelsResponseSchema, { models: [] }),
-    SetProviderKeys: () => create(SetProviderKeysResponseSchema),
+      ListPublishedModels: () =>
+        create(ListPublishedModelsResponseSchema, { models: [] }),
+      SetProviderKeys: () => create(SetProviderKeysResponseSchema),
     })
   }
 
-  /** 展开开放平台那一行。 */
-  async function expand(user: ReturnType<typeof userEvent.setup>) {
+  /** 展开那一行。 */
+  async function expand(
+    user: ReturnType<typeof userEvent.setup>,
+    id: string
+  ) {
     await user.click(
       await screen.findByRole('button', {
-        name: '展开 my-open 的账号与凭据',
+        name: `展开 ${id} 的账号与凭据`,
       })
     )
   }
 
-  it('插件列表还在加载：凭据入口是禁用的，弹窗开不了', async () => {
+  it('种类登记表还在加载：凭据入口是禁用的，弹窗开不了', async () => {
     const user = userEvent.setup({ delay: null })
 
     renderWithClient({
       // 一直不回的登记表：这个查询就永远在加载中。
-      client: openClient(() => new Promise<never>(() => {})),
+      client: clientWithKinds(
+        openPlatform(),
+        () => new Promise<never>(() => {})
+      ),
       children: <UpstreamsPage />,
     })
 
-    await expand(user)
+    await expand(user, 'my-open')
 
     // 入口的名字随格子数变（「凭据」还是「API Key」），这里不挑名字：挑的是
     // 它点不了。
@@ -1124,17 +1092,17 @@ describe('开放平台的凭据入口：登记表没到手就不给开', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('插件列表取不到：显示错误，凭据入口是禁用的', async () => {
+  it('种类登记表取不到：显示错误，凭据入口是禁用的', async () => {
     const user = userEvent.setup({ delay: null })
 
     renderWithClient({
-      client: openClient(() => {
+      client: clientWithKinds(openPlatform(), () => {
         throw new ConnectError('连接被拒', Code.Unavailable)
       }),
       children: <UpstreamsPage />,
     })
 
-    await expand(user)
+    await expand(user, 'my-open')
 
     const button = await screen.findByRole('button', {
       name: /^(凭据|API Key)$/,
@@ -1144,54 +1112,39 @@ describe('开放平台的凭据入口：登记表没到手就不给开', () => {
     })
     // 错误照出来：不让格子数悄悄变少。
     expect(
-      await screen.findByText(/插件列表取不到/)
+      await screen.findByText(/账号类型取不到/)
     ).toBeInTheDocument()
 
     await user.click(button)
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('模板平台不看登记表：登记表没到手，入口照常给', async () => {
+  it('模板平台：种类登记表没到手，入口同样不给（格子数一样说不准）', async () => {
     const user = userEvent.setup({ delay: null })
 
     renderWithClient({
-      client: mockAdminClient({
-      ListProviderKinds: listProviderKinds,
-        ListUpstreams: () =>
-          create(ListUpstreamsResponseSchema, {
-            upstreams: [
-              create(UpstreamSchema, {
-                id: 'qiniu',
-                kind: 'qiniu',
-                label: '七牛云',
-                state: UpstreamState.NO_CREDENTIAL,
-                policy: ProviderPolicy.SINGLE,
-                policies: [ProviderPolicy.SINGLE],
-                accountCount: 1,
-                accounts: [qiniuAccount()],
-              }),
-            ],
-          }),
-        ListAccounts: () =>
-          create(ListAccountsResponseSchema, { accounts: [] }),
-        ListCredentials: () =>
-          create(ListCredentialsResponseSchema, { credentials: [] }),
-        ListQuotaPlugins: () => new Promise<never>(() => {}),
-      }),
+      client: clientWithKinds(
+        create(UpstreamSchema, {
+          id: 'qiniu',
+          kind: 'qiniu',
+          label: '七牛云',
+          state: UpstreamState.NO_CREDENTIAL,
+          policy: ProviderPolicy.SINGLE,
+          policies: [ProviderPolicy.SINGLE],
+          accountCount: 1,
+          accounts: [qiniuAccount()],
+        }),
+        () => new Promise<never>(() => {})
+      ),
       children: <UpstreamsPage />,
     })
 
-    await user.click(
-      await screen.findByRole('button', {
-        name: '展开 qiniu 的账号与凭据',
-      })
-    )
+    await expand(user, 'qiniu')
 
-    // 模板平台的格子是写死的，不看登记表：入口照常给，弹窗也照常开。
-    const button = await screen.findByRole('button', { name: '凭据' })
-    expect(button).not.toBeDisabled()
-    await user.click(button)
-    expect(await screen.findByRole('dialog')).toBeInTheDocument()
-    expect(await screen.findByLabelText('额度 Cookie')).toBeInTheDocument()
+    const button = await screen.findByRole('button', {
+      name: /^(凭据|API Key)$/,
+    })
+    expect(button).toBeDisabled()
+    expect(screen.getByText('凭据格子还在加载')).toBeInTheDocument()
   })
 })

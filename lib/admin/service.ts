@@ -49,6 +49,7 @@ import {
   ListModelsResponseSchema,
   ListPublishedModelsResponseSchema,
   ListQuotaPluginsResponseSchema,
+  QuotaPluginPlatformSchema,
   ListPlatformKindsResponseSchema,
   ListModelOverridesResponseSchema,
   EffortListSchema,
@@ -164,7 +165,7 @@ import { refreshOpenPlatformCatalog } from "../open-platform-catalog.ts";
 import { forgetUpstreamSessions } from "../upstream-session.ts";
 import { breakerPanelState } from "../upstream-breaker.ts";
 import { isSimulatedClientKind, platformKindChoices } from "../platform-catalog.ts";
-import { allQuotaPlugins } from "../quota-plugin-registry.ts";
+import { allQuotaPlugins, quotaPluginForBaseUrl } from "../quota-plugin-registry.ts";
 import { quotaConclusionOf, quotaPluginIdOf, type QuotaConclusion } from "../quota-state.ts";
 import { peekHealthSnapshot } from "../health-cache.ts";
 import { listAggregateModels } from "../aggregate.ts";
@@ -442,6 +443,10 @@ function platformMessage(
   // 熔断：这个平台现在被跳过了没有。开着的时候补一句「已跳过，恢复时间 xx:xx」
   // —— 面板上要看得见「这个上游为什么这会儿不接」，不然只看到「它没接」。
   // 不加状态格（契约不动）：这一句挂在 stateReason 上，够用。
+  // 这个平台的额度插件：按平台地址认出来的那一个。判据跟路由同一个函数
+  //（quotaPluginForBaseUrl），面板不再自己拿地址算一遍。模板平台没有开放
+  // 平台行可对，三格照空 —— 面板据此不显示额度区。
+  const quotaPlugin = open ? quotaPluginForBaseUrl(open.baseUrl) : null;
   const breaker = breakerPanelState(id);
   const breakerNote =
     breaker.tripped && breaker.untilMs !== null ? `已跳过，恢复时间 ${stampOf(breaker.untilMs)}` : "";
@@ -491,6 +496,17 @@ function platformMessage(
     // 共性表那个开关（面板上的一个勾）：模拟客户端那一族的行也有，所以照表里的
     // 那一行报，不跟着 open（open 把那一族滤掉了）。
     traitsFromCommon: row?.traitsFromCommon ?? false,
+    // 额度插件三格：id 空 = 这个平台没有额度接口，面板不显示额度区、凭据里
+    // 也不加插件那几段。地址匹配与路由同一个答案，面板不再自己算。
+    quotaPluginId: quotaPlugin?.id ?? "",
+    quotaPluginLabel: quotaPlugin?.label ?? "",
+    quotaPluginFields: (quotaPlugin?.fields ?? []).map((field) =>
+      create(QuotaPluginFieldSchema, {
+        name: field.name,
+        label: field.label,
+        secret: field.secret,
+      })
+    ),
     // 模型目录两格：目录本身与上次拉的时刻。模板平台没有这一份目录，所以是
     // 空与 0（0 的意思是「没拉过」，不是「没有模型」）。
     models: open?.models.items ?? [],
@@ -1008,14 +1024,29 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
   },
 
   async listQuotaPlugins() {
+    // 现在用到每个插件的平台：从开放平台行里筛出地址匹配到它的那些。判据还是
+    // quotaPluginForBaseUrl —— 与 Upstream.quota_plugin_id 同一个答案，不在
+    // admin 层另写一套地址比较。模拟客户端那些行不是开放平台，滤掉。
+    const platformRows = listOpenPlatforms().filter(
+      (row) => !isSimulatedClientKind(row.kind)
+    );
     return create(ListQuotaPluginsResponseSchema, {
       plugins: allQuotaPlugins().map((plugin) =>
         create(QuotaPluginSchema, {
           id: plugin.id,
           label: plugin.label,
-          // 声明的地址原样带上去：面板按它把平台地址对到插件（web/src/lib/
-          // quota-match.ts 与后端同一套规则）。漏了它，面板侧永远匹配不到。
+          // 声明的地址原样带上去：面板只拿它展示插件声明，不做匹配 ——
+          // 匹配结果在 platforms 里，服务端已经算好。
           baseUrls: [...plugin.baseUrls],
+          platforms: platformRows
+            .filter((row) => quotaPluginForBaseUrl(row.baseUrl)?.id === plugin.id)
+            .map((row) =>
+              create(QuotaPluginPlatformSchema, {
+                platformId: row.id,
+                label: row.label,
+                baseUrl: row.baseUrl,
+              })
+            ),
           fields: plugin.fields.map((field) =>
             create(QuotaPluginFieldSchema, {
               name: field.name,

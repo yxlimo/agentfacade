@@ -3,12 +3,10 @@ import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import {
   CreditSummarySchema,
-  QuotaPluginSchema,
   UpstreamQuotaSchema,
   UpstreamSchema,
 } from '@/gen/buddy/admin/v1/admin_pb'
 import type { MessageInitShape } from '@bufbuild/protobuf'
-import type { QuotaRegistry } from '@/features/accounts/provider-key-fields'
 import { OpenPlatformFacts } from '@/features/open-platforms/platform-facts'
 import { formatLocalMoment } from '@/lib/format'
 
@@ -25,21 +23,11 @@ const FETCHED_AT = BigInt(Date.UTC(2026, 10, 3, 4, 0, 0))
 /** 服务端说的恢复时刻。 */
 const RECOVER_AT = BigInt(Date.UTC(2027, 0, 15, 11, 30, 0))
 
-/** 登记表里那一个插件：它声明的地址对得上平台的地址。 */
-const PLUGIN = create(QuotaPluginSchema, {
-  id: 'qiniu-portal',
-  label: '七牛门户',
-  fields: [],
-  baseUrls: ['https://api.example.com/v1'],
-})
-
-/** 登记表到手：里面就是这个插件。 */
-const READY: QuotaRegistry = { status: 'ready', plugins: [PLUGIN] }
-
 /** 一个开放平台的额度栏。 */
 function facts(
   quota: MessageInitShape<typeof UpstreamQuotaSchema>,
-  registry: QuotaRegistry = READY
+  /** 平台行带来的插件三格：缺省是有插件（服务端匹配好了）。 */
+  plugin: { id?: string; label?: string } = { id: 'qiniu-portal', label: '七牛门户' }
 ) {
   const upstream = create(UpstreamSchema, {
     id: 'my-gateway',
@@ -49,9 +37,11 @@ function facts(
     isOpenPlatform: true,
     models: ['gpt-4o'],
     modelsFetchedAtMs: FETCHED_AT,
+    quotaPluginId: plugin.id ?? '',
+    quotaPluginLabel: plugin.label ?? '',
     quota: create(UpstreamQuotaSchema, quota),
   })
-  return <OpenPlatformFacts upstream={upstream} registry={registry} />
+  return <OpenPlatformFacts upstream={upstream} />
 }
 
 /** 全页文字：断言「哪里都没有 0」时用它。 */
@@ -204,27 +194,15 @@ describe('额度那一栏按结论说', () => {
  * 不能摆「额度插件：还在加载」，也不能把服务端给的结论硬挂在一个认不出的
  * 插件名下。整块不显示、不报错。
  */
-describe('登记表没到手：额度区整块不摆', () => {
-  it('加载中：状态句与数字都不显示，也不报错', () => {
-    render(facts({ quotaState: 'no_quota' }, { status: 'pending' }))
+describe('登记表没到手', () => {
+  it('quota_plugin_id 空：没有额度接口，额度区整块不摆', () => {
+    render(facts({ quotaState: 'no_quota' }, { id: '', label: '' }))
 
     expect(screen.queryByText('额度用尽')).not.toBeInTheDocument()
     expect(text()).not.toMatch(/额度插件|未知插件|没登记/)
   })
 
-  it('取不到：同上，也不说原因（对不上插件不是错误）', () => {
-    render(
-      facts(
-        { quotaState: 'blocked', recoverAtMs: RECOVER_AT },
-        { status: 'error', message: '问不到' }
-      )
-    )
-
-    expect(screen.queryByText(/不能用/)).not.toBeInTheDocument()
-    expect(text()).not.toMatch(/额度插件|问不到/)
-  })
-
-  it('加载中且有数字：数字也不显示（挂不到插件名下）', () => {
+  it('quota_plugin_id 空且有数字：数字也不显示（没有插件可挂）', () => {
     render(
       facts(
         {
@@ -235,7 +213,7 @@ describe('登记表没到手：额度区整块不摆', () => {
             remaining: 1200,
           }),
         },
-        { status: 'pending' }
+        { id: '', label: '' }
       )
     )
 
@@ -279,7 +257,7 @@ describe('模拟客户端那一行', () => {
       isOpenPlatform: true,
       models: ['MiniMax-M2'],
     })
-    return <OpenPlatformFacts upstream={upstream} registry={READY} />
+    return <OpenPlatformFacts upstream={upstream} />
   }
 
   it('地址与额度插件两行都不摆', () => {

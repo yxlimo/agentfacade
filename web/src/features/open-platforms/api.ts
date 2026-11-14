@@ -25,9 +25,9 @@ export const quotaPluginKeys = queryKeys.quotaPlugins
 /**
  * 服务端登记的额度插件。
  *
- * 面板不选插件：插件按平台地址自动匹配（`lib/quota-match.ts`）。登记表拿
- * 来两件事：插件列表页展示每个插件与它服务的地址，以及凭据格子按匹配结果
- * 多几段。
+ * 面板不选插件：插件由服务端按平台地址匹配好，跟着答复走（QuotaPlugin.platforms
+ * 与 Upstream.quota_plugin_*）。登记表拿来两件事：插件列表页展示每个插件与它
+ * 现在用到的平台，以及凭据格子数跟着平台行走。
  */
 export function useQuotaPlugins() {
   const client = useAdminClient()

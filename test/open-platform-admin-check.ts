@@ -1030,6 +1030,49 @@ check("它的名字是七牛云资源包", qiniu?.label === "七牛云资源包"
 check("它要的那一段凭据叫 account", qiniu?.fields?.[0]?.name === "account", show(qiniu?.fields?.[0]));
 check("那一段要遮起来显示", qiniu?.fields?.[0]?.secret === true, show(qiniu?.fields?.[0]));
 
+// Upstream 上的插件三格：服务端按地址匹配好跟着平台行走（面板不再自己算）。
+// 反向两档：地址对上 → 三格有值；对不上 → 三格全空。
+await guard(() => addPlatform({
+  id: "quota-match-demo",
+  label: "插件匹配演示",
+  baseUrl: "https://api.qnaigc.com/v1",
+  kind: "openai",
+}));
+const matched = (await listUpstreams()).find((u) => u.id === "quota-match-demo");
+check("地址对上插件：quota_plugin_id 有值", matched?.quotaPluginId === "qiniu", show(matched?.quotaPluginId));
+check("地址对上插件：quota_plugin_label 有值", matched?.quotaPluginLabel === "七牛云资源包", show(matched?.quotaPluginLabel));
+check(
+  "地址对上插件：quota_plugin_fields 就是插件的那几段",
+  (matched?.quotaPluginFields ?? []).length === 1 && matched?.quotaPluginFields?.[0]?.name === "account",
+  show(matched?.quotaPluginFields),
+);
+const listedQiniu = (await listQuotaPlugins()).plugins?.find((p) => p.id === "qiniu");
+check(
+  "插件自带的 platforms 有现在用到它的平台",
+  (listedQiniu?.platforms ?? []).some((p: any) => p.platformId === "quota-match-demo" && p.baseUrl === "https://api.qnaigc.com/v1"),
+  show(listedQiniu?.platforms),
+);
+await guard(() => updatePlatform({
+  id: "quota-match-demo",
+  label: "插件匹配演示",
+  baseUrl: "https://api.acme.test/v1",
+}));
+const unmatched = (await listUpstreams()).find((u) => u.id === "quota-match-demo");
+check("地址对不上插件：三格全空（id）", unmatched?.quotaPluginId === "", show(unmatched?.quotaPluginId));
+check("地址对不上插件：三格全空（label）", unmatched?.quotaPluginLabel === "", show(unmatched?.quotaPluginLabel));
+check(
+  "地址对不上插件：三格全空（fields）",
+  (unmatched?.quotaPluginFields ?? []).length === 0,
+  show(unmatched?.quotaPluginFields),
+);
+const listedQiniuAfter = (await listQuotaPlugins()).plugins?.find((p) => p.id === "qiniu");
+check(
+  "没有平台用到它时 platforms 也跟着空",
+  !(listedQiniuAfter?.platforms ?? []).some((p: any) => p.platformId === "quota-match-demo"),
+  show(listedQiniuAfter?.platforms),
+);
+await guard(() => deletePlatform({ id: "quota-match-demo" }));
+
 // 每一格的名字只有一处产出：插件自己的声明。契约上发出去的必须就是它 ——
 // 面板拿它画那一格，凭据行上的 label 也是同一个值。逐个插件逐段比，不手写
 // 一份「应当叫什么」：手写的那份就是第二套词的源头。

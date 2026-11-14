@@ -42,7 +42,6 @@ import { AddAccountDialog } from '@/features/upstreams/add-account-dialog'
 import {
   useAddPlatform,
   useListPlatformKinds,
-  useQuotaPlugins,
   useRefreshPlatformModels,
   useUpdatePlatform,
 } from '@/features/open-platforms/api'
@@ -66,7 +65,6 @@ import { DragSortList } from '@/components/drag-sort-list'
 import {
   providerKeyAccess,
   providerKindsFrom,
-  quotaRegistryFrom,
 } from '@/features/accounts/provider-key-fields'
 import { useSetProviderKeys } from '@/features/accounts/api'
 import { formatLocalMoment } from '@/lib/format'
@@ -104,8 +102,6 @@ export function UpstreamsPage() {
   const deleteAccount = useDeleteAccount()
   const setKeys = useSetProviderKeys()
   const login = useAccountLogin()
-  // 开放平台：面板上加的那些平台（表里的行），跟播种的模拟客户端不是一回事。
-  const plugins = useQuotaPlugins()
   // 账号类型那一份：填凭据那几格由它说（面板不留自己那张按 kind 查的表）。
   const providerKindsQuery = useProviderKinds()
   const kindsQuery = useListPlatformKinds()
@@ -192,14 +188,6 @@ export function UpstreamsPage() {
   }
 
   const loginTarget = login.target
-  // 额度插件登记表的状态：三档（加载中 / 取不到 / 到手）。开放平台的凭据格子
-  // 数与平台卡上的额度区由它（加上平台地址的匹配结果）说了算。
-  const registry = quotaRegistryFrom({
-    isPending: plugins.isPending,
-    isError: plugins.isError,
-    error: plugins.error,
-    plugins: plugins.data?.plugins,
-  })
   // 账号类型那一份：种类 → 标题与格子。没到手时凭据入口不放行（见 accessOf）。
   const providerKinds = providerKindsFrom({
     isPending: providerKindsQuery.isPending,
@@ -214,9 +202,10 @@ export function UpstreamsPage() {
       kind: upstream.kind,
       isOpenPlatform: upstream.isOpenPlatform,
       platformLabel: upstream.label || upstream.id,
-      baseUrl: upstream.baseUrl,
+      // 插件那几段服务端已经按地址匹配好，跟着平台行走。
+      quotaPluginFields: upstream.quotaPluginFields,
+      quotaPluginLabel: upstream.quotaPluginLabel,
       kinds: providerKinds,
-      registry,
     })
   const keysTarget = keysFor ? findAccount(list, keysFor) : undefined
   const keysAccess = keysTarget ? accessOf(keysTarget.upstream) : undefined
@@ -324,12 +313,11 @@ export function UpstreamsPage() {
                               <span className='font-mono text-xs break-all text-muted-foreground'>
                                 {upstream.id}
                               </span>
-                              {/* 开放平台的配置：模型目录与额度。额度插件按
-                                  地址匹配，卡片上不再摆插件行。 */}
+                              {/* 开放平台的配置：模型目录与额度。有没有额度
+                                  区由服务端给的 quota_plugin_id 说了算。 */}
                               {upstream.isOpenPlatform ? (
                                 <OpenPlatformFacts
                                   upstream={upstream}
-                                  registry={registry}
                                   refresh={refreshOutcomes[upstream.id]}
                                 />
                               ) : null}

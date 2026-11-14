@@ -33,21 +33,19 @@ import { ProviderKeysDialog } from '@/features/accounts/provider-keys-dialog'
 import {
   providerKeyAccess,
   providerKindsFrom,
-  quotaRegistryFrom,
 } from '@/features/accounts/provider-key-fields'
 import { useSetProviderKeys } from '@/features/accounts/api'
 import { useAccountLogin } from '@/features/login/use-account-login'
 import { LoginDialog } from '@/features/login/login-dialog'
-import { quotaPluginForBaseUrl } from '@/lib/quota-match'
-import type { Account, Upstream } from '@/gen/buddy/admin/v1/admin_pb'
+import type { Account, QuotaPluginPlatform, Upstream } from '@/gen/buddy/admin/v1/admin_pb'
 
 /**
  * 插件列表页：服务端登记的额度插件，一行一个。
  *
- * 插件不再是平台上选的一格：它按平台地址自动匹配（`lib/quota-match.ts`）。
- * 这一页把对应关系摆出来 —— 每个插件声明了哪些地址、当前匹配到它的平台与
- * 账号。逐账号填凭据沿用平台页那套（`ProviderAccounts` + 凭据格子按匹配结果
- * 决定），不另造表单。
+ * 插件按平台地址自动匹配，匹配结果由服务端算好跟着答复走（QuotaPlugin.platforms
+ * 与 Upstream.quota_plugin_*）：这一页把对应关系摆出来 —— 每个插件现在用到它的
+ * 平台与账号。逐账号填凭据沿用平台页那套（ProviderAccounts + 凭据格子跟平台行
+ * 走），不另造表单。
  */
 export function QuotaPluginsPage() {
   const pluginsQuery = useQuotaPlugins()
@@ -78,6 +76,11 @@ export function QuotaPluginsPage() {
     () => upstreams.data?.upstreams ?? [],
     [upstreams.data]
   )
+  /** 平台 id → 平台行：插件自带的平台清单只有 id，账号与 kind 要回表里拿。 */
+  const upstreamOf = useMemo(
+    () => new Map(platforms.map((upstream) => [upstream.id, upstream])),
+    [platforms]
+  )
 
   if (pluginsQuery.isPending || upstreams.isPending) {
     return <LoadingState />
@@ -96,14 +99,8 @@ export function QuotaPluginsPage() {
     )
   }
 
-  // 两份登记表：凭据格子数由「按地址匹配出来的插件」说了算，判据都在
-  // providerKeyAccess 那一层，这里只照结果渲染。
-  const registry = quotaRegistryFrom({
-    isPending: pluginsQuery.isPending,
-    isError: pluginsQuery.isError,
-    error: pluginsQuery.error,
-    plugins: pluginsQuery.data?.plugins,
-  })
+  // 两份登记表：凭据格子数由平台行带来的插件那几段说了算（服务端匹配好），
+  // 判据都在 providerKeyAccess 那一层，这里只照结果渲染。
   const providerKinds = providerKindsFrom({
     isPending: providerKindsQuery.isPending,
     isError: providerKindsQuery.isError,
@@ -115,18 +112,17 @@ export function QuotaPluginsPage() {
       kind: upstream.kind,
       isOpenPlatform: upstream.isOpenPlatform,
       platformLabel: upstream.label || upstream.id,
-      baseUrl: upstream.baseUrl,
+      quotaPluginFields: upstream.quotaPluginFields,
+      quotaPluginLabel: upstream.quotaPluginLabel,
       kinds: providerKinds,
-      registry,
     })
 
-  // 每个插件当前匹配到它的开放平台：按地址对出来的，与后端同一套规则。
+  // 每个插件现在用到它的平台：插件自带的清单原样拿来，回平台表里补齐
+  // 账号与凭据格子。行不在表里（刚删掉的那种瞬间）就跳过。
   const matchedOf = (pluginId: string): Upstream[] =>
-    platforms.filter(
-      (upstream) =>
-        upstream.isOpenPlatform &&
-        quotaPluginForBaseUrl(plugins, upstream.baseUrl)?.id === pluginId
-    )
+    (plugins.find((plugin) => plugin.id === pluginId)?.platforms ?? [])
+      .map((entry: QuotaPluginPlatform) => upstreamOf.get(entry.platformId))
+      .filter((row): row is Upstream => row !== undefined)
 
   const loginTarget = login.target
   const restartLogin = loginTarget
@@ -223,8 +219,7 @@ export function QuotaPluginsPage() {
                                 <span className='font-mono text-xs break-all text-muted-foreground'>
                                   {upstream.baseUrl}
                                 </span>
-                              </div>
-                              <ProviderAccounts
+                              </div>                              <ProviderAccounts
                                 access={accessOf(upstream)}
                                 accounts={upstream.accounts}
                                 loggingIn={login.pending}

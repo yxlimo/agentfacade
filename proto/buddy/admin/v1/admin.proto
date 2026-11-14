@@ -109,6 +109,13 @@ message Upstream {
   // 平台自己给的信息不足时，从共性表（模型 id → 能力参数）里补。
   // 默认关：只有用户明确打开才用。人工元数据仍然优先于它。
   bool traits_from_common = 31;
+  // 这个平台的额度插件：服务端按平台地址认出来的那一个（与路由用的是同一套
+  // 地址匹配）。三格一起看：quota_plugin_id 为空 = 这个平台没有额度接口
+  // （不是「还没配上」），面板据此不显示额度区、凭据里也不加插件那几段。
+  string quota_plugin_id = 32;
+  string quota_plugin_label = 33;
+  // 插件要的那几段凭据：按顺序摆在推理 key 后面。
+  repeated QuotaPluginField quota_plugin_fields = 34;
 }
 
 // provider 的生效策略：上游名下的多个账号（租户）里，先调谁、失败后换谁。
@@ -677,6 +684,16 @@ message QuotaPlugin {
   // 这个插件服务哪些平台地址：平台行按 base_url 对上其中一个，额度插件就是它。
   // 面板不用它选插件（没有「选」这一说），拿它展示插件与平台的对应关系。
   repeated string base_urls = 4;
+  // 现在用到这个插件的平台：服务端按同一套地址匹配算好（与 Upstream 上的
+  // quota_plugin_id 是同一个答案），面板照着摆，不自己算地址。
+  repeated QuotaPluginPlatform platforms = 5;
+}
+
+// 一个用到某个额度插件的开放平台。
+message QuotaPluginPlatform {
+  string platform_id = 1;
+  string label = 2;
+  string base_url = 3;
 }
 
 message ListQuotaPluginsResponse {

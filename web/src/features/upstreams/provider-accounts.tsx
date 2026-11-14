@@ -52,7 +52,7 @@ function needsRelogin(credential: Credential): boolean {
  * 凭据入口那个按钮写什么。
  *
  * 一格就是一把（标题带「API Key」），几格就是几段（写「凭据」）。格子数还
- * 说不准的时候（开放平台的登记表没到手）一律写「凭据」：此时是几格都不知道。
+ * 说不准的时候（种类登记表没到手）一律写「凭据」：此时是几格都不知道。
  */
 function accessLabel(access: ProviderKeyAccess): string {
   return access.status === 'ready' && access.layout.fields.length > 1

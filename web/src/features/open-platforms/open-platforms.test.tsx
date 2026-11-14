@@ -827,6 +827,8 @@ describe('面板上的开放平台', () => {
     const client = clientWith(
       [
         openPlatform({
+          quotaPluginId: 'qiniu',
+          quotaPluginLabel: '七牛云资源包',
           quota: create(UpstreamQuotaSchema, {
             credits: create(CreditSummarySchema, {
               total: 2000,
@@ -844,8 +846,6 @@ describe('面板上的开放平台', () => {
                 id: 'qiniu',
                 label: '七牛云资源包',
                 fields: [],
-                // 平台的地址对上这里声明的地址：它的额度插件就是这一个。
-                baseUrls: ['https://api.example.com/v1'],
               }),
             ],
           }),
@@ -855,7 +855,7 @@ describe('面板上的开放平台', () => {
     renderWithClient({ client, children: <UpstreamsPage /> })
 
     await screen.findByText('我的中转站')
-    // 插件名与它算出来的值：名字来自按地址匹配出来的插件。
+    // 插件名与它算出来的值：名字是平台行带来的（服务端匹配好）。
     expect(screen.getByText('额度：七牛云资源包')).toBeInTheDocument()
     expect(screen.getByText('剩 1,200 点')).toBeInTheDocument()
     // 「不知道」的那些格没有出现在这一行上。

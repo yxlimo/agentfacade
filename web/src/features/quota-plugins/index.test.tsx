@@ -11,6 +11,7 @@ import {
   ListUpstreamsResponseSchema,
   ProviderPolicy,
   QuotaPluginFieldSchema,
+  QuotaPluginPlatformSchema,
   QuotaPluginSchema,
   SetProviderKeysResponseSchema,
   UpstreamSchema,
@@ -35,12 +36,19 @@ vi.mock('sonner', () => ({
   Toaster: () => null,
 }))
 
-/** 七牛的插件：地址对得上下面那个平台的地址，要一段额度 Cookie。 */
+/** 七牛的插件：现在用到下面那个平台（服务端匹配好），要一段额度 Cookie。 */
 function qiniuPlugin(): QuotaPlugin {
   return create(QuotaPluginSchema, {
     id: 'qiniu',
     label: '七牛云资源包',
     baseUrls: ['https://api.qiniu.example.com/v1'],
+    platforms: [
+      create(QuotaPluginPlatformSchema, {
+        platformId: 'my-qiniu',
+        label: '我的七牛',
+        baseUrl: 'https://api.qiniu.example.com/v1',
+      }),
+    ],
     fields: [
       create(QuotaPluginFieldSchema, {
         name: 'account',
@@ -51,17 +59,18 @@ function qiniuPlugin(): QuotaPlugin {
   })
 }
 
-/** TokenRhythm 的插件：没有任何平台的地址对得上它。 */
+/** TokenRhythm 的插件：没有任何平台用到它。 */
 function lonelyPlugin(): QuotaPlugin {
   return create(QuotaPluginSchema, {
     id: 'tokenrhythm-wallet',
     label: 'TokenRhythm 钱包',
     baseUrls: ['https://api.tokenrhythm.example.com/v1'],
+    platforms: [],
     fields: [],
   })
 }
 
-/** 一个开放平台：地址对得上七牛的插件，名下一个账号。 */
+/** 一个开放平台：用到七牛的插件（平台行带着插件三格），名下一个账号。 */
 function matchedPlatform(): Upstream {
   return create(UpstreamSchema, {
     id: 'my-qiniu',
@@ -74,6 +83,15 @@ function matchedPlatform(): Upstream {
     accountCount: 1,
     isOpenPlatform: true,
     fromRow: true,
+    quotaPluginId: 'qiniu',
+    quotaPluginLabel: '七牛云资源包',
+    quotaPluginFields: [
+      create(QuotaPluginFieldSchema, {
+        name: 'account',
+        label: '额度 Cookie',
+        secret: true,
+      }),
+    ],
     accounts: [
       create(AccountSchema, {
         id: 'my-qiniu-1',
