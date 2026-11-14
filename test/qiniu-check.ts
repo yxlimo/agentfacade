@@ -16,7 +16,11 @@ process.env.BUDDY_DATA_DIR = DATA_DIR;
 const { parseRespackOverview } = await import("../lib/qiniu/quota.ts");
 const { qiniuQuotaPlugin, qiniuQuotas } = await import("../lib/qiniu/quota-plugin.ts");
 const { cooldownUntil, listCooldowns } = await import("../lib/cooldown.ts");
-const { writeQiniuAccount } = await import("../lib/qiniu/account.ts");
+const { writeOpenPlatformKey } = await import("../lib/open-platform-credentials.ts");
+const { writePluginField } = await import("../lib/quota-plugin-credentials.ts");
+const { QINIU_ACCOUNT_FIELD, qiniuAccountId, qiniuPortalCookie } = await import("../lib/qiniu/account.ts");
+const { openPlatformKeyOf } = await import("../lib/open-platform-credentials.ts");
+const { setSecret } = await import("../lib/store.ts");
 const { kindOf, policiesOfKind } = await import("../lib/provider-kinds.ts");
 // 种类登记在注册表里：导入它，种类才都在。
 await import("../lib/kinds/index.ts");
@@ -286,8 +290,9 @@ globalThis.fetch = (async (input: unknown) => {
 const added = addAccount({ platform: "qiniu" });
 const accountId = added.id ?? "";
 check("账号加得起来", added.ok === true && accountId !== "", added.message);
-// 两段都给全：推理 key + （过期了的）门户口令。
-writeQiniuAccount(accountId, { apiKey: "fake-inference-key", portalCookie: "fake-cookie=expired" });
+// 两段都给全：推理 key（开放平台那一段）+ （过期了的）门户口令（插件声明的那一段）。
+writeOpenPlatformKey(accountId, "fake-inference-key");
+writePluginField(accountId, QINIU_ACCOUNT_FIELD, "fake-cookie=expired");
 
 /** 这一轮刷新后库里的快照。 */
 async function refreshed(): Promise<any> {
@@ -495,6 +500,26 @@ check(
     ),
   JSON.stringify(knownModels.map((m) => [m.id, m.contextWindow, commonTraitsOf(m.id)?.contextWindow])),
 );
+
+/* ------------------------------------------------------------------ *
+ * 老形状不认
+ * ------------------------------------------------------------------ */
+
+console.log("");
+console.log("老形状不认");
+
+// 存量的老形状：推理 key 与门户 cookie 同住 `:account`，键名是 apiKey /
+// portalCookie。我们不认它了 —— 门户 cookie 只从插件声明的那一段读，推理 key
+// 只从 `:key` 读。老账号重新填一次凭据即可（不兼容历史形状）。
+const legacy = addAccount({ platform: "qiniu", alias: "老形状" });
+const legacyId = legacy.id ?? "";
+check("老账号加得起来", legacy.ok === true && legacyId !== "", legacy.message);
+setSecret(qiniuAccountId(legacyId), "account", {
+  apiKey: "sk-legacy-key",
+  portalCookie: "legacy-cookie=1",
+});
+check("老形状里的门户 cookie 不认（空的）", qiniuPortalCookie(legacyId) === "", qiniuPortalCookie(legacyId));
+check("老形状里的推理 key 不认（空的）", openPlatformKeyOf(legacyId) === null, JSON.stringify(openPlatformKeyOf(legacyId)));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

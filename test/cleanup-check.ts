@@ -4,14 +4,13 @@
 //
 // 离线：不碰真上游，不发真请求，不花额度。
 //
-// 覆盖这一轮改掉的五件事：
+// 覆盖这一轮改掉的四件事：
 //
 //   1. 用量表里的「模拟客户端」记的是 kind 的名字（qoder 与 qoder-cn 都是
 //      「Qoder」），不是上游的 id —— 这一条是真的发一次请求、读数据库里那一行；
 //   2. /health 不再有 enabled 段，开关只在 providers 段里；
-//   3. 三家平台的 key 管理是一个接口（list/create/delete，不含 ensure：
-//   4. 模型目录的缓存是一份，缓存到期才问上游，空清单不写进去；
-//   5. 开放平台的推理：没有 key 与 401 两种错误。
+//   3. 模型目录的缓存是一份，缓存到期才问上游，空清单不写进去；
+//   4. 开放平台的推理：没有 key 与 401 两种错误。
 
 import fs from "node:fs";
 import http from "node:http";
@@ -36,43 +35,6 @@ async function listenOn(server: http.Server, host = "127.0.0.1"): Promise<number
   await new Promise<void>((resolve) => server.listen(0, host, resolve));
   return (server.address() as any).port;
 }
-
-/**
- * 假的 SenseNova 控制台。
- *
- * 控制台的地址是在模块加载时读进常量的，所以这个地址必须在导入
- * lib/sensenova/keys.ts 之前设好 —— 下面的 import 都是动态的，正好。
- */
-/** 控制台收到的最后一份「建 key」的请求体。 */
-let lastCreateBody: any = null;
-const console_ = http.createServer((req, res) => {
-  const chunks: Buffer[] = [];
-  req.on("data", (c) => chunks.push(c));
-  req.on("end", () => {
-    const raw = Buffer.concat(chunks).toString("utf8");
-    let body: any = null;
-    try {
-      body = raw ? JSON.parse(raw) : null;
-    } catch {
-      /* not JSON */
-    }
-    if (req.method === "POST") lastCreateBody = body;
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(
-      JSON.stringify({
-        api_key: {
-          id: "key-1",
-          displayname: String(body?.displayname ?? ""),
-          key_type: String(body?.key_type ?? ""),
-          api_key: "sk-1234567890abcdef", // privacy:allow — 编造的样例 (fabricated sample)
-          status: "ACTIVE",
-        },
-      }),
-    );
-  });
-});
-const consolePort = await listenOn(console_);
-process.env.SENSENOVA_PLATFORM_BASE = `http://127.0.0.1:${consolePort}`;
 
 let pass = 0;
 let fail = 0;
@@ -295,64 +257,6 @@ check(
 
 gw.stop();
 upstream.close();
-
-/* ------------------------------------------------------------------ *
- * 四、三家平台的 key 管理是一个接口
- * ------------------------------------------------------------------ */
-
-section("key 管理的统一接口");
-
-const { senseNovaKeys } = await import("../lib/sensenova/keys.ts");
-const { internAiKeys } = await import("../lib/intern-ai/keys.ts");
-const { tokenRhythmKeys } = await import("../lib/tokenrhythm/keys.ts");
-
-const platforms = [
-  ["SenseNova", senseNovaKeys],
-  ["书生·端砚", internAiKeys],
-  ["TokenRhythm", tokenRhythmKeys],
-] as const;
-
-for (const [name, keys] of platforms) {
-  check(
-    `${name}：list/create/delete 都在`,
-    ["list", "create", "delete"].every((k) => typeof (keys as any)[k] === "function"),
-    Object.keys(keys).join(","),
-  );
-  check(`${name}：有名字`, typeof keys.what === "string" && keys.what.length > 0, String(keys.what));
-  // 「没有 key 就建一把」这条路已经废了：开放平台侧的 key 一律由用户自己填
-  // （面板上的 setProviderKeys）。接口里留着 ensure，网关就会替人建一把建出来
-  // 用户看不到也换不掉的 key。
-  check(
-    `${name}：接口里没有 ensure 了`,
-    typeof (keys as any).ensure !== "function",
-    Object.keys(keys).join(","),
-  );
-}
-
-// SenseNova 的 create 认 ctx.keyType：同一族接口里 create 认，形状才是一套
-// （这一轮改的）。
-const { KEY_TYPE_METERED, KEY_TYPE_TOKEN_PLAN } = await import("../lib/sensenova/keys.ts");
-const fakeSession = {
-  cookie: "c",
-  accessToken: "t",
-  refreshToken: "r",
-  expiresAtMs: Date.now() + 3_600_000,
-  obtainedAtMs: Date.now(),
-  username: "u",
-};
-await senseNovaKeys.create({ session: fakeSession, keyType: KEY_TYPE_METERED }, "buddy");
-check(
-  "create 把 ctx.keyType 传给了平台",
-  lastCreateBody?.key_type === KEY_TYPE_METERED,
-  JSON.stringify(lastCreateBody),
-);
-await senseNovaKeys.create({ session: fakeSession }, "buddy");
-check(
-  "ctx 里没有 keyType 时用默认的（积分池）",
-  lastCreateBody?.key_type === KEY_TYPE_TOKEN_PLAN,
-  JSON.stringify(lastCreateBody),
-);
-console_.close();
 
 /* ------------------------------------------------------------------ *
  * 五、模型目录的缓存

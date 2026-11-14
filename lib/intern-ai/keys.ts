@@ -12,17 +12,14 @@
 // 两条要紧的规矩：
 //
 //   完整的 key 只在创建的那一次回答里出现（`data.key`），列表里永远是掩码。
-//   所以账号要用的那把 key 由用户自己在面板上填（见 writeInternAiKeys），
-//   网关不替人建。
+//   所以账号要用的那把 key 由用户自己在面板上填，网关不替人建。
 //
 //   建 key 要带幂等键：同一个键重发一次不会建出两把 key（-15109）。
 
 import crypto from "node:crypto";
 import { INTERN_AI_DISCOVERY_BASE } from "./config.ts";
 import { consoleApi } from "./platform.ts";
-import { accountId, storedAccount, type InternAiSession } from "./auth.ts";
-import { setSecret } from "../store.ts";
-import type { PlatformKey, PlatformKeys } from "../platform-keys.ts";
+import type { InternAiSession } from "./auth.ts";
 
 /** Discovery（TokenPlan）的一把 key。 */
 export interface DiscoveryApiKey {
@@ -143,63 +140,3 @@ export async function deleteDiscoveryKey(session: InternAiSession, token: string
     { method: "DELETE" },
   );
 }
-
-/**
- * 写这个账号的推理 key。
- *
- * 位置 0 是 Discovery 的（推理就用它）。空串表示清掉它（与七牛云、
- * 讯飞星火一个意思）。
- *
- * 只改 key 那一格：账号密码原样留着（把它们清掉等于把登录态清了）。
- *
- * 返回写进去的段数（0 或 1）：面板要按段报回写了什么。
- */
-export function writeInternAiKeys(providerId: string, parts: { discoveryKey?: string }): number {
-  const discoveryKey = String(parts.discoveryKey ?? "").trim();
-  const stored = storedAccount(providerId);
-  // 旧记录里可能还留着一把已经不用了的 Chat token：这里只重写这一次，
-  // 顺手把那个字段从账号记录里去掉——凭据删了就得真删干净。
-  const kept = { ...(stored ?? {}) };
-  delete (kept as Record<string, unknown>).chatKey;
-  if (!discoveryKey) {
-    // 没有记录就没什么可清的：别凭空造一条只有空 key 的凭据。
-    if (!stored) return 0;
-    setSecret(accountId(providerId), "account", { ...kept, discoveryKey: null });
-    return 0;
-  }
-  setSecret(accountId(providerId), "account", { ...kept, discoveryKey });
-  return 1;
-}
-
-/** 一把 key，换成三家平台共同的形状。 */
-function toPlatformKey(key: DiscoveryApiKey): PlatformKey {
-  return {
-    id: key.id,
-    name: key.name,
-    masked: key.maskedKey,
-    plain: key.plainKey,
-    status: key.status,
-  };
-}
-
-/**
- * 书生·端砚 Discovery 子站的 key 管理，三家平台统一的形状。
- *
- * 平台的接口在实现里（那套 tokenplan api-keys）；这里只是把它包的形状换成
- * 三家一样的那种。面板还没做这个操作：现在只有探针在用。
- */
-export const internAiKeys: PlatformKeys<InternAiSession> = {
-  what: "书生·端砚",
-  list: async ({ session, token }) => (await listDiscoveryKeys(session, token ?? "")).map(toPlatformKey),
-  create: async ({ session, token }, name) =>
-    toPlatformKey(await createDiscoveryKey(session, token ?? "", name)),
-  delete: async ({ session, token }, id) => {
-    await deleteDiscoveryKey(session, token ?? "", id);
-  },
-  disable: async ({ session, token }, id) => {
-    await disableDiscoveryKey(session, token ?? "", id);
-  },
-  enable: async ({ session, token }, id) => {
-    await enableDiscoveryKey(session, token ?? "", id);
-  },
-};

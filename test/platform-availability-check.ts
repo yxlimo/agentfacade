@@ -65,7 +65,8 @@ const { platformAvailability } = await import("../lib/router/availability.ts");
 const { inferenceCredentialOf } = await import("../lib/admin/accounts.ts");
 const { hasUsableCredential } = await import("../lib/admin/credentials.ts");
 const { writeOpenPlatformKey } = await import("../lib/open-platform-credentials.ts");
-const { writeQiniuAccount } = await import("../lib/qiniu/account.ts");
+const { writePluginField } = await import("../lib/quota-plugin-credentials.ts");
+const { QINIU_ACCOUNT_FIELD } = await import("../lib/qiniu/account.ts");
 const { qiniuQuotaPlugin } = await import("../lib/qiniu/quota-plugin.ts");
 const { updateOpenPlatform } = await import("../lib/open-platforms.ts");
 const { QINIU_INFER_BASE } = await import("../lib/qiniu/config.ts");
@@ -107,7 +108,7 @@ check("没有凭据 → 账号数是 1", noKey.accounts === 1, String(noKey.acco
 check("没有凭据 → 目录还是平台的（恒为全量）", noKey.ids.length === 5, JSON.stringify(noKey.ids));
 
 // 只填门户 cookie：额度问得到，推理发不出去 —— 那不是推理凭据。
-writeQiniuAccount(accountId, { portalCookie: "pc-test-cookie" });
+writePluginField(accountId, QINIU_ACCOUNT_FIELD, "pc-test-cookie");
 // 门户 cookie 只进插件的字段行，推理 key 那一行（key:provider:<账号>:key）仍然是空的。
 const cookieOnly = platformAvailability("qiniu");
 check("只有门户 cookie → inferenceCredentialOf 返回 null", inferenceCredentialOf(accountId) === null);

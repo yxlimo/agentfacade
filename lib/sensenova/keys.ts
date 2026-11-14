@@ -15,13 +15,11 @@
 // key_type 省略时，平台按控制台默认给（我们这边显式写死，免得平台改默认）。
 //
 // 完整的 key 只在创建的那一次回答里出现（api_key_plain），列表里永远是
-// 掩码。所以账号要用的那把 key 由用户自己在面板上填（见 writeSenseNovaKey），
-// 网关不替人建：建出来的那把用户既不知道也换不掉。
+// 掩码。所以账号要用的那把 key 由用户自己在面板上填， 网关不替人建：建出来
+// 的那把用户既不知道也换不掉。
 
 import { consoleApi } from "./platform.ts";
-import { setSecret } from "../store.ts";
-import { accountId, storedAccount, type SenseNovaSession } from "./auth.ts";
-import type { PlatformKey, PlatformKeys } from "../platform-keys.ts";
+import type { SenseNovaSession } from "./auth.ts";
 
 /** key 的两种计费类型。 */
 export type SenseNovaKeyType = "API_KEY_TYPE_TOKEN_PLAN" | "API_KEY_TYPE_METERED";
@@ -103,54 +101,3 @@ export async function revokeApiKey(session: SenseNovaSession, id: string): Promi
     method: "DELETE",
   });
 }
-
-/**
- * 写这个账号的推理 key。
- *
- * 只改 key 那一格：账号密码原样留着（把它们清掉等于把登录态清了）。
- * 空的那把表示清掉它（面板上重填一次就是替换的意思）。
- *
- * 返回写进去的段数（0/1）：面板要按段报回写了什么。
- */
-export function writeSenseNovaKey(providerId: string, apiKey: string): number {
-  const key = String(apiKey ?? "").trim();
-  const stored = storedAccount(providerId);
-  if (!key) {
-    // 没有记录就没什么可清的：别凭空造一条只有空 key 的凭据。
-    if (!stored) return 0;
-    setSecret(accountId(providerId), "account", { ...stored, apiKey: null });
-    return 0;
-  }
-  setSecret(accountId(providerId), "account", { ...(stored ?? {}), apiKey: key });
-  return 1;
-}
-
-/** 一把 key，换成三家平台共同的形状。 */
-function toPlatformKey(key: SenseNovaApiKey): PlatformKey {
-  return {
-    id: key.id,
-    name: key.displayname,
-    masked: key.maskedKey,
-    plain: key.plainKey,
-    status: key.status,
-  };
-}
-
-/**
- * SenseNova 的 key 管理，三家平台统一的形状。
- *
- * 平台的接口在实现里（控制台那套 metered api-keys）；这里只是把它包的形状
- * 换成三家一样的那种。面板还没做这个操作：现在只有探针在用。
- */
-export const senseNovaKeys: PlatformKeys<SenseNovaSession> = {
-  what: "SenseNova",
-  list: async ({ session }) => (await listApiKeys(session)).map(toPlatformKey),
-  create: async ({ session, keyType }, name) =>
-    toPlatformKey(
-      await createApiKey(session, name, (keyType as SenseNovaKeyType) ?? KEY_TYPE_TOKEN_PLAN),
-    ),
-  delete: async ({ session }, id) => {
-    await revokeApiKey(session, id);
-  },
-};
-

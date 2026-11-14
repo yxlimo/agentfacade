@@ -73,7 +73,8 @@ const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "admin-parity-"));
 process.env.BUDDY_DATA_DIR = DATA_DIR;
 
 const { addAccount, setProviderEnabled } = await import("../lib/providers.ts");
-const { writeQiniuAccount } = await import("../lib/qiniu/account.ts");
+const { writePluginField } = await import("../lib/quota-plugin-credentials.ts");
+const { QINIU_ACCOUNT_FIELD } = await import("../lib/qiniu/account.ts");
 // 迁移后推理 key 的写入口就是面板那条路（kind=openai 的凭据声明）。
 const { setProviderKeys } = await import("../lib/admin/credentials.ts");
 const { setSecret, store } = await import("../lib/store.ts");
@@ -140,7 +141,7 @@ const made = addAccount({ platform: "qiniu", alias: "测试七牛" });
 if (!made.ok || !made.id) throw new Error(`加不了七牛云的账号：${made.message}`);
 const accountId = String(made.id);
 // 只填门户 cookie：额度问得到，推理发不出去 —— 那不是推理凭据。
-writeQiniuAccount(accountId, { portalCookie: "pc-test-cookie" });
+writePluginField(accountId, QINIU_ACCOUNT_FIELD, "pc-test-cookie");
 
 const judged = platformAvailability("qiniu");
 check("判定 → no_credential", judged.state === "no_credential", judged.state);

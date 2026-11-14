@@ -25,7 +25,9 @@ await import("../lib/kinds/index.ts");
 const { kindOf } = await import("../lib/provider-kinds.ts");
 const { parseRespackOverview, fetchQiniuQuota } = await import("../lib/qiniu/quota.ts");
 const { qiniuQuotaPlugin } = await import("../lib/qiniu/quota-plugin.ts");
-const { writeQiniuAccount, qiniuAccountId } = await import("../lib/qiniu/account.ts");
+const { qiniuAccountId, QINIU_ACCOUNT_FIELD } = await import("../lib/qiniu/account.ts");
+const { writeOpenPlatformKey } = await import("../lib/open-platform-credentials.ts");
+const { pluginFieldOf, writePluginField } = await import("../lib/quota-plugin-credentials.ts");
 const { createOpenPlatform, openPlatformOf } = await import("../lib/open-platforms.ts");
 const { store } = await import("../lib/store.ts");
 
@@ -204,7 +206,9 @@ const QINIU_ACCOUNT = {
 } as any;
 
 // 凭据是编的：门户 cookie 只用来问额度，这里问的是假门户。
-writeQiniuAccount(QINIU_ACCOUNT.id, { apiKey: "fake-key", portalCookie: "fake-cookie=1" });
+// 两段各在自己的位置：推理 key 在 `:key`，门户 cookie 在插件声明的那一段。
+writeOpenPlatformKey(QINIU_ACCOUNT.id, "fake-key");
+writePluginField(QINIU_ACCOUNT.id, QINIU_ACCOUNT_FIELD, "fake-cookie=1");
 
 const probed = await qiniuQuotaPlugin.probe(QINIU_ACCOUNT);
 check("假门户被问了一次", portalCalls === 1, String(portalCalls));
@@ -475,7 +479,6 @@ check(
 
 section("插件凭据");
 
-const { pluginFieldOf, writePluginField } = await import("../lib/quota-plugin-credentials.ts");
 const { setProviderKeys } = await import("../lib/admin/credentials.ts");
 const { credentialsOf } = await import("../lib/admin/accounts.ts");
 const { addAccount, provider } = await import("../lib/providers.ts");
