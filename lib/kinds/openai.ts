@@ -19,7 +19,6 @@ import { openPlatformKeyOf } from "../open-platform-credentials.ts";
 // 从那里取而不是从 lib/platforms.ts 转出来：环上的模块不能在求值期读别人的
 // 常量，转出来等于把环用回来了，现在能跑只靠依赖求值顺序。
 import { openPlatformOf, OPEN_PLATFORM_KIND_NAME } from "../open-platforms.ts";
-import { quotaPluginForBaseUrl } from "../quota-plugin-registry.ts";
 // 引用即登记：开放平台按地址认插件，认的是登记表（lib/quota-plugin-registry.ts
 // 的 map）。登记的副作用集中在 hub（lib/quota-plugins.ts）：以前靠各家插件文件
 // 反向 import 额度端点函数被顺带加载，那函数退场后没人拉它了 —— 不在这里引
@@ -27,7 +26,7 @@ import { quotaPluginForBaseUrl } from "../quota-plugin-registry.ts";
 import "../quota-plugins.ts";
 import { fromUpstreamStatus } from "../provider-kinds.ts";
 import { openPlatformPlan } from "./shared.ts";
-import { outOfCreditsOf, quotaViewsOf, recoverAtOf } from "../quota-state.ts";
+import { outOfCreditsOf, quotaPluginIdOf, quotaViewsOf, recoverAtOf } from "../quota-state.ts";
 import { registerCompatiblePlatform } from "../router/compatible-platform.ts";
 import { catalogModelsFromRow, type CatalogModel } from "../catalog-models.ts";
 import type { ProviderRow } from "../providers.ts";
@@ -61,17 +60,6 @@ function openPlatformStatus(provider: ProviderRow): Record<string, unknown> {
     warning: false,
     detail: key ? "有推理用的 API key" : "账号上没有推理用的 API key",
   };
-}
-
-/**
- * 这个平台的额度插件 id。
- *
- * 插件按平台行的地址认（插件声明它服务哪些地址）：对不上任何插件就是空串 ——
- * 那是「这个平台没有额度接口」，不是错误，也不是「没配好」。网关照样服务。
- */
-function quotaPluginIdOf(provider: ProviderRow): string {
-  const row = openPlatformOf(provider.platform);
-  return row ? (quotaPluginForBaseUrl(row.baseUrl)?.id ?? "") : "";
 }
 
 export const openaiKind = registerCompatiblePlatform({

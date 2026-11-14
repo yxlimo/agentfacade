@@ -12,7 +12,7 @@ import { providerSecretId } from "../credential-ids.ts";
 import { deadSession } from "../session.ts";
 import { listSecrets } from "../store.ts";
 import { openPlatformOf } from "../open-platforms.ts";
-import { quotaPluginForBaseUrl } from "../quota-plugin-registry.ts";
+import { quotaPluginOfAccount } from "../quota-state.ts";
 import { pluginFieldOf, writePluginField } from "../quota-plugin-credentials.ts";
 import { openPlatformKeyOf, writeOpenPlatformKey } from "../open-platform-credentials.ts";
 
@@ -212,8 +212,7 @@ export function keyPlan(options: {
  * 插件那几段只用来问额度，不是推理凭据：能拿去推理的只有那把 key。
  */
 export function openPlatformPlan(): CredentialPlan {
-  const pluginOf = (account: CredentialOwner) =>
-    quotaPluginForBaseUrl(openPlatformOf(account.platform)?.baseUrl ?? "");
+  const pluginOf = (account: CredentialOwner) => quotaPluginOfAccount(account);
   const fieldsOf = (account: CredentialOwner) => pluginOf(account)?.fields ?? [];
   const keyId = (owner: CredentialOwner) => providerSecretId(owner.id, "key");
   /** 种类自己定死的那一格：推理用的 key。只有这一份声明。 */

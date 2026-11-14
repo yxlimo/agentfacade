@@ -15,7 +15,7 @@
 import { accountRecoveryAtMs } from "./admin/platform-state.ts";
 import { listCooldowns } from "./cooldown.ts";
 import { openPlatformOf } from "./open-platforms.ts";
-import { quotaPluginForBaseUrl } from "./quota-plugin-registry.ts";
+import { quotaPluginForBaseUrl, type QuotaPlugin } from "./quota-plugin-registry.ts";
 import type { HealthSnapshot, QuotaView } from "./provider-kinds.ts";
 import type { ProviderRow } from "./providers.ts";
 import type { QuotaProbe } from "./quota-plugins.ts";
@@ -28,8 +28,12 @@ import type { QuotaProbe } from "./quota-plugins.ts";
  * 与读结论的一头都走这里，两边才不会有两份判断。
  */
 export function quotaPluginIdOf(provider: Pick<ProviderRow, "platform">): string {
-  const row = openPlatformOf(provider.platform);
-  return row ? (quotaPluginForBaseUrl(row.baseUrl)?.id ?? "") : "";
+  return quotaPluginOfAccount(provider)?.id ?? "";
+}
+
+/** 这个账号所在平台的额度插件；对不上任何一家就是 null（没有额度接口）。 */
+export function quotaPluginOfAccount(provider: Pick<ProviderRow, "platform">): QuotaPlugin | null {
+  return quotaPluginForBaseUrl(openPlatformOf(provider.platform)?.baseUrl ?? "");
 }
 
 /** 一次探测的结论。 */

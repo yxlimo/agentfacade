@@ -6,8 +6,6 @@
 //
 // 所以接一个平台的成本应该是一段声明，而不是五个文件。
 
-import type Koa from "koa";
-import type { Json } from "../json.ts";
 import { provider as providerRow, type ProviderRow } from "../providers.ts";
 import {
   fromUpstreamStatus,
@@ -19,10 +17,8 @@ import {
   type QuotaView,
 } from "../provider-kinds.ts";
 import type { CatalogModel } from "../catalog-models.ts";
-import type { Dialect } from "./deliver.ts";
-import type { Route } from "./routes.ts";
 import { openAiPlatformChat } from "./openai-platform.ts";
-import { toOpenAiPlatform, type UpstreamContext } from "./upstreams/index.ts";
+import { toOpenAiPlatform } from "./upstreams/index.ts";
 
 /** 一个「OpenAI 方言、key 鉴权、原样透传」的平台。 */
 export interface CompatiblePlatform {
@@ -56,13 +52,6 @@ export interface CompatiblePlatform {
    * 插件自己那台（门户、控制台、钱包）；用户把行指到别处时，跟着行走。
    */
   defaultBaseUrl?: string;
-  /**
-   * 这一类平台默认用哪个额度插件（不给就是没有额度接口）。
-   *
-   * 登记时一次成形：面板建平台时拿它预填那一格（用户可以改），平台行上填的是
-   * 用户最后选的那个。
-   */
-  defaultQuotaPlugin?: string;
   /** 支持的生效策略。默认 ["single", "fallback"]。 */
   policies?: ProviderKind["policies"];
   /** 推理端点的基础地址（`/chat/completions` 由工厂接上）。 */
@@ -117,7 +106,6 @@ export function registerCompatiblePlatform(platform: CompatiblePlatform): Provid
     openPlatform: true,
     policies: platform.policies ?? ["single", "fallback"],
     ...(platform.defaultBaseUrl ? { defaultBaseUrl: platform.defaultBaseUrl } : {}),
-    ...(platform.defaultQuotaPlugin ? { defaultQuotaPlugin: platform.defaultQuotaPlugin } : {}),
     baseUrl: platform.baseUrl,
     inferWith: platform.inferWith,
     // 明文 key 也登记到注册表上：转发层与「问上游要模型目录」要的是同一把，
@@ -182,13 +170,3 @@ function rowOf(accountId: string, kind: string, platform: string): ProviderRow {
 function missingCredential(): CredentialView {
   return fromUpstreamStatus({ status: "missing" }, "api_key");
 }
-
-/** 一次转发。`ProviderKind.dispatch` 的形状。 */
-export type KindDispatch = (
-  ctx: UpstreamContext,
-  body: Json,
-  route: Route,
-  dialect: Dialect,
-  stream: boolean,
-  out: Koa.Context,
-) => Promise<void>;

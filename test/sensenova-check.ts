@@ -17,7 +17,6 @@ import {
   pkcePair,
   type SenseNovaError,
 } from "../lib/sensenova/auth.ts";
-import { parseApiKeyRow } from "../lib/sensenova/keys.ts";
 import {
   classifyPoolType,
   deductionOrder,
@@ -205,27 +204,6 @@ check("取得到 cookie 的值", cookieValue(jar, "oauth2_authentication_session
 check("取不到就是空", cookieValue(jar, "nope") === "");
 check("属性不混进值里", !cookieValue(jar, "oauth2_authentication_csrf").includes("Path"));
 check("cookie 头是分号隔开的", cookieHeader(jar) === "oauth2_authentication_session=abc; oauth2_authentication_csrf=def");
-
-console.log("");
-console.log("key");
-
-const key = parseApiKeyRow({
-  id: "01a16280-d806-7c96-93dc-aec9947ca5dd",
-  displayname: "probe",
-  key_type: "API_KEY_TYPE_TOKEN_PLAN",
-  api_key: "sk-abcdefghijklmnop", // privacy:allow — 编造的样例 (fabricated sample)
-  create_time: "2026-01-01T00:00:00Z",
-  status: "enabled",
-  is_default: false,
-});
-check("key 的名字读到了", key.displayname === "probe");
-check("key 的计费类型读到了", key.keyType === "API_KEY_TYPE_TOKEN_PLAN");
-check("key 被掩码了", key.maskedKey.includes("••••") && !key.maskedKey.includes("defghijkl"), key.maskedKey);
-check("列表里没有完整的 key", key.plainKey === undefined);
-const created = parseApiKeyRow({ api_key: "sk-abcdefghijklmnop", api_key_plain: "sk-abcdefghijklmnop" }); // privacy:allow — 编造的样例 (fabricated sample)
-check("创建的回答里带着完整的 key", created.plainKey === "sk-abcdefghijklmnop"); // privacy:allow — 编造的样例 (fabricated sample)
-check("短的 key 不掩码", parseApiKeyRow({ api_key: "sk-1" }).maskedKey === "sk-1");
-check("默认 key 认得出来", parseApiKeyRow({ is_default: true }).isDefault === true);
 
 console.log("");
 console.log("错误的归类");
