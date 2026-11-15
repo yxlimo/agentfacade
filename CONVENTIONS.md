@@ -51,20 +51,21 @@ the rule is different in exactly one way: **commit there, in that branch.** Do n
 Your work has to survive being killed — a timeout, an upstream error, a closed terminal. The
 only thing that survives is what is committed, so:
 
-0. **First find out whether you can commit at all.** Under the scope sandbox the worktree's
-   git metadata (`.git/worktrees/<id>/index.lock`) is usually read-only, so `git add` and
-   `git commit` fail with `Permission denied`, and `git switch -c` fails on
-   `refs/heads/*.lock`. A managed worktree is also deleted when your run ends, taking every
-   uncommitted file with it — that has destroyed real work here three times.
+0. **Dependencies are already installed.** The worktree setup hook (`/.pi/worktree-setup.sh`)
+   runs `pnpm install` before you start, so `node_modules` is a real directory, not a symlink
+   into the main checkout. Do not install anything yourself.
 
-   So: try one commit early, on a trivial change. If it fails, **stop treating the worktree
-   as storage** — keep editing, and put the complete file list in your report so the main
-   agent can copy the files out of the worktree directory while it still exists. Say plainly
-   in the report that nothing was committed.
+0b. **You do not need to create a branch.** The worktree already sits on its own branch. Commit
+   there directly; do not `git switch -c` (the sandbox cannot write `refs/heads/*.lock`).
 
-1. **Write your task log before you touch code, and branch if you can.**
+0c. **A dirty worktree is what keeps it alive.** A managed worktree is only deleted when you
+   left nothing behind (`git status` empty). Writing your task log counts as a change, so the
+   first thing you do — before code — is create `.pi/worklogs/<task-name>.md` and commit it.
+   From then on the tree survives even if your run is killed.
+
+1. **Write your task log first, then work.**
    ```sh
-   git switch -c wt/<task-name>            # only if the sandbox allows it
+   mkdir -p .pi/worklogs && $EDITOR .pi/worklogs/<task-name>.md   # then: git add -A && git commit
    ```
    The log is `.pi/worklogs/<task-name>.md` (tracked; `docs/` is not). It is not a summary you
    write at the end — it is the running state of the task.
@@ -124,16 +125,18 @@ Rules that came out of those failures:
 
 - **Write scope entries as plain directories**, not `dir/**` — the glob form has been
   mis-parsed (a file under `lib/router/**` was reported as `"lib" not in scope`).
-- **A child cannot create branches or commit in a worktree** (read-only git metadata). Either
-  dispatch into the shared tree and commit yourself, or read the files out of the worktree
-  before the run ends.
+- **A worktree's dependencies are installed for you.** `.pi/worktree-setup.sh` runs
+  `pnpm install` before the child starts, so the child never runs `pnpm install` itself; it
+  only needs `mise run …` in `bash.read` / `bash.write`.
+- **A worktree keeps itself alive while it is dirty.** The child creates
+  `.pi/worklogs/<task>.md` first and commits it, then the tree survives a kill. Nobody needs
+  `git switch -c`: the worktree already sits on its own branch.
 - **`maxDenies: 0` unless you want the run to die.** The default latch (3) stops the whole
   run on repeated denials — including the tools the child still needs for its report.
 - `mise.toml` belongs in scope whenever the task adds a test: the new file has to be wired
   into a task, and `mise run test` enumerates files rather than globbing.
-- The child runs in a sandbox that cannot bind `127.0.0.1` and cannot write the pnpm store,
-  so `mise run check:*` and harness tests will fail there. Let it write, and run the gate
-  yourself.
+- The child runs in a sandbox that cannot bind `127.0.0.1`, so harness tests
+  (`test:catalog-parity` and friends) fail there. Let it write, and run those gates yourself.
 
 ## Never reach into someone else's files
 
