@@ -51,9 +51,20 @@ the rule is different in exactly one way: **commit there, in that branch.** Do n
 Your work has to survive being killed — a timeout, an upstream error, a closed terminal. The
 only thing that survives is what is committed, so:
 
-1. **Start a branch and write your task log before you touch code.**
+0. **First find out whether you can commit at all.** Under the scope sandbox the worktree's
+   git metadata (`.git/worktrees/<id>/index.lock`) is usually read-only, so `git add` and
+   `git commit` fail with `Permission denied`, and `git switch -c` fails on
+   `refs/heads/*.lock`. A managed worktree is also deleted when your run ends, taking every
+   uncommitted file with it — that has destroyed real work here three times.
+
+   So: try one commit early, on a trivial change. If it fails, **stop treating the worktree
+   as storage** — keep editing, and put the complete file list in your report so the main
+   agent can copy the files out of the worktree directory while it still exists. Say plainly
+   in the report that nothing was committed.
+
+1. **Write your task log before you touch code, and branch if you can.**
    ```sh
-   git switch -c wt/<task-name>            # the worktree starts on whatever HEAD was
+   git switch -c wt/<task-name>            # only if the sandbox allows it
    ```
    The log is `.pi/worklogs/<task-name>.md` (tracked; `docs/` is not). It is not a summary you
    write at the end — it is the running state of the task.
@@ -85,6 +96,44 @@ So the work can be recovered without you:
 The main agent cherry-picks your commits into `main`. Work that exists only in a worktree
 directory — or only in a worktree the harness has already deleted — is work that was thrown
 away; that has happened here before.
+
+## Delegation bindings (the main agent writes these, the child lives inside them)
+
+A child's scope and bash allowlist are fixed when it launches — they cannot be widened
+afterwards, and a child that hits the wall has to be replaced, not patched. So the main agent
+copies a template instead of writing one from memory; three tickets tonight failed on
+remembered bindings (no `scope`, `lib/router/**` mis-parsed, `git switch` missing):
+
+```js
+options: {
+  timeoutMs: 3_600_000,
+  extensionBindings: {
+    "pi-subagent-extend/1": {
+      scope: ["lib", "test", "router-proxy.ts", "mise.toml", ".pi/worklogs"],
+      maxDenies: 0,                     // the latch turns a mistake into a dead run
+      bash: {
+        read: ["git status", "git diff", "git log", "git show", "mise run typecheck"],
+        write: ["git add", "git commit", "mise run test"],
+      },
+    },
+  },
+}
+```
+
+Rules that came out of those failures:
+
+- **Write scope entries as plain directories**, not `dir/**` — the glob form has been
+  mis-parsed (a file under `lib/router/**` was reported as `"lib" not in scope`).
+- **A child cannot create branches or commit in a worktree** (read-only git metadata). Either
+  dispatch into the shared tree and commit yourself, or read the files out of the worktree
+  before the run ends.
+- **`maxDenies: 0` unless you want the run to die.** The default latch (3) stops the whole
+  run on repeated denials — including the tools the child still needs for its report.
+- `mise.toml` belongs in scope whenever the task adds a test: the new file has to be wired
+  into a task, and `mise run test` enumerates files rather than globbing.
+- The child runs in a sandbox that cannot bind `127.0.0.1` and cannot write the pnpm store,
+  so `mise run check:*` and harness tests will fail there. Let it write, and run the gate
+  yourself.
 
 ## Never reach into someone else's files
 
