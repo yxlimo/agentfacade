@@ -16,6 +16,12 @@ import { parseLooseJson, readOpenAIChunks, readOrAbort, readSseEvents, sseData, 
 import { businessCodeOfPayload, isBusinessErrorEnvelope, withBusinessCode } from "../upstream-status.ts";
 import { scrubForClient, scrubForLog } from "../log-scrub.ts";
 import { configNumber, markHotSetting } from "../config.ts";
+import {
+  STREAM_FIRST_FRAME_DEFAULT_MS,
+  STREAM_IDLE_DEFAULT_MS,
+  clampStreamLimit,
+  streamLimitWasCapped,
+} from "./stream-limits.ts";
 
 export type Dialect = "anthropic" | "openai";
 
@@ -473,8 +479,11 @@ async function drainText(reader: ReadableStreamDefaultReader<Uint8Array>, head: 
  * 导出给测试用：默认值调错（比如忘了改回来）比没有还糟。
  *
  * 这是设置 ROUTER_FIRST_FRAME_MS 的默认值，读在 idleGates 里。
+ *
+ * 默认值住在 lib/router/stream-limits.ts（那里还有上限，面板与下层超时都读
+ * 同一份）；这里重新导出，是为了让原来从这里导入的人不用改。
  */
-export const STREAM_FIRST_FRAME_DEFAULT_MS = 300_000;
+export { STREAM_FIRST_FRAME_DEFAULT_MS };
 
 /**
  * 流中途两帧之间安静多久算「它不会再说话了」（毫秒）的默认值。
@@ -485,7 +494,7 @@ export const STREAM_FIRST_FRAME_DEFAULT_MS = 300_000;
  *
  * 这是设置 ROUTER_STREAM_IDLE_MS 的默认值，读在 idleGates 里。
  */
-export const STREAM_IDLE_DEFAULT_MS = 180_000;
+export { STREAM_IDLE_DEFAULT_MS };
 
 // Hot: both limits are read again at the start of every answer (see
 // idleGates), so a change made in the panel applies to the next request with
@@ -516,8 +525,19 @@ function idleGates(limits: { firstFrameMs?: number; idleMs?: number }): { firstF
   // panel change landing mid-stream must not move a deadline that is already
   // being counted. Reading here is also what makes them hot — the next request
   // picks the new value up
-  const firstFrameMs = limits.firstFrameMs ?? configNumber("ROUTER_FIRST_FRAME_MS", STREAM_FIRST_FRAME_DEFAULT_MS);
-  const idleMs = limits.idleMs ?? configNumber("ROUTER_STREAM_IDLE_MS", STREAM_IDLE_DEFAULT_MS);
+  const rawFirstFrameMs = limits.firstFrameMs ?? configNumber("ROUTER_FIRST_FRAME_MS", STREAM_FIRST_FRAME_DEFAULT_MS);
+  const rawIdleMs = limits.idleMs ?? configNumber("ROUTER_STREAM_IDLE_MS", STREAM_IDLE_DEFAULT_MS);
+  // 夹到上限：闸门不能比下层的超时更严，否则掐断的是下层，客户端看到的是
+  // Node 那句 `terminated`，我们的配置与文案全成了摆设。被夹了要说出来 ——
+  // 悄悄改掉别人填的数，比不改更坏。
+  const firstFrameMs = clampStreamLimit(rawFirstFrameMs);
+  const idleMs = clampStreamLimit(rawIdleMs);
+  if (streamLimitWasCapped(rawFirstFrameMs)) {
+    console.warn(`[DELIVER] 首帧上限 ${rawFirstFrameMs} 超过上限，已按 ${firstFrameMs} 生效`);
+  }
+  if (streamLimitWasCapped(rawIdleMs)) {
+    console.warn(`[DELIVER] 空闲上限 ${rawIdleMs} 超过上限，已按 ${idleMs} 生效`);
+  }
   if (!(firstFrameMs > 0)) console.warn(`[DELIVER] 首帧上限被设成 ${firstFrameMs}，等第一帧不再有超时`);
   if (!(idleMs > 0)) console.warn(`[DELIVER] 空闲上限被设成 ${idleMs}，流中途不再有超时`);
   return { firstFrameMs, idleMs };

@@ -31,11 +31,22 @@ import { app } from "./lib/router/app.ts";
 import { modelsOfPlatform } from "./lib/router/catalog-routes.ts";
 import { startUpstreams } from "./lib/router/bootstrap.ts";
 import { assertLoginFlows } from "./lib/login-flow.ts";
+import { installFetchDispatcher } from "./lib/fetch-dispatcher.ts";
 
 const PORT = configNumber("ROUTER_PORT", 6450);
 const HOST = configString("ROUTER_HOST", "0.0.0.0");
 
 const PING_MS = configNumber("MINIMAX_PING_MS", 15000);
+
+// The layer below our own stream gates. It has to be looser than they are,
+// otherwise it ends a quiet upstream first and the client sees Node's
+// `terminated` instead of our sentence. The timeouts are derived from the
+// same ceiling the gates use (lib/router/stream-limits.ts).
+//
+// One call, here, before anything can make a request: the dispatcher is
+// global, and installing it twice would leave two agents fighting over the
+// same connections.
+installFetchDispatcher();
 
 // `node router-proxy.ts --clear <id>` forgets one credential, so that the next
 // start logs in again. It runs before anything else, so it touches nothing but

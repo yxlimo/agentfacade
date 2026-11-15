@@ -22,6 +22,13 @@ import {
   type Setting,
 } from "../config.ts";
 import { parseBool, readEnvValue } from "../env.ts";
+import {
+  STREAM_FIRST_FRAME_DEFAULT_MS,
+  STREAM_IDLE_DEFAULT_MS,
+  STREAM_LIMIT_MAX_MS,
+  clampStreamLimit,
+  streamLimitWasCapped,
+} from "../router/stream-limits.ts";
 import { listConfig } from "../store.ts";
 import { pruneUsage } from "../usage.ts";
 
@@ -46,12 +53,12 @@ configString("ADMIN_CORS_ORIGINS", "");
 // 所以面板改完不用重启。这里显式问一次，是为了让一个还没发过任何请求的进程
 // （面板、config-cli）也知道这三个设置存在 —— 没问过的设置不在快照里。
 //
-// 默认值必须与路由里那份一致：lib/router/deliver.ts 的 STREAM_FIRST_FRAME_DEFAULT_MS
-// 与 STREAM_IDLE_DEFAULT_MS、lib/router/upstreams/policy.ts 的
+// 默认值必须与路由里那份一致：lib/router/stream-limits.ts 的
+// STREAM_FIRST_FRAME_DEFAULT_MS 与 STREAM_IDLE_DEFAULT_MS、lib/router/upstreams/policy.ts 的
 // ATTEMPT_BUDGET_DEFAULT_MS。第一个问的人定的默认值就是生效的那个，所以两边
 // 一旦飘了，改的是默认值本身；test/admin-config-check.ts 盯着这一致性。
-configNumber("ROUTER_FIRST_FRAME_MS", 300_000);
-configNumber("ROUTER_STREAM_IDLE_MS", 180_000);
+configNumber("ROUTER_FIRST_FRAME_MS", STREAM_FIRST_FRAME_DEFAULT_MS);
+configNumber("ROUTER_STREAM_IDLE_MS", STREAM_IDLE_DEFAULT_MS);
 configNumber("ROUTER_RETRY_BUDGET_MS", 180_000);
 
 // 剩下这几个是「读一次就定在常量里」的（lib/periodic.ts 的定时器、
@@ -110,8 +117,8 @@ const DESCRIPTIONS: Record<string, string> = {
   ADMIN_CORS_ORIGINS: "允许跨域访问管理接口的来源，逗号分隔。空表示不允许（面板和网关同源）",
   REQUIRE_API_KEY: "开启后，调用网关的 agent 必须带 API KEY；关闭则任何请求都放行",
   USAGE_RETENTION_DAYS: "用量记录保留多少天",
-  ROUTER_FIRST_FRAME_MS: "等上游第一个字最多多久（毫秒）。调小会砍掉正常的慢答复",
-  ROUTER_STREAM_IDLE_MS: "流开始后停顿多久算断（毫秒）。调小会砍掉正在思考的答复",
+  ROUTER_FIRST_FRAME_MS: `等上游第一个字最多多久（毫秒）。调小会砍掉正常的慢答复。上限 ${STREAM_LIMIT_MAX_MS}：再大就由下层超时先掐断，闸门形同虚设`,
+  ROUTER_STREAM_IDLE_MS: `流开始后停顿多久算断（毫秒）。调小会砍掉正在思考的答复。上限 ${STREAM_LIMIT_MAX_MS}：再大就由下层超时先掐断，闸门形同虚设`,
   ROUTER_RETRY_BUDGET_MS: "一次请求的重试总时限（毫秒）。调小会让上游抽一下就直接报错",
   PERIODIC_ENABLED: "后台定时任务总开关。关闭后不换令牌、不签到、不扫余额",
   HEALTH_CACHE_MS: "额度与状态快照多久刷新一次（毫秒）",
@@ -143,6 +150,11 @@ const LABELS: Record<string, string> = {
   QODER_SKIP_QUEUE_WAIT: "排队时不等待",
   UPSTREAM_BREAKER_ENABLED: "上游级熔断",
 };
+
+/** 这两个键是流的两道闸，它们的取值受同一个上限约束。 */
+function isStreamLimitKey(key: string): boolean {
+  return key === "ROUTER_FIRST_FRAME_MS" || key === "ROUTER_STREAM_IDLE_MS";
+}
 
 /** 值的结尾像密钥的，就不给人看。 */
 const SECRET_SUFFIXES = ["_KEY", "_PASSWORD", "_SECRET", "_TOKEN"];
@@ -225,10 +237,21 @@ export function configItems(): ConfigItemView[] {
     // 「有没有值」单独用 hasValue 说。
     const hasValue = override !== undefined ? override.length > 0 : raw.length > 0;
     const description = DESCRIPTIONS[setting.key] ?? "";
+    // 闸门受上限约束：面板上显示的是**实际生效**的那个数，不是写进去的那个。
+    // 悄悄改掉别人填的数不行，所以显示的是夹后的值，同时打一行 warn。
+    let shown = secret ? "" : effectiveValue(setting, raw);
+    if (isStreamLimitKey(setting.key)) {
+      const n = Number(raw);
+      if (Number.isFinite(n) && streamLimitWasCapped(n)) {
+        const capped = clampStreamLimit(n);
+        console.warn(`[CONFIG] ${setting.key} 现在是 ${n}，超过上限，已按 ${capped} 生效`);
+        shown = String(capped);
+      }
+    }
     return {
       key: setting.key,
       label: labelOf(setting.key, description),
-      value: secret ? "" : effectiveValue(setting, raw),
+      value: shown,
       source,
       fallback: String(setting.fallback),
       group: setting.group,
@@ -285,7 +308,17 @@ export function setConfigValue(key: string, value: string, clear = false): { ok:
     reloadConfig();
     return { ok: true, message: `已清除 ${key} 的覆盖值` };
   }
-  configOverride(key, value);
+  // 闸门有上限：填的比上限大的话，按上限收下，并把这件事说出来（不静默改数）。
+  let stored = value;
+  let cappedNote = "";
+  if (isStreamLimitKey(key)) {
+    const n = Number(value);
+    if (Number.isFinite(n) && streamLimitWasCapped(n)) {
+      stored = String(clampStreamLimit(n));
+      cappedNote = `上限 ${STREAM_LIMIT_MAX_MS}，填的值已按上限收下（填 ${value}，存 ${stored}）`;
+    }
+  }
+  configOverride(key, stored);
   // 改完就重新读一遍：面板能改的那些是热的，下一个请求就是新的值。
   reloadConfig();
   // 环境变量钉着的设置：面板写的这份在库里等着，但生效的还是环境变量那个。
@@ -293,7 +326,9 @@ export function setConfigValue(key: string, value: string, clear = false): { ok:
   if (readEnvValue(key) !== null) {
     return {
       ok: true,
-      message: `已保存 ${key}，但这个设置被环境变量固定，当前生效的仍是环境变量的值；环境变量撤销后才会使用这一份。`,
+      message: `已保存 ${key}，但这个设置被环境变量固定，当前生效的仍是环境变量的值；环境变量撤销后才会使用这一份。${
+        cappedNote ? `（${cappedNote}）` : ""
+      }`,
     };
   }
   // 保留天数改了：按新的天数清一遍，不用等下一个小时。
@@ -302,7 +337,7 @@ export function setConfigValue(key: string, value: string, clear = false): { ok:
     const dropped = pruneUsage(days);
     if (dropped > 0) console.log(`  [USAGE] 丢掉了 ${dropped} 条超过 ${days} 天的用量记录`);
   }
-  return { ok: true, message: `已保存 ${key}` };
+  return { ok: true, message: cappedNote ? `已保存 ${key}：${cappedNote}` : `已保存 ${key}` };
 }
 
 /**
