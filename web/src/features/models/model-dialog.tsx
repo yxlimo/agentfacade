@@ -31,6 +31,7 @@ import { DragSortList } from '@/components/drag-sort-list'
 import { ModelPicker } from '@/features/models/model-picker'
 import { GroupPicker } from '@/features/models/group-picker'
 import { intFieldProblem } from '@/lib/int-field'
+import { newUid } from '@/lib/uid'
 import { cn } from '@/lib/utils'
 
 /**
@@ -73,7 +74,7 @@ function emptyTarget() {
   return {
     groupName: '',
     upstreamModel: '',
-    uid: crypto.randomUUID(),
+    uid: newUid(),
   }
 }
 
@@ -167,7 +168,7 @@ export function toDraft(model: PublishedModel | undefined): ModelDraft {
     targets: model.targets.map((target) => ({
       groupName: target.groupName,
       upstreamModel: target.upstreamModel,
-      uid: crypto.randomUUID(),
+      uid: newUid(),
     })),
   }
 }

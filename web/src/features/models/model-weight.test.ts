@@ -2,6 +2,7 @@ import { create } from '@bufbuild/protobuf'
 import { describe, expect, it } from 'vitest'
 import { PublishedModelSchema } from '@/gen/buddy/admin/v1/admin_pb'
 import { fromDraft, targetWeight, toDraft } from '@/features/models/model-dialog'
+import { newUid } from '@/lib/uid'
 
 /**
  * 顺序即权重。
@@ -26,8 +27,8 @@ describe('顺序与权重', () => {
       })
     )
     draft.targets = [
-      { groupName: 'minimax', upstreamModel: 'MiniMax-M2', uid: crypto.randomUUID() },
-      { groupName: 'qoder-cn', upstreamModel: 'claude-sonnet-4', uid: crypto.randomUUID() },
+      { groupName: 'minimax', upstreamModel: 'MiniMax-M2', uid: newUid() },
+      { groupName: 'qoder-cn', upstreamModel: 'claude-sonnet-4', uid: newUid() },
     ]
 
     const model = fromDraft(draft)
@@ -41,7 +42,7 @@ describe('顺序与权重', () => {
         strategy: 'single',
       })
     )
-    draft.targets = [{ groupName: 'minimax', upstreamModel: 'MiniMax-M2', uid: crypto.randomUUID() }]
+    draft.targets = [{ groupName: 'minimax', upstreamModel: 'MiniMax-M2', uid: newUid() }]
 
     const model = fromDraft(draft)
     expect(model.strategy).toBe('single')

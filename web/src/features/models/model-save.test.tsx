@@ -15,6 +15,7 @@ import {
 } from '@/gen/buddy/admin/v1/admin_pb'
 import { PublishedModelsPage } from '@/features/models/index'
 import { ModelDialog, fromDraft, toDraft } from '@/features/models/model-dialog'
+import { newUid } from '@/lib/uid'
 import { mockAdminClient } from '@/test/mock-transport'
 import { renderWithClient } from '@/test/render'
 
@@ -219,8 +220,8 @@ describe('元数据的继承', () => {
   it('没填全的目标不会发出去', () => {
     const draft = toDraft(undefined)
     draft.targets = [
-      { groupName: 'qoder', upstreamModel: '', uid: crypto.randomUUID() },
-      { groupName: '', upstreamModel: 'claude', uid: crypto.randomUUID() },
+      { groupName: 'qoder', upstreamModel: '', uid: newUid() },
+      { groupName: '', upstreamModel: 'claude', uid: newUid() },
     ]
     expect(fromDraft(draft).targets).toHaveLength(0)
   })
