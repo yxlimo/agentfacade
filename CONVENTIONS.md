@@ -110,16 +110,42 @@ options: {
   timeoutMs: 3_600_000,
   extensionBindings: {
     "pi-subagent-extend/1": {
-      scope: ["lib", "test", "router-proxy.ts", "mise.toml", ".pi/worklogs"],
+      scope: [
+        ...,                              // ← 本任务要改的那几个目录（纯目录，不写 dir/**）
+        ".pi/worklogs",                   // 任务日志是交付物，永远是它写的
+        "mise.toml",                      // 加测试要接线：mise run test 逐条列文件，不 glob
+        "package.json", "pnpm-lock.yaml", // 动依赖就要
+      ],
       maxDenies: 0,                     // the latch turns a mistake into a dead run
       bash: {
         read: ["git status", "git diff", "git log", "git show", "mise run typecheck"],
         write: ["git add", "git commit", "mise run test"],
+        writable: true,                  // 没有它，web/.gen、生成物目录写不进去
+        writablePaths: [
+          "~/.pi/worktrees",             // 工作树自己
+          "<仓库根>/.git",               // worktree 提交要写主仓的 objects 与 index.lock
+        ],
       },
     },
   },
 }
 ```
+
+**任务正文里出现的每个路径，都必须在这两处之一。** 派单前对着任务正文数一遍：
+提到的文件 → `scope`；要跑的命令 → `bash.read`/`write`，**而且它要写的目录 → `writablePaths`**。
+今晚四次失败全是这一条没做：漏 `scope`、写 `lib/router/**`、漏 `git switch`、
+漏 `pnpm-lock.yaml`。
+
+### 审核类 agent 没有写工具
+
+`be-review` / `fe-review` / `pr-review` / `privacy-review` 的 agent 定义里 `tools` 是
+`read, grep, find, ls, bash` —— **没有 `write`/`edit`**。所以：
+
+- 不要让它们「把报告写进 `.pi/reviews/`」。它们做不到，会反复试然后被判原地打转。
+- 它们的完整报告由运行时自动落盘到 `…/subagent-artifacts/<run>-<agent>_output.md`，
+  大报告（实测 20 KB）也能完整保存；截断只发生在「单次回复超出模型输出上限」时。
+- 所以大范围审核要**拆小**（一次一个子系统），或者明确要求「每节给结论，篇幅控制」。
+  想要逐段落盘，只能先给审核 agent 加 `write` 工具——那是改角色定义，得单独决定。
 
 Rules that came out of those failures:
 
