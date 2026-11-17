@@ -112,6 +112,28 @@ check(
   `${STREAM_FIRST_FRAME_DEFAULT_MS} / ${STREAM_IDLE_DEFAULT_MS}`,
 );
 
+section("夹取：非有限值各归其位");
+
+check(
+  "Infinity 夹到上限",
+  clampStreamLimit(Infinity) === STREAM_LIMIT_MAX_MS,
+  String(clampStreamLimit(Infinity)),
+);
+check(
+  "-Infinity 表示关闸（与 0 负数同义）",
+  clampStreamLimit(-Infinity) === -Infinity,
+  String(clampStreamLimit(-Infinity)),
+);
+check(
+  "NaN 原样交回调用方（不在夹取里自己发明默认值）",
+  Number.isNaN(clampStreamLimit(NaN)),
+  String(clampStreamLimit(NaN)),
+);
+check(
+  "守门：clampStreamLimit 对任何输入都不返回 Infinity（否则 setTimeout 变 1ms）",
+  ![Infinity, -Infinity, NaN, 900_000, 0, 180_000].some((v) => clampStreamLimit(v) === Infinity),
+);
+
 /* ------------------------------------------------------------------ *
  * 三、夹取判断
  * ------------------------------------------------------------------ */
@@ -131,6 +153,9 @@ for (const [input, want] of CAPPED) {
 
 check("上限本身不算被夹", streamLimitWasCapped(STREAM_LIMIT_MAX_MS) === false);
 check("上限之上算被夹", streamLimitWasCapped(STREAM_LIMIT_MAX_MS + 1) === true);
+check("Infinity 算被夹（它确实被夹到上限了）", streamLimitWasCapped(Infinity) === true);
+check("-Infinity 不算被夹（它表示关闸，不是被夹）", streamLimitWasCapped(-Infinity) === false);
+check("NaN 不算被夹（它原样交回，不是被夹）", streamLimitWasCapped(NaN) === false);
 
 /* ------------------------------------------------------------------ *
  * 结果

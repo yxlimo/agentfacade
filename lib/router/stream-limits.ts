@@ -52,9 +52,25 @@ export const STREAM_IDLE_DEFAULT_MS = 180_000;
  * which is a deliberate choice (the self-tests need it) and is warned about
  * wherever it is read. Anything above the ceiling is pulled down to it, so no
  * configuration can make the gate stricter than the layer below it.
+ *
+ * Non-finite values are decided here too, so none of them can slip through to
+ * a `setTimeout` (Node clamps an out-of-range delay to 1ms, which would cut a
+ * quiet stream almost immediately):
+ *
+ *   - `Infinity` is "too large", so it is clamped to the ceiling.
+ *   - `-Infinity` is "the gate is off", the same as 0 and negatives.
+ *   - `NaN` has no decidable meaning from this signature alone (it could be a
+ *     bug upstream of us), so it is returned as-is and the caller decides the
+ *     fallback. `idleGates` does that explicitly and warns.
  */
 export function clampStreamLimit(value: number): number {
-  if (!Number.isFinite(value)) return value;
+  // Infinity is the one non-finite value that is simply "too large": clamp it.
+  if (value === Infinity) return STREAM_LIMIT_MAX_MS;
+  // -Infinity means the gate is off, like 0 and negatives. Keep it.
+  if (value === -Infinity) return value;
+  // NaN has no decidable semantics here: hand it back to the caller, which
+  // knows which default to fall back to (see idleGates in deliver.ts).
+  if (Number.isNaN(value)) return value;
   // 0 or negative: the gate is off. Not a value to clamp.
   if (value <= 0) return value;
   return value > STREAM_LIMIT_MAX_MS ? STREAM_LIMIT_MAX_MS : value;
@@ -65,8 +81,9 @@ export function clampStreamLimit(value: number): number {
  *
  * The write path tells the operator when this is true ("your value was
  * accepted at the ceiling") instead of silently changing what they asked
- * for.
+ * for. `Infinity` counts as capped (it is clamped to the ceiling);
+ * `-Infinity` and `NaN` do not (they are kept / handed back, not clamped).
  */
 export function streamLimitWasCapped(value: number): boolean {
-  return Number.isFinite(value) && value > STREAM_LIMIT_MAX_MS;
+  return value === Infinity || (Number.isFinite(value) && value > STREAM_LIMIT_MAX_MS);
 }

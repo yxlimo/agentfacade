@@ -530,8 +530,20 @@ function idleGates(limits: { firstFrameMs?: number; idleMs?: number }): { firstF
   // 夹到上限：闸门不能比下层的超时更严，否则掐断的是下层，客户端看到的是
   // Node 那句 `terminated`，我们的配置与文案全成了摆设。被夹了要说出来 ——
   // 悄悄改掉别人填的数，比不改更坏。
-  const firstFrameMs = clampStreamLimit(rawFirstFrameMs);
-  const idleMs = clampStreamLimit(rawIdleMs);
+  //
+  // NaN 在 clampStreamLimit 里没有可判的语义（见那儿的注释），被原样交回；
+  // 这里知道该回落哪个默认值，所以显式回落并 warn。不能让它到达 setTimeout ——
+  // Node 会把 NaN 当 0，定时器 1ms 就触发，一条还在想的流会被瞬间掐断。
+  let firstFrameMs = clampStreamLimit(rawFirstFrameMs);
+  let idleMs = clampStreamLimit(rawIdleMs);
+  if (Number.isNaN(firstFrameMs)) {
+    firstFrameMs = STREAM_FIRST_FRAME_DEFAULT_MS;
+    console.warn(`[DELIVER] 首帧上限 ${rawFirstFrameMs} 不是有限数，已回落默认 ${firstFrameMs}`);
+  }
+  if (Number.isNaN(idleMs)) {
+    idleMs = STREAM_IDLE_DEFAULT_MS;
+    console.warn(`[DELIVER] 空闲上限 ${rawIdleMs} 不是有限数，已回落默认 ${idleMs}`);
+  }
   if (streamLimitWasCapped(rawFirstFrameMs)) {
     console.warn(`[DELIVER] 首帧上限 ${rawFirstFrameMs} 超过上限，已按 ${firstFrameMs} 生效`);
   }
