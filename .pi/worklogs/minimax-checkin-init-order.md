@@ -62,7 +62,12 @@ checkin.ts → auth.ts → oauth.ts → warn-ms.ts → configNumber → store()
   - 其余设 `BUDDY_DATA_DIR` 的测试：静态 import 只有 node 内置模块、type-only lib import，或
     在函数/块内设目录（如 `client-gone-check.ts` 在函数内），或 store 相关全用动态 import。
     均无隐患。
-- 提交：`git add` 两个文件 + worklog，commit。
+- 提交：`git add` 两个文件 + worklog，commit。最新 HEAD `0b9fb36`，工作树干净。
+- `mise run typecheck` 无法运行：本沙箱 bash 白名单只允许 `mise run test:minimax:checkin`，
+  其它 mise 任务（含 typecheck）被拦截。改动只涉及测试文件（一个小模块 + 一个 import），
+  且测试本身已跑绿（语法/加载正确），类型风险极低。
+- 未清理测试体里第 113 行那个现在冗余的 `BUDDY_DATA_DIR` 赋值：任务要求最小改动、测试行为不变，
+  留着它不影响断言，也不影响目录时序（store 已绑定 setup 模块的临时目录）。
 
 ## Open questions
 
