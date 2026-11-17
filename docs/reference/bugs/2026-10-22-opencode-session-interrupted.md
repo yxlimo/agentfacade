@@ -17,20 +17,16 @@ opencode.db 里每次中断都记着 idle 事件 outcome=failed：
 - Koa 3.2.1 handleRequest() 对每个请求初始化 res.statusCode = 404
   （node_modules/koa/lib/application.js:200）。
 - router 的流式路径（deliverAnthropicStream / deliverOpenAIStream / deliverOpenAIChunks，
-  lib/router/deliver.ts）走 takeOver(ctx)（ctx.respond = false）+ sseHead(ctx)，
-  而 sseHead 只 setHeader + flushHeaders()，从不设 ctx.status。
+  lib/router/deliver.ts）走 takeOver(ctx)（ctx.respond = false）+ sseHead(ctx)，而 sseHead 只 setHeader + flushHeaders()，从不设 ctx.status。
 - 头部在 flush 时刻就以 404 发出去了，随后 SSE 帧照常写入。客户端看到「404 + 完整流」，
   opencode 的 SDK 校验状态码直接抛错，turn 终止——错误体里还夹着正常的 message_start 流文本。
 
 最小复现（Koa 3.2.1 + respond=false + flushHeaders）：HTTP/1.1 404 + text/event-stream。
-curl 实测 NAS 上 /minimax/v1/messages 与 /tokenrhythm/v1/chat/completions 流式请求均为 404，
-SSE 内容完整正常。test/e2e.sh 的注释 "a good body under a wrong status is a failure that a
-body-only check misses" 正是防这个，但部署后没有跑过流式状态检查。
+curl 实测 NAS 上 /minimax/v1/messages 与 /tokenrhythm/v1/chat/completions 流式请求均为 404，SSE 内容完整正常。test/e2e.sh 的注释 "a good body under a wrong status is a failure that a body-only check misses" 正是防这个，但部署后没有跑过流式状态检查。
 
 ## 修复方向
 
-在 lib/router/deliver.ts 的 sseHead() 里补 ctx.status = 200（覆盖全部三个 deliver* 路径），
-部署后跑 test/e2e.sh 验证流式响应状态为 2xx。
+在 lib/router/deliver.ts 的 sseHead() 里补 ctx.status = 200（覆盖全部三个 deliver* 路径），部署后跑 test/e2e.sh 验证流式响应状态为 2xx。
 
 ## 该 session 更早的其他中断原因（opencode.log "Failed to drain Session"，10-13~10-21）
 

@@ -8,9 +8,7 @@
 
 **脚本本身够用，平台侧也够用；卡点在「脚本能干什么」和「怎么配」。**
 
-QuickJS 沙箱能表达「一次带自定义请求头的 GET + 解析 JSON 响应」，
-正好是查余额需要的形状。平台把余额放在了代理自己的 `/health` 里，
-所以脚本只要问代理就行。
+QuickJS 沙箱能表达「一次带自定义请求头的 GET + 解析 JSON 响应」，正好是查余额需要的形状。平台把余额放在了代理自己的 `/health` 里，所以脚本只要问代理就行。
 
 ## 沙箱能力矩阵
 
@@ -29,8 +27,7 @@ QuickJS 沙箱能表达「一次带自定义请求头的 GET + 解析 JSON 响�
 | 占位符 | `{{apiKey}}` `{{baseUrl}}` `{{accessToken}}` `{{userId}}` | `build_script_with_vars` 里纯字符串替换 |
 
 返回字段（`validate_single_usage` 逐个查类型）：
-`isValid`(bool) `invalidMessage`(str) `remaining`(num) `unit`(str) `total`(num) `used`(num)
-`planName`(str) `extra`(str)，全部可选，但**类型必须对**，否则整次查询判失败。
+`isValid`(bool) `invalidMessage`(str) `remaining`(num) `unit`(str) `total`(num) `used`(num) `planName`(str) `extra`(str)，全部可选，但**类型必须对**，否则整次查询判失败。
 
 ## URL 安全校验（最容易踩）
 
@@ -43,17 +40,13 @@ QuickJS 沙箱能表达「一次带自定义请求头的 GET + 解析 JSON 响�
 判定「自定义」的是 `template_type` 字段，即 UI 里模板下拉选的那一项，**不是**代码内容。
 所以即使把代码改成自己的，模板下拉仍得选「自定义」，否则同源校验会拦。
 
-凭据优先级（`resolve_script_credentials`）：脚本配置里显式填的 API Key / Base URL 优先，
-留空则回退供应商自身的凭据。自定义模板的 UI 不显示这两个输入框
-（`shouldShowCredentialsConfig` 只对 GENERAL / SUB2API / NEW_API 等显示），
-所以自定义模式下 `{{apiKey}}` = 供应商的 Key，`{{baseUrl}}` = 供应商端点。
+凭据优先级（`resolve_script_credentials`）：脚本配置里显式填的 API Key / Base URL 优先，留空则回退供应商自身的凭据。自定义模板的 UI 不显示这两个输入框（`shouldShowCredentialsConfig` 只对 GENERAL / SUB2API / NEW_API 等显示），所以自定义模式下 `{{apiKey}}` = 供应商的 Key，`{{baseUrl}}` = 供应商端点。
 
 ## 本项目的脚本
 
 文件：[docs/reference/token-rhythm/cc-switch/proxy-health.js](docs/reference/token-rhythm/cc-switch/proxy-health.js)。
 
-代理是多租户轮转的——一次请求挑一个上游账号消费——所以**一张 cc-switch 卡片对应的是账户池**，
-卡片上的余额取池子合计：
+代理是多租户轮转的——一次请求挑一个上游账号消费——所以**一张 cc-switch 卡片对应的是账户池**，卡片上的余额取池子合计：
 
 ```
 剩余 200.00 CNY
@@ -70,8 +63,7 @@ QuickJS 沙箱能表达「一次带自定义请求头的 GET + 解析 JSON 响�
 | 账号余额为 0 | **照算**（凭据还有效，只是没钱了） |
 | 所有账号都取不到余额 | `isValid: false` + 第一个错误原因 |
 
-`extra` 里的「先耗」是按代理的选账规则推的：有赠额的先用赠额，赠额里最先到期的先花
-（`lib/tokenrhythm/accounts.ts` 的 `pickTenant`），所以那个账户就是正在被消耗的。
+`extra` 里的「先耗」是按代理的选账规则推的：有赠额的先用赠额，赠额里最先到期的先花（`lib/tokenrhythm/accounts.ts` 的 `pickTenant`），所以那个账户就是正在被消耗的。
 
 想只看某一个账号：把脚本里的 `TENANT_INDEX` 改成 1 / 2 / 3（`null` = 池子合计）。
 
@@ -88,10 +80,7 @@ QuickJS 沙箱能表达「一次带自定义请求头的 GET + 解析 JSON 响�
 
 ### 1. 用量脚本不绕全局代理
 
-`usage_script.rs` 用的是 `crate::proxy::http_client::get()`（全局客户端），
-而 app 其他地方（`services/speedtest.rs`、`proxy/forwarder.rs`、
-`services/model_fetch.rs`、`services/stream_check.rs`）用的是
-`http_client::get_for_url(url)`——后者对 loopback 走 `no_proxy` 直连。
+`usage_script.rs` 用的是 `crate::proxy::http_client::get()`（全局客户端），而 app 其他地方（`services/speedtest.rs`、`proxy/forwarder.rs`、`services/model_fetch.rs`、`services/stream_check.rs`）用的是`http_client::get_for_url(url)`——后者对 loopback 走 `no_proxy` 直连。
 
 `http_client.rs` 的注释写得很清楚：
 
@@ -99,15 +88,11 @@ QuickJS 沙箱能表达「一次带自定义请求头的 GET + 解析 JSON 响�
 > 本机推理服务因此会被送进代理，代理不能代连本机时请求就失败。
 
 所以 cc-switch 里配了全局代理时，`127.0.0.1` 上的服务会被送进代理而失败。
-本项目的情况没事：代理在 `gateway.example:6450`，本机的全局代理也在同一台 NAS 上
-（`gateway.example:5053`），实测经代理请求 200 且数据正确；不配代理时 reqwest 读环境变量，
-`no_proxy` 里有 `gateway.example` → 直连。两条路都通。
+本项目的情况没事：代理在 `gateway.example:6450`，本机的全局代理也在同一台 NAS 上（`gateway.example:5053`），实测经代理请求 200 且数据正确；不配代理时 reqwest 读环境变量，`no_proxy` 里有 `gateway.example` → 直连。两条路都通。
 
 ### 2. 非 2xx 拿不到响应体
 
-会话过期时平台返 401，cc-switch 只显示 `HTTP 401 : {...}`，
-提取器里判业务码的分支走不到。所以脚本对「所有账号都取不到余额」要自己判
-`isValid: false` 并给出可读的 `invalidMessage`。
+会话过期时平台返 401，cc-switch 只显示 `HTTP 401 : {...}`，提取器里判业务码的分支走不到。所以脚本对「所有账号都取不到余额」要自己判`isValid: false` 并给出可读的 `invalidMessage`。
 
 ### 3. 只在「使用中」刷新
 

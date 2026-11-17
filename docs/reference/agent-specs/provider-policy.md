@@ -4,8 +4,7 @@
 
 ## 1. 目标
 
-一个上游（`provider` 表的一行）名下有多个账号/租户时，网关按「生效策略」决定先调谁、
-失败后换谁。策略在上游页面配置，由用户手动设置。
+一个上游（`provider` 表的一行）名下有多个账号/租户时，网关按「生效策略」决定先调谁、失败后换谁。策略在上游页面配置，由用户手动设置。
 
 ## 2. 三个策略值
 
@@ -27,8 +26,7 @@
 
 - 主路由：**保持现状**——任何错误都降级到下一个目标，行为一个字节都不改。
 - upstream 侧：**区分**。只有「这个候选不可用」才降级：服务不可用（连接失败、超时、
-  5xx）、429 额度打满、402 额度/余额用尽、401/403 凭据被拒。请求本身的问题
-  （400、404、413 等）不降级——换个账号也一样会错。
+  5xx）、429 额度打满、402 额度/余额用尽、401/403 凭据被拒。请求本身的问题（400、404、413 等）不降级——换个账号也一样会错。
 
 ## 3. 共用包（be-core 建）
 
@@ -71,8 +69,7 @@ export async function select<T>(options: SelectionOptions<T>): Promise<T>;
   不可降级 → 立刻抛；全试完 → 抛 `failure` 造的错误（默认用最后一个错误）。
 - 候选按权重降序；权重相同时保持传入次序。
 
-主路由改造：`handleAggregate` 改为调用 `select`，行为不变（现有 `test/aggregate.sh`、
-`test/route-e2e-check.ts` 必须仍然通过）。主路由**不注入** `degradable`。
+主路由改造：`handleAggregate` 改为调用 `select`，行为不变（现有 `test/aggregate.sh`、`test/route-e2e-check.ts` 必须仍然通过）。主路由**不注入** `degradable`。
 
 ## 4. upstream 侧封装（be-core 建）
 
@@ -104,8 +101,7 @@ export async function selectProvider<T>(
 | `tokenrhythm` | 名下的租户（一个账号一个） | `expiry_first` 时按余额最早到期排序，否则按租户次序 |
 | 其余 | 单个账号 | 策略不影响行为，但仍走同一封装 |
 
-`expiry_first` 的「账户变了就切」：候选列表每次请求重新算（钱包快照缓存 5 分钟，
-刷新后清缓存），所以判定变了，下一个请求自然落到新账户。
+`expiry_first` 的「账户变了就切」：候选列表每次请求重新算（钱包快照缓存 5 分钟，刷新后清缓存），所以判定变了，下一个请求自然落到新账户。
 
 ## 5. 存储（主代理做）
 
@@ -153,8 +149,7 @@ message ProviderKind {
 }
 ```
 
-改完跑 `mise run proto`（生成物进 `lib/gen/`，`web/.gen/` 由 `web` 的 `gen:sync` 同步），
-再 `mise run proto:lint`。
+改完跑 `mise run proto`（生成物进 `lib/gen/`，`web/.gen/` 由 `web` 的 `gen:sync` 同步），再 `mise run proto:lint`。
 
 ## 7. 面板
 
@@ -167,8 +162,7 @@ message ProviderKind {
 
 ## 8. 子代理分工
 
-见自己那份角色文件 `.pi/agents/<角色>.md`（常驻的职责、范围、边界、验收）与
-`docs/tasks/provider-policy/context.md`（这一次的任务上下文、分工、进度、交付记录）。
+见自己那份角色文件 `.pi/agents/<角色>.md`（常驻的职责、范围、边界、验收）与`docs/tasks/provider-policy/context.md`（这一次的任务上下文、分工、进度、交付记录）。
 
 | 子代理 | 这次做什么 |
 |---|---|

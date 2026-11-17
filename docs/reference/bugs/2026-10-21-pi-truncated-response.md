@@ -1,8 +1,6 @@
 # pi 报 "Response was truncated before completion." — bug 报告
 
-日期：2026-10-21
-现象归属：pi 客户端 ↔ buddy-proxy 网关（Anthropic 方言）
-状态：根因已定位；网关侧已加可观测性；客户端侧是否改动待定
+日期：2026-10-21现象归属：pi 客户端 ↔ buddy-proxy 网关（Anthropic 方言）状态：根因已定位；网关侧已加可观测性；客户端侧是否改动待定
 
 ---
 
