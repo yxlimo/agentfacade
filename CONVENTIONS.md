@@ -173,6 +173,46 @@ Rules that came out of those failures:
 - The child runs in a sandbox that cannot bind `127.0.0.1`, so harness tests
   (`test:catalog-parity` and friends) fail there. Let it write, and run those gates yourself.
 
+### 让子代理真的能跑 `mise run …`
+
+子代理**应该**跑 mise task，而不是绕过它直接调 `pnpm exec`。但直接跑会挂死 —— 卡在
+pnpm v12 的「跑脚本前先校验依赖」：
+
+```text
+mise run web:typecheck
+└─ pnpm typecheck
+   └─ pnpm install --verify-deps-before-run-install   ← 永不返回（CPU 时间 00:00:00）
+```
+
+因为那个 install 要写 pnpm store、可能要联网，两样在沙箱里都没有。依赖已经在
+`.pi/worktree-setup.sh` 装过了，这里再校验一次既没必要也跑不动。
+
+**修法**：派单时给 `bash.env` 加一条，让 pnpm 只警告、不自己 install：
+
+```js
+bash: {
+  env: { pnpm_config_verify_deps_before_run: "warn" },
+  writable: true,          // web:typecheck 会重写 web/.gen
+  writablePaths: ["~/.pi/worktrees"],
+}
+```
+
+键名不是猜的：pnpm 二进制的配置表里就是 `verifyDepsBeforeRun` / `verify-deps-before-run`，
+环境变量形式为 `pnpm_config_verify_deps_before_run`，`pnpm config get` 设了就读得到。
+
+### 面板测试要用面板自己的配置跑
+
+`web` 的 vitest 配置里有 `@/` 别名，**在仓库根直接 `npx vitest` 会报 `Cannot find package
+'@/gen/…'`，整个文件 0 test**（看起来像测试坏了，其实只是跑错地方）。要在 `web/` 里跑：
+
+```sh
+cd web && pnpm exec vitest run src/features/x.test.tsx
+```
+
+> 子代理被杀在“原地打转”上时，先看是不是**主代理让它重复跑了它已经跑过的命令**。
+> 探测按整轮累计，同一条命令第三次就停 —— 我在 steer 里写「再确认一下 `git status --short`」，
+> 直接把一单送走了。要问状态就用 `git log --oneline -3` 之类没跑过的读法。
+
 ## Never reach into someone else's files
 
 Parallel subagents may share a checkout (the main agent decides). Either way these are
