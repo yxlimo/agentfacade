@@ -47,7 +47,22 @@ checkin.ts → auth.ts → oauth.ts → warn-ms.ts → configNumber → store()
   `getConfig` → `store()` → `dbPath()` → `dataDir()` 读 `BUDDY_DATA_DIR`。ESM 静态 import 先求值，
   所以测试文件第 108 行设 `BUDDY_DATA_DIR` 太晚。
 - 发现这是预存问题：`.pi/worklogs/stream-limit-nonfinite.md` 已记录同一环境阻塞（其它子代理也撞到）。
-- 待办：写 `test/data-dir-setup.ts`，测试文件第一个 import 它；逐一同族测试排查；红/绿输出。
+- 写了 `test/data-dir-setup.ts`：模块顶层若 `BUDDY_DATA_DIR` 未设则 `mkdtempSync` 一个临时目录。
+  测试文件第一个 import 它（`import "./data-dir-setup.ts";`），放在 `checkin.ts` 静态 import 之前。
+- 红→绿：修复前 `mise run test:minimax:checkin` 报 `SQLITE_READONLY` at `migrateSimulatedClients`；
+  修复后同一命令 `pass=19 fail=0` 全绿。
+- 同族排查结论：
+  - `minimax-checkin-check.ts`：**有隐患**（本次修掉）。静态 import `lib/minimax/checkin.ts`，导入链在模块加载时
+    走到 `store()`；顶层设 `BUDDY_DATA_DIR` 太晚。
+  - `zcode-quota-check.ts` / `zcode-system-check.ts`：无隐患。静态 import 只有 `type`（`lib/json.ts`、
+    `lib/provider-kinds.ts`），值 import 用 `await import` 且在其前已设目录（注释也写明）。
+  - `session-check.ts`：无隐患。静态 import `lib/agent.ts` 是纯叶子模块（无 import、不碰 store）。
+  - `admin-contract-check.ts`：无隐患。静态 import `lib/gen/...`（生成 proto）与 `./harness.ts`
+    （只引 node 内置模块），都不碰 store。
+  - 其余设 `BUDDY_DATA_DIR` 的测试：静态 import 只有 node 内置模块、type-only lib import，或
+    在函数/块内设目录（如 `client-gone-check.ts` 在函数内），或 store 相关全用动态 import。
+    均无隐患。
+- 提交：`git add` 两个文件 + worklog，commit。
 
 ## Open questions
 

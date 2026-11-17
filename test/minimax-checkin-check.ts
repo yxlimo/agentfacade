@@ -7,6 +7,11 @@
 // and how the request is built. The protocol comes from the official client
 // (MiniMax-AI/minimax-code, packages/tui/src/checkin/http-gateway.ts).
 
+// 数据目录必须先于任何触及 store() 的模块被求值：checkin.ts 的导入链在模块加载时
+// 就会走到 store()，而 store() 读 BUDDY_DATA_DIR。ESM 静态 import 在任意顶层语句
+// 之前求值，所以本文件第一个 import 这个小模块，让它在 checkin.ts 之前把目录设好。
+import "./data-dir-setup.ts";
+
 import {
   CLAIM_ALREADY_CLAIMED,
   CLAIM_CLAIMED,
