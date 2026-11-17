@@ -78,27 +78,25 @@ sh: line 1: tsr: command not found                          ← web/node_modules
 修法两半，缺一半都不行：
 
 1. setup 把两个项目都装上（`931dd60`）。趁还有真 store 和网络时装；实测 web 一次离线安装 90ms，之后 `web:typecheck` 5.3 秒、`web:test` 527 项 25 秒。
-2. 给沙箱里的 pnpm 一份只读、离线、允许拷贝的配置。
+2. 派单时给 `bash.env` 一条 `pnpm_config_verify_deps_before_run=false` —— 让 pnpm 不要在校验之后自己 install。
 
 ```js
 bash: {
-  env: {
-    pnpm_config_verify_deps_before_run: "false",  // pnpm 自己的 WARN 就建议这么写
-    pnpm_config_offline: "true",
-    pnpm_config_frozen_store: "true",             // 只读 store，允许它不写 store
-    pnpm_config_trust_lockfile: "true",           // 跳过供应链策略校验，离线验不了
-    pnpm_config_package_import_method: "copy",    // 硬链接不了就拷贝
-  },
-  writable: true,
+  env: { pnpm_config_verify_deps_before_run: "false" },
+  writable: true,          // web:typecheck 会重写 web/.gen
   writablePaths: ["~/.pi/worktrees"],
 }
 ```
 
-两个 flag 的用途取自 `pnpm install --help`：`--frozen-store` 是 "Open the store read-only and skip all store writes. For installing against a store on a read-only filesystem"，`--trust-lockfile` 是 "Skip verifying the lockfile against supply-chain policies"。
+第二半挡的是「依赖装了但与 lockfile 不同步时 pnpm 自己 install」这一种，闸门管不到它。
+
+`pnpm_config_trust_lockfile` 不要加。它会把 pnpm 的供应链校验关掉，那是安全决策，不该搭配置的便车。`pnpm_config_frozen_store` / `package_import_method=copy` 也不必写：依赖齐了就不会有 install。
 
 修好之后同一个沙箱、同一个命令：三个症状全没，`pnpm install` 一步也不再出现。
 
 教训：第一次遇到挂死，我把它当成了流程问题（「子代理别跑 mise」），那是错的。看到子代理跑不动，先拆根因，不要先改流程。
+
+扩展侧的闸门（`bash.dependencyGate`，默认开）会在命令跑起来之前检查「有 lockfile 的目录必须有 `node_modules/.bin`」，缺了直接拒并点名目录。它是同一类问题的第一道防线，但它**挡全部 bash**，包括 `git`；真撞到了，子代理的出路是 `contact_supervisor`，不是重试。
 
 ## 这台机器就是生产机：不要碰 `/data`
 
