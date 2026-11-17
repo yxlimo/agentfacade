@@ -80,7 +80,7 @@ QuickJS 沙箱能表达「一次带自定义请求头的 GET + 解析 JSON 响�
 
 ### 1. 用量脚本不绕全局代理
 
-`usage_script.rs` 用的是 `crate::proxy::http_client::get()`（全局客户端），而 app 其他地方（`services/speedtest.rs`、`proxy/forwarder.rs`、`services/model_fetch.rs`、`services/stream_check.rs`）用的是`http_client::get_for_url(url)`——后者对 loopback 走 `no_proxy` 直连。
+`usage_script.rs` 用的是 `crate::proxy::http_client::get()`（全局客户端），而 app 其他地方（`services/speedtest.rs`、`proxy/forwarder.rs`、`services/model_fetch.rs`、`services/stream_check.rs`）用的是 `http_client::get_for_url(url)`——后者对 loopback 走 `no_proxy` 直连。
 
 `http_client.rs` 的注释写得很清楚：
 
@@ -92,7 +92,7 @@ QuickJS 沙箱能表达「一次带自定义请求头的 GET + 解析 JSON 响�
 
 ### 2. 非 2xx 拿不到响应体
 
-会话过期时平台返 401，cc-switch 只显示 `HTTP 401 : {...}`，提取器里判业务码的分支走不到。所以脚本对「所有账号都取不到余额」要自己判`isValid: false` 并给出可读的 `invalidMessage`。
+会话过期时平台返 401，cc-switch 只显示 `HTTP 401 : {...}`，提取器里判业务码的分支走不到。所以脚本对「所有账号都取不到余额」要自己判 `isValid: false` 并给出可读的 `invalidMessage`。
 
 ### 3. 只在「使用中」刷新
 

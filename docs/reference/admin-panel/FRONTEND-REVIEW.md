@@ -1,6 +1,8 @@
 # 管理面板前端评审（FRONTEND-REVIEW）
 
-评审对象：`web/`（shadcn-admin 骨架 + shadcn/ui + TanStack Router/Query/Table + Connect 客户端）评审时间：2026-10-22评审范围：`web/src/` 下项目自己写的部分（`features/`、`hooks/`、`lib/`、`routes/`、`components/layout/`、`components/data-table/`、`test/`）。`components/ui/` 下 27 个 shadcn CLI 生成的组件不逐个评。
+评审对象：`web/`（shadcn-admin 骨架 + shadcn/ui + TanStack Router/Query/Table + Connect 客户端）
+评审时间：2026-10-22
+评审范围：`web/src/` 下项目自己写的部分（`features/`、`hooks/`、`lib/`、`routes/`、`components/layout/`、`components/data-table/`、`test/`）。`components/ui/` 下 27 个 shadcn CLI 生成的组件不逐个评。
 
 只读、只跑，没有改任何代码。
 

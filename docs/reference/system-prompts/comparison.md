@@ -1,6 +1,7 @@
 # 四个客户端的 system prompt：横向对比
 
-日期：2026-11-07范围：ZCode 3.16.3、WorkBuddy 4.24.5（CodeBuddy Code 引擎）、opencode、pi 1.5.0。
+日期：2026-11-07
+范围：ZCode 3.16.3、WorkBuddy 4.24.5（CodeBuddy Code 引擎）、opencode、pi 1.5.0。
 方法：只读本机文件（客户端安装目录、客户端落盘的请求日志与产品配置缓存、打包后的可执行文件），不联网、不发请求。
 
 原文（逐字，含本机路径）留在本机 `docs/system-prompts/`，不入库；本文是脱敏后的横向对比。

@@ -24,12 +24,9 @@ NAS 上的数据卷 `/vol1/<vol>/services/buddy-proxy/data/`：
 | `auth.log` | 凭据事件日志 | `lib/credential.ts` |
 | `*.lock` | 刷新时的单写者锁 | `lib/session.ts` |
 
-`.env` 里还有：`TOKEN_RHYTHM_N_ACCOUNT/PASSWORD`、`TOKEN_RHYTHM_N_API_KEY`、
-`MINIMAX_TOKEN_PLAN_KEY`。
+`.env` 里还有：`TOKEN_RHYTHM_N_ACCOUNT/PASSWORD`、`TOKEN_RHYTHM_N_API_KEY`、`MINIMAX_TOKEN_PLAN_KEY`。
 
-`/health` 现在每次都打上游：Qoder 两个区各查账号状态和额度、MiniMax 查余额和
-token plan、WorkBuddy 查积分、TokenRhythm 查三个租户的余额 —— 一次大概十几次
-上游调用，几秒钟。
+`/health` 现在每次都打上游：Qoder 两个区各查账号状态和额度、MiniMax 查余额和 token plan、WorkBuddy 查积分、TokenRhythm 查三个租户的余额 —— 一次大概十几次上游调用，几秒钟。
 
 ## 设计
 
@@ -58,8 +55,7 @@ CREATE TABLE IF NOT EXISTS cache (
 );
 ```
 
-- `secrets` 放所有凭据 —— 会话、客户端 API key、设备 salt、中转站的账号密码和
-  推理 key、MiniMax 的 token plan key。
+- `secrets` 放所有凭据 —— 会话、客户端 API key、设备 salt、中转站的账号密码和推理 key、MiniMax 的 token plan key。
 - `locks` 取代现在的 `.lock` 文件（同样是一把单写者锁，但不再多一个文件）。
 - `cache` 放 `/health` 的快照。
 
@@ -68,9 +64,7 @@ WAL 模式，`busy_timeout = 5s`。
 
 ### 读写都走库
 
-`lib/session.ts` 的 `readSession` / `writeSession` / `withSessionLock` 换成按 id
-读写库。各客户端的 `sessionPath()` 换成 `sessionId()`（`session:qoder:cn` 这样的
-字符串），其余逻辑一行不动。
+`lib/session.ts` 的 `readSession` / `writeSession` / `withSessionLock` 换成按 id 读写库。各客户端的 `sessionPath()` 换成 `sessionId()`（`session:qoder:cn` 这样的字符串），其余逻辑一行不动。
 
 ### 迁移：先导入，验证过再删文件
 
@@ -79,17 +73,13 @@ WAL 模式，`busy_timeout = 5s`。
 1. **写好库和导入逻辑**，但不动现在的读写路径 —— 这一版不部署。
 2. **在 NAS 上跑一次迁移脚本**：把数据卷上的旧文件逐个读进 `secrets` 表。
    **旧文件原地不动**，脚本只写库。
-3. **核对**：把库里每一行和原文件逐字节比对（JSON 解析后比对象），数量、字段、
-   值都要一样。refresh token 也要一样。
-4. **部署新镜像**：它启动时发现库里已经有凭据，直接用；旧文件还在，但已经不
-   再被读。
+3. **核对**：把库里每一行和原文件逐字节比对（JSON 解析后比对象），数量、字段、值都要一样。refresh token 也要一样。
+4. **部署新镜像**：它启动时发现库里已经有凭据，直接用；旧文件还在，但已经不再被读。
 5. **端到端验证**：四个上游各发一次真实请求，确认凭据有效。
 6. **删旧文件**：`api-keys.json`、五个会话文件、`identity.salt` 全部删掉。
    删完再验证一次，确认没有任何东西依赖文件了。
 
-回退路径：第 6 步之前，旧文件一直都在，随时可以退回旧镜像。第 6 步之后如果
-出问题，从 `secrets` 表把内容导回文件即可（迁移脚本反过来跑一遍），不需要重新
-登录。
+回退路径：第 6 步之前，旧文件一直都在，随时可以退回旧镜像。第 6 步之后如果出问题，从 `secrets` 表把内容导回文件即可（迁移脚本反过来跑一遍），不需要重新登录。
 
 ### 刷新时锁的语义不变
 
@@ -103,8 +93,7 @@ WAL 模式，`busy_timeout = 5s`。
 
 - 本地部分（开关、模型数量、凭据状态）照旧实时算 —— 这些不碰上游，很便宜。
 - 上游部分（账号状态、额度、余额）进 `cache` 表，键是 `health:upstreams`。
-- 读 `/health` 时：把缓存里的快照贴上去；缓存空或过期就在后台起一次刷新，
-  **不阻塞响应**。
+- 读 `/health` 时：把缓存里的快照贴上去；缓存空或过期就在后台起一次刷新，**不阻塞响应**。
 - 刷新间隔：`HEALTH_CACHE_MS`，默认 5 分钟。
 - 第一次跑（缓存空）时，响应里的上游部分是空的，并提示"正在刷新"。
 
@@ -112,10 +101,8 @@ WAL 模式，`busy_timeout = 5s`。
 
 `.env` 目前同时是"开关"和"密钥"两样东西。计划：
 
-- 启动时把 `.env` 里的 `TOKEN_RHYTHM_N_ACCOUNT/PASSWORD/API_KEY`、
-  `MINIMAX_TOKEN_PLAN_KEY` 导入库（导入后以库为准）。
-- 导入完成后 `.env` 只剩开关，可以清空密钥那几行。**这一步由维护者手动做**，
-  我不改维护者的 `.env`。
+- 启动时把 `.env` 里的 `TOKEN_RHYTHM_N_ACCOUNT/PASSWORD/API_KEY`、`MINIMAX_TOKEN_PLAN_KEY` 导入库（导入后以库为准）。
+- 导入完成后 `.env` 只剩开关，可以清空密钥那几行。**这一步由维护者手动做**，我不改维护者的 `.env`。
 
 ## 改动清单
 
