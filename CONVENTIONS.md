@@ -116,25 +116,34 @@ options: {
         "mise.toml",                      // 加测试要接线：mise run test 逐条列文件，不 glob
         "package.json", "pnpm-lock.yaml", // 动依赖就要
       ],
+      writeScope: ["<同上的目录>"],       // 写（edit/write）单独一份；不写 = 等于 scope
       maxDenies: 0,                     // the latch turns a mistake into a dead run
       bash: {
         read: ["git status", "git diff", "git log", "git show", "mise run typecheck"],
         write: ["git add", "git commit", "mise run test"],
         writable: true,                  // 没有它，web/.gen、生成物目录写不进去
-        writablePaths: [
-          "~/.pi/worktrees",             // 工作树自己
-          "<仓库根>/.git",               // worktree 提交要写主仓的 objects 与 index.lock
-        ],
+        writablePaths: ["~/.pi/worktrees"],
       },
     },
   },
 }
 ```
 
-**任务正文里出现的每个路径，都必须在这两处之一。** 派单前对着任务正文数一遍：
-提到的文件 → `scope`；要跑的命令 → `bash.read`/`write`，**而且它要写的目录 → `writablePaths`**。
-今晚四次失败全是这一条没做：漏 `scope`、写 `lib/router/**`、漏 `git switch`、
-漏 `pnpm-lock.yaml`。
+三层授权各管各的，别混：
+
+| 层 | 字段 | 管什么 |
+| --- | --- | --- |
+| 读 | `scope` | `read` / `grep` / `find` / `ls` |
+| 写（工具） | `writeScope` | `edit` / `write` |
+| 写（进程） | `bash.writablePaths`（配 `writable`） | bash 子进程的 Landlock |
+
+- **`.git` 不要放进 `writeScope`**：沙箱自己会给 git 要写的那部分，放进去等于让子代理改 `hooks`/`config`，而父代理之后会执行它们。
+- `writeScope` 不写 = 等于 `scope`；`readOnly: true` = 空写范围。
+- 审核岗就是「读整个仓库、只写报告」：`scope: ["."]`、`writeScope: [".pi/reviews"]`。
+- 写被拒有**独立预算** `maxWriteDenies`（默认 2），跟读预算分开 —— 一直想写是用法错，正确出路是交报告。
+
+**任务正文里出现的每个路径，都必须落在对应那一层里。** 派单前对着任务正文数一遍。
+今晚四次失败全是这一条没做：漏 `scope`、写 `lib/router/**`、漏 `git switch`、漏 `pnpm-lock.yaml`。
 
 ### 审核类 agent 没有写工具
 
