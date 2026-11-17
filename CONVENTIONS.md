@@ -175,30 +175,57 @@ Rules that came out of those failures:
 
 ### 让子代理真的能跑 `mise run …`
 
-子代理**应该**跑 mise task，而不是绕过它直接调 `pnpm exec`。但直接跑会挂死 —— 卡在
-pnpm v12 的「跑脚本前先校验依赖」：
+子代理**应该**跑 mise task，而不是绕过它去直接调 `pnpm exec`。它会挂死，但病根不在
+mise，也不在「要不要联网」—— 依赖早就在全局 store 里了，离线安装实测只要 90ms。
+真正的原因是**工作树里少装了一个项目**：
 
 ```text
 mise run web:typecheck
-└─ pnpm typecheck
-   └─ pnpm install --verify-deps-before-run-install   ← 永不返回（CPU 时间 00:00:00）
+└─ cd web && pnpm typecheck
+   └─ pnpm install --verify-deps-before-run-install   ← 挂 4 分钟，CPU 时间 00:00:00
 ```
 
-因为那个 install 要写 pnpm store、可能要联网，两样在沙箱里都没有。依赖已经在
-`.pi/worktree-setup.sh` 装过了，这里再校验一次既没必要也跑不动。
+`web/` 是**独立的 pnpm 项目**（自己的 `pnpm-workspace.yaml` 与 `pnpm-lock.yaml`），
+不是根的 workspace 成员。`.pi/worktree-setup.sh` 以前只装了根，`web/node_modules` 就不存在，
+pnpm 只好在沙箱里现装 —— 那里 store 不可写、网络被切断，于是挂在锁上。沙箱里的三个症状
+都是同一件事：
 
-**修法**：派单时给 `bash.env` 加一条，让 pnpm 只警告、不自己 install：
+```text
+[WARN] The store at ~/.local/share/pnpm/store/v11 is not used because packages cannot
+       be hard linked from it into this project.      ← 工作树与总 store 不同文件系统
+✗ Lockfile failed supply-chain policy check (378 entries)   ← 孤立缓存里没有验过的记录
+sh: line 1: tsr: command not found                        ← web/node_modules/.bin 不存在
+```
+
+**修法有两半，缺一半都不行**：
+
+1. **setup 把两个项目都装上**（`931dd60`）：趁还有真 store 和网络时装。实测 web 一次
+   离线安装 90ms，之后 `web:typecheck` 5.3 秒、`web:test` 527 项 25 秒。
+2. **给沙箱里的 pnpm 一份只读、离线、允许拷贝的配置**：
 
 ```js
 bash: {
-  env: { pnpm_config_verify_deps_before_run: "warn" },
+  env: {
+    pnpm_config_verify_deps_before_run: "false",  // pnpm 自己的 WARN 就建议这么写
+    pnpm_config_offline: "true",
+    pnpm_config_frozen_store: "true",             // 只读 store，允许它不写 store
+    pnpm_config_trust_lockfile: "true",           // 跳过供应链策略校验（离线验不了）
+    pnpm_config_package_import_method: "copy",    // 硬链接不了就拷贝
+  },
   writable: true,          // web:typecheck 会重写 web/.gen
   writablePaths: ["~/.pi/worktrees"],
 }
 ```
 
-键名不是猜的：pnpm 二进制的配置表里就是 `verifyDepsBeforeRun` / `verify-deps-before-run`，
-环境变量形式为 `pnpm_config_verify_deps_before_run`，`pnpm config get` 设了就读得到。
+两个 flag 的用途不是我编的，`pnpm install --help` 里原话：`--frozen-store` 是“Open the
+store read-only and skip all store writes. For installing against a store on a read-only
+filesystem”，`--trust-lockfile` 是“Skip verifying the lockfile against supply-chain
+policies”。
+
+**修好之后的证据**（同一个沙箱，同一个命令）：三个症状全没，`pnpm install` 一步也不再出现。
+
+> 教训：第一次遇到挂死，我把它当成了流程问题（“子代理别跑 mise”）。那是错的 —— 是环境
+> 没配好。看到子代理跑不动时，先去拆根因，不要先改流程。
 
 ### 面板测试要用面板自己的配置跑
 
