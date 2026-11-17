@@ -39,17 +39,17 @@ skillPath: ../../.agents/skills
 项目级扩展目录 `.pi/extensions/` 在 `08eb421` 之后不再使用；现在扩展装在用户目录，本机是软链：
 
 ```text
-~/.pi/agent/extensions/pi-subagent-extend -> ~/extensions/pi-subagent-extend/packages/pi-plugin
+~/.pi/agent/extensions/pi-subagents-extend -> ~/extensions/pi-subagents-extend/packages/pi-plugin
 ~/.pi/agent/extensions/pi-wake            -> ~/extensions/pi-wake/packages/pi-plugin
 ```
 
-`pi-subagent-extend` 一个包管三件事，入口不同：
+`pi-subagents-extend` 一个包管三件事，入口不同：
 
 - `src/index.ts`：权限范围与 bash 白名单，也由 agent 定义在 `subagentOnlyExtensions` 里声明。
 - `src/main-context.ts`：主会话注入 `.pi/main-only.md`；后台子代理里剥掉 `AGENTS.md` 的 `<!-- main-agent-only -->` 段落。
-- `src/child-context.ts`：只由 agent 定义的 `subagentOnlyExtensions` 声明，让前台子代理也剥标记。三个入口的分工见该包自带的 `skills/pi-subagent-extend-context`。
+- `src/child-context.ts`：只由 agent 定义的 `subagentOnlyExtensions` 声明，让前台子代理也剥标记。三个入口的分工见该包自带的 `skills/pi-subagents-extend-context`。
 
-派单档位的载入口不在本仓库：`~/.pi/agent-profiles/coder.ts` 与 `review.ts` 各两行，`export default profile("<档名>")`。放外面是因为里面必须是绝对路径 import（Node 不在 import specifier 里展开 `~`），进库会被 `mise run privacy` 扫出本机路径。agent 定义引用它们用 `~` 形状。
+派单档位的载入口不在本仓库：`~/.pi/agent-profiles/coder.ts` 与 `review.ts` 两个文件，内容只有注释加一句 `export default profile("<档名>")`。放外面是因为里面必须是绝对路径 import（Node 不在 import specifier 里展开 `~`），进库会被 `mise run privacy` 扫出本机路径。agent 定义引用它们用 `~` 形状。
 
 `pi-wake` 只装在这里，没写进 `.pi/agents/*.md` 的 `subagentOnlyExtensions`：子代理是等结果返回的，自己排定时唤醒没有意义；需要定时续做的场景在主会话里。
 
