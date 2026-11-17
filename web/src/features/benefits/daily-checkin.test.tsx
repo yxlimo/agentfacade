@@ -7,7 +7,7 @@ import {
   GetBenefitStatusResponseSchema,
   RunBenefitNowResponseSchema,
 } from '@/gen/buddy/admin/v1/admin_pb'
-import type { BenefitStatus } from '@/gen/buddy/admin/v1/admin_pb'
+import { CheckinState, type BenefitStatus } from '@/gen/buddy/admin/v1/admin_pb'
 import { DailyCheckinPanel } from '@/features/benefits/daily-checkin'
 import { mockAdminClient } from '@/test/mock-transport'
 import { renderWithClient } from '@/test/render'
@@ -92,8 +92,16 @@ describe('DailyCheckinPanel', () => {
   it('不同平台的账号平铺在同一个可换行的容器里', async () => {
     const { client } = setup({
       benefits: [
-        benefit({ upstreamId: 'minimax', accountId: 'a1' }),
-        benefit({ upstreamId: 'qoder-cn', accountId: 'a2' }),
+        benefit({
+          upstreamId: 'minimax',
+          accountId: 'a1',
+          checkinState: CheckinState.UNKNOWN,
+        }),
+        benefit({
+          upstreamId: 'qoder-cn',
+          accountId: 'a2',
+          checkinState: CheckinState.NOT_SIGNED,
+        }),
       ],
     })
 
@@ -102,8 +110,10 @@ describe('DailyCheckinPanel', () => {
     expect(await screen.findByText('a1')).toBeTruthy()
     expect(screen.getByText('a2')).toBeTruthy()
     expect(screen.getByText('每日签到')).toBeTruthy()
-    // checkedAt = 0 的账号显示「还没签过」
-    expect(screen.getAllByText('还没签过')).toHaveLength(2)
+    // checkedAt = 0 是「从来没问过」，不是「没签过」：不显示「还没签过」，
+    // 也不显示时间信息（签到页同一份数据也是这么处理的）。
+    expect(screen.queryByText('还没签过')).toBeNull()
+    expect(screen.queryByText(/上次签到|上次查询/)).toBeNull()
 
     // 布局：两个账号在同一个 flex-wrap 容器里，宽度不够时自动折行
     const minimax = screen.getByText('a1')
@@ -111,6 +121,23 @@ describe('DailyCheckinPanel', () => {
     const container = minimax.closest('.flex-wrap')
     expect(container).toBeTruthy()
     expect(qoder.closest('.flex-wrap')).toBe(container)
+  })
+
+  it('SIGNED 且有签到时刻：显示「上次签到 …」', async () => {
+    const { client } = setup({
+      benefits: [
+        benefit({
+          upstreamId: 'minimax',
+          accountId: 'a1',
+          checkinState: CheckinState.SIGNED,
+          checkedAt: 1_700_000_000_000n,
+        }),
+      ],
+    })
+
+    renderPanel(client)
+
+    expect(await screen.findByText(/上次签到/)).toBeTruthy()
   })
 
   it('签到加了 12 积分时显示 +12 点', async () => {

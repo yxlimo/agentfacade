@@ -85,8 +85,12 @@ function modelLine(upstream: Upstream): string {
  */
 function quotaLine(upstream: Upstream, pluginLabel: string) {
   const quota = upstream.quota
-  if (!quota) return null
-
+  // 快照里没这一份（quota 是 undefined）：插件匹配上了，但这轮快照没有它的
+  // 额度结论。显示匹配到的插件名，不编数字、不写「未知」——平台有没有额度
+  // 接口由 quota_plugin_id 说了算，快照没给数不等于没有接口。
+  if (!quota) {
+    return <span>额度：{pluginLabel}</span>
+  }
   const state = quotaStateText(quota)
   if (state) {
     return (

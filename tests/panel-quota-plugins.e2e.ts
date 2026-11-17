@@ -1,9 +1,10 @@
 // tests/panel-quota-plugins.e2e.ts — 额度插件按平台地址自动匹配的端到端。
 //
-// 插件不再是平台上选的一格：插件在登记表里声明自己服务哪些地址，平台行按
-// base_url 对上其中一个，它的额度插件就是那一个（lib/quota-plugin-registry.ts；
-// 面板侧同一套规则在 web/src/lib/quota-match.ts）。对不上任何插件的平台就是
-// 没有额度接口：额度区整块不摆、不报错、不提示。
+// 插件不再是平台上选的一格：插件在登记表里声明自己服务哪些地址，服务端按
+// base_url 对上其中一个，把匹配结果（quota_plugin_id / quota_plugin_label /
+// quota_plugin_fields）随平台行带给面板，面板原样消费，不自己按地址算（见
+// lib/quota-plugin-registry.ts）。对不上任何插件的平台就是没有额度接口：额度
+// 区整块不摆、不报错、不提示。
 //
 // 这里验三件事：
 //   1. 匹配是地址说了算：地址对得上的平台额度区在、给结论；对不上的额度区

@@ -779,7 +779,7 @@ describe('面板上的开放平台', () => {
     expect(String(toastError.mock.calls[0][0])).toContain('正被主路由引用')
   })
 
-  it('额度：没有结论的都不显示额度那一栏，也不显示 0', async () => {
+  it('额度：没插件的整块不摆；有插件但快照里没这份的只显示插件名，不编数字', async () => {
     const client = clientWith(
       [
         openPlatform({
@@ -793,10 +793,12 @@ describe('面板上的开放平台', () => {
         openPlatform({
           id: 'no-snapshot',
           label: '还没问到的',
+          // 登记表里有 qiniu：这一行地址对得上、插件匹配上了，只是快照里没这份。
+          quotaPluginId: 'qiniu',
+          quotaPluginLabel: '七牛云资源包',
         }),
       ],
       {
-        // 登记表里有 qiniu：第三行地址对得上，只是快照里没这份。
         ListQuotaPlugins: () =>
           create(ListQuotaPluginsResponseSchema, {
             plugins: [
@@ -813,8 +815,15 @@ describe('面板上的开放平台', () => {
     renderWithClient({ client, children: <UpstreamsPage /> })
 
     await screen.findByText('没结论的甲')
-    // 没有结论就不说额度这一栏；地址对不上插件的平台整个额度区都不摆。
-    expect(screen.queryByText(/^额度：/)).not.toBeInTheDocument()
+    // 没有插件的行（前两行）：地址对不上任何插件，额度区整块不摆，也不出现
+    // 插件名。
+    expect(within(rowOf('没结论的甲')).queryByText(/额度|七牛云资源包/)).toBeNull()
+    expect(within(rowOf('没结论的乙')).queryByText(/额度|七牛云资源包/)).toBeNull()
+    // 有插件但快照里没这份的那行（还没问到的）：显示匹配到的插件名，但不编
+    // 数字、不写「未知」。
+    expect(
+      within(rowOf('还没问到的')).getByText('额度：七牛云资源包')
+    ).toBeInTheDocument()
     expect(screen.queryByText('未知')).not.toBeInTheDocument()
 
     // 「不知道」不是一个 0：任何地方都不显示 0 点、0 元。

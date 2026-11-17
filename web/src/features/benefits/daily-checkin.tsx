@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/card'
 import { useBenefitStatus, useRunBenefitNow } from '@/features/upstreams/benefits'
 import { formatLocalMoment } from '@/lib/format'
+import { CheckinState } from '@/gen/buddy/admin/v1/admin_pb'
 
 /**
  * 每日签到统一区。
@@ -66,13 +67,16 @@ export function DailyCheckinPanel() {
                   ) : null}
                 </div>
               </div>
+              {/* checkedAt 是 0 = 从来没问过，不是「没签过」。签到页（签到行明细）
+                  同一份数据照这条规则显示：有时刻才说，没问过就什么都不摆，
+                  不把「不知道」说成「没有」。 */}
               {benefit.checkedAt > 0n ? (
                 <span className='text-xs text-muted-foreground'>
-                  上次签到 {formatLocalMoment(benefit.checkedAt)}
+                  {benefit.checkinState === CheckinState.UNKNOWN
+                    ? `上次查询 ${formatLocalMoment(benefit.checkedAt)}`
+                    : `上次签到 ${formatLocalMoment(benefit.checkedAt)}`}
                 </span>
-              ) : (
-                <span className='text-xs text-muted-foreground'>还没签过</span>
-              )}
+              ) : null}
               {benefit.summary ? (
                 <span className='text-sm text-muted-foreground'>
                   {benefit.summary}
