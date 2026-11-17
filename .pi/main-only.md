@@ -6,6 +6,8 @@
 
 子代理的读范围、写范围与 bash 白名单在启动那一刻固定，之后无法放宽；撞墙的子代理只能换掉，不能打补丁。所以照抄模板，不要凭记忆写 —— 一晚上有四单失败在记忆上（漏 `scope`、把 `lib/router/**` 写成通配、漏 `git switch`、漏 `pnpm-lock.yaml`）。
 
+bash 白名单、环境变量、拒绝预算现在由项目档位（`.pi/subagent-bindings.json`）给，派单只写这一个任务独有的两个范围：
+
 ```js
 options: {
   timeoutMs: 3_600_000,
@@ -18,30 +20,26 @@ options: {
         "package.json", "pnpm-lock.yaml", // 动依赖才要
       ],
       writeScope: ["<同上的目录>"],       // edit/write 单独一份；不写等于 scope
-      maxDenies: 0,                     // 默认 3 会把一个笔误变成死单
-      bash: {
-        read: ["git status", "git diff", "git log", "git show", "mise run typecheck"],
-        write: ["git add", "git commit", "mise run test"],
-        writable: true,                  // 没有它，web/.gen 与生成物目录写不进去
-        writablePaths: ["~/.pi/worktrees"],
-      },
     },
   },
 }
 ```
 
-三层授权各管各的，不要混：
+派单时**不要**顺手传 `bash` —— 它按整块替换（数组不合并），会把档位里那套环境变量与白名单全部抹掉。真需要额外命令时，把整块重写一遍。
 
-| 层 | 字段 | 管什么 |
-| --- | --- | --- |
-| 读 | `scope` | `read`、`grep`、`find`、`ls` |
-| 写（工具） | `writeScope` | `edit`、`write` |
-| 写（进程） | `bash.writablePaths` 配 `writable` | bash 子进程的 Landlock |
+| 层 | 字段 | 管什么 | 谁给 |
+| --- | --- | --- | --- |
+| 读 | `scope` | `read`、`grep`、`find`、`ls` | 派单 |
+| 写（工具） | `writeScope` | `edit`、`write` | 派单 |
+| 写（进程） | `bash.writablePaths` 配 `writable` | bash 子进程的 Landlock | 档位 |
 
 - `.git` 不要放进 `writeScope`。沙箱自己会给 git 需要写的那部分；放进去等于让子代理改 `hooks` 和 `config`，而父代理之后会执行它们。
 - `writeScope` 不写等于 `scope`；`readOnly: true` 等于空写范围。
-- 审核岗是「读整个仓库、只写报告」：`scope: ["."]`、`writeScope: [".pi/reviews"]`。
+- 审核岗的 `scope: ["."]` 与 `writeScope: ["web/.gen"]` 写在 `review` 档里 —— 它们没有 `write` 工具，那份写范围只给 bash 开 `web/.gen`。
 - 写被拒有独立预算 `maxWriteDenies`（默认 2），与读预算分开。一直想写说明用法错了，出路是让它交报告。
+- `bash.deny` 是并集、调用方不能放宽：`git stash`、`git checkout`、`git restore`、`git switch`、`git reset`、`git clean`、`rm -rf` 都写在 `default` 档里，对每个子代理结构性禁掉。
+- 档位文件不存在、JSON 错、或名字不在表里 —— 全部拒绝（fail closed），不是不限。
+- `coder` 档里没有 `scope`：这是有意的，读范围每个任务不一样。代价是派单忘了写 `scope` 时，文件访问全被拒（会响，不静默）。
 
 **任务正文里出现的每个路径，都要落在对应那一层。** 派单前对着正文数一遍。
 
