@@ -1,300 +1,101 @@
-# Subagent conventions
+# 子代理约定
 
-Rules for any subagent working in this repository. The main agent dispatched you for a
-bounded task; this file is what applies to you, and `AGENTS.md` is what applies to the
-main agent.
+这份文件写给在本仓库干活的所有子代理。主代理派你来做一件范围有限的事，这里是你要遵守的规则。
 
-## What to read, and what to skip
+`AGENTS.md` 写领域词汇（agent、模拟端、upstream、provider）、项目结构与不可退让的安全规则；其中被 `<!-- main-agent-only:start -->` 与 `<!-- main-agent-only:end -->` 包住的段落是主代理的职责，跳过即可。角色定义 `.pi/agents/<role>.md` 与这份文件冲突时，以角色定义为准。
 
-Read `AGENTS.md` for the domain vocabulary (agent / simulated client / upstream / provider),
-how the project is laid out, and the non-negotiable safety rules. **Skip every section
-wrapped in `<!-- main-agent-only:start -->` … `<!-- main-agent-only:end -->`:** dispatch
-discipline and the pre-commit privacy review are the main agent's job, not yours.
+## 读什么，跳过什么
 
-Your own role file (`.pi/agents/<role>.md`) wins over both when they disagree about scope.
+- 需要领域词汇、目录结构、安全规则：读 `AGENTS.md`，跳过 main-agent-only 段落。
+- 需要知道改哪一组、怎么验证：看下面的「测试只跑覆盖你改动的那一组」。
+- 派单消息里给了精确路径与硬约束：以派单消息为准。
 
-## You do not ship
+## 不要部署、不要推送
 
-- Do not `git commit`, do not deploy, do not push. Stop when the change and its tests are
-  done and report.
-- Do not widen the scope you were given. If the work genuinely requires touching a file
-  outside it, say so and stop rather than editing it.
+- 不部署、不推送、不合并、不改 `main`。
+- 共享工作区里 `git commit` 会把别人未提交的活一起带走，所以不要提交；只有在独立 worktree 里才提交，见下一节。
+- 不自行扩大范围。确实需要动范围外的文件时，停下来报告，由主代理决定。
 
-## Tests: run the group that covers your change
+## 测试只跑覆盖你改动的那一组
 
-`mise run check` is the full gate the main agent runs before committing (about six minutes).
-While developing, run only the group covering what you touched:
+`mise run check` 是主代理提交前的全量门禁，约六分钟。开发过程中只跑覆盖你改动的那一组：
 
-| Group | Covers |
+| 任务 | 覆盖 |
 | --- | --- |
-| `mise run check:admin` | panel backend: accounts, credentials, platforms, model catalogue (`lib/admin`, `lib/provider-kinds.ts`, `lib/platforms*`, `lib/model-catalog*`) |
-| `mise run check:routing` | account selection, fallback, cooldown, health, usage, timer jobs (`lib/router`, `lib/cooldown*`, `lib/session*`, `lib/periodic*`) |
-| `mise run check:deliver` | response delivery: frames, backpressure, dialects, client gone, log scrubbing (`lib/router/handle.ts`, `lib/dialect`, `lib/log-scrub*`) |
-| `mise run check:kinds` | the upstream kinds, simulated clients and open platforms (`lib/kinds`, `lib/minimax`, `lib/qoder`, `lib/workbuddy`, `lib/zcode`, `lib/tokenrhythm`, `lib/intern-ai`, `lib/qiniu`, `lib/xinghuo`, `lib/sensenova`) |
-| `mise run check:misc` | catalogue parity, cleanup rules, helper scripts, the privacy scanner's own test, the offline matrix |
-| `mise run check:web` | panel frontend, no browser (`web/src`) |
-| `mise run check:panel` | panel end-to-end suite in a real browser (needs system chromium, about 90 seconds) |
+| `mise run check:admin` | 面板后端：账号、凭据、平台、模型目录（`lib/admin`、`lib/provider-kinds.ts`、`lib/platforms*`、`lib/model-catalog*`） |
+| `mise run check:routing` | 选号、降级、冷却、健康、用量、定时任务（`lib/router`、`lib/cooldown*`、`lib/session*`、`lib/periodic*`） |
+| `mise run check:deliver` | 响应投递：帧、背压、方言、客户端离开、日志脱敏（`lib/router/handle.ts`、`lib/dialect`、`lib/log-scrub*`） |
+| `mise run check:kinds` | 上游 kind、模拟端与开放平台（`lib/kinds`、`lib/minimax`、`lib/qoder`、`lib/workbuddy`、`lib/zcode`、`lib/tokenrhythm`、`lib/intern-ai`、`lib/qiniu`、`lib/xinghuo`、`lib/sensenova`） |
+| `mise run check:misc` | 目录一致性、清理规则、辅助脚本、隐私扫描器自身的测试、离线矩阵 |
+| `mise run check:web` | 面板前端，不启浏览器（`web/src`） |
+| `mise run check:panel` | 面板端到端，真浏览器（需要系统 chromium，约 90 秒） |
 
-Touched `proto/**`? Run `mise run proto` yourself and commit nothing until both
-generated copies (`lib/gen` and `web/.gen`) are in place.
+改动 `proto/**` 时自己跑 `mise run proto`，两份生成物（`lib/gen` 与 `web/.gen`）都就位才算做完。
 
-The main agent runs `mise run privacy` first, then the full `mise run check` before
-committing. You do not commit, so you only need the group above — but do not leave real
-identities, credentials or internal addresses behind for that scan to find.
+你不提交，但也不要留下真实身份、凭据或内网地址 —— 主代理提交前会跑 `mise run privacy` 扫这些。
 
-## When the main agent gives you a worktree
+## 在 worktree 里干活
 
-Some tasks arrive isolated in their own worktree (`subagent({worktree: true})`). Inside one
-the rule is different in exactly one way: **commit there, in that branch.** Do not commit on
-`main`, do not merge, do not push.
+有些任务在独立 worktree 里开工（`subagent({worktree: true})`）。规则只有一处不同：**在这个分支里提交**。不要在 `main` 上提交，不要合并，不要推送。
 
-Your work has to survive being killed — a timeout, an upstream error, a closed terminal. The
-only thing that survives is what is committed, so:
+你的活要能在被杀之后活下来 —— 超时、上游报错、终端关掉。只有已提交的东西能活下来，所以：
 
-0. **Dependencies are already installed.** The worktree setup hook (`/.pi/worktree-setup.sh`)
-   runs `pnpm install` before you start, so `node_modules` is a real directory, not a symlink
-   into the main checkout. Do not install anything yourself.
+1. **依赖已经装好。** setup 钩子（`.pi/worktree-setup.sh`）在你启动前装了根与 `web/` 两个项目，`node_modules` 是真目录而不是指向主仓的符号链接。不要自己再装。
+2. **不用建分支。** worktree 已经在自己那条分支上，直接提交；`git switch -c` 会失败（沙箱写不了 `refs/heads/*.lock`）。
+3. **先写任务日志，再写代码。** 第一件事是建 `.pi/worklogs/<任务名>.md` 并提交。它同时是「树是脏的」这个信号 —— 管理型 worktree 只有在什么都没留下时才会被删掉。
+4. **边做边写日志，日志和改动一起提交。** 每跨过一个能向别人描述的步骤（改了文件、测试变红、找到了原因），就追加一句做了什么、学到什么，然后 `git add -A && git commit -m "wip: <步骤>"`。自己分支上的 `wip:` 提交是正确的，没人会把它当正式历史读。
+5. **跑长命令之前先提交。** `mise run check`、全量测试、e2e、长时间的探针都算。中途被停掉时，未提交的一小时就没了；未提交的半小时比粗糙的半小时更糟 —— 下一个读的人分不清哪句写完了。
+6. **半成品是陷阱。** 宁可提交一个能编译的改动，也不要留一个只应用了一半的大改动。必须停在半路时，在日志最后一行写明停在哪。
 
-0b. **You do not need to create a branch.** The worktree already sits on its own branch. Commit
-   there directly; do not `git switch -c` (the sandbox cannot write `refs/heads/*.lock`).
+任务日志不是最后的总结，而是任务的状态。
 
-0c. **A dirty worktree is what keeps it alive.** A managed worktree is only deleted when you
-   left nothing behind (`git status` empty). Writing your task log counts as a change, so the
-   first thing you do — before code — is create `.pi/worklogs/<task-name>.md` and commit it.
-   From then on the tree survives even if your run is killed.
+### 交付报告要写清四样
 
-1. **Write your task log first, then work.**
-   ```sh
-   mkdir -p .pi/worklogs && $EDITOR .pi/worklogs/<task-name>.md   # then: git add -A && git commit
-   ```
-   The log is `.pi/worklogs/<task-name>.md` (tracked; `docs/` is not). It is not a summary you
-   write at the end — it is the running state of the task.
+工作要能脱离你被接手：
 
-2. **Update the log as you go, and commit both together.** After each step that you could
-   describe to someone else — a file changed, a test now red, a cause found — append what
-   you did and what you learned, then `git add -A && git commit -m "wip: <step>"`. Small
-   `wip:` commits in your own branch are correct here; nobody reads this branch's history as
-   prose.
+- 分支名与最新提交 sha（`git log --oneline -1`）
+- `git status --short`：空表示全部已提交；不空就说明哪些没提交、停在哪
+- 任务日志路径
+- 未决问题一段
 
-3. **Commit before any command you expect to take minutes** (`mise run check`, the full test
-   sweep, an e2e run, a long probe). If the harness stops you mid-command, an uncommitted
-   hour is gone and an uncommitted half-hour is worse than a rough one — the next reader
-   cannot tell a finished edit from a half-written one.
+主代理会把你的提交 cherry-pick 回主树。只存在于 worktree 目录里的活等于被扔掉，这里出过这种事。
 
-4. **A file you did not finish is a trap.** Prefer leaving a change in a state that compiles
-   and commit it, over a larger change that half-applies. If you must stop mid-edit, say so
-   in the log's last line.
+## 不要碰别人的文件
 
-### What your final report must contain
-
-So the work can be recovered without you:
-
-- the branch name and the latest commit sha (`git log --oneline -1` on your branch)
-- `git status --short` — empty means everything you did is committed; if not empty, list what
-  is uncommitted and where it stands
-- the path of your task log, and one paragraph naming the open questions left in it
-
-The main agent cherry-picks your commits into `main`. Work that exists only in a worktree
-directory — or only in a worktree the harness has already deleted — is work that was thrown
-away; that has happened here before.
-
-## Delegation bindings (the main agent writes these, the child lives inside them)
-
-A child's scope and bash allowlist are fixed when it launches — they cannot be widened
-afterwards, and a child that hits the wall has to be replaced, not patched. So the main agent
-copies a template instead of writing one from memory; three tickets tonight failed on
-remembered bindings (no `scope`, `lib/router/**` mis-parsed, `git switch` missing):
-
-```js
-options: {
-  timeoutMs: 3_600_000,
-  extensionBindings: {
-    "pi-subagent-extend/1": {
-      scope: [
-        ...,                              // ← 本任务要改的那几个目录（纯目录，不写 dir/**）
-        ".pi/worklogs",                   // 任务日志是交付物，永远是它写的
-        "mise.toml",                      // 加测试要接线：mise run test 逐条列文件，不 glob
-        "package.json", "pnpm-lock.yaml", // 动依赖就要
-      ],
-      writeScope: ["<同上的目录>"],       // 写（edit/write）单独一份；不写 = 等于 scope
-      maxDenies: 0,                     // the latch turns a mistake into a dead run
-      bash: {
-        read: ["git status", "git diff", "git log", "git show", "mise run typecheck"],
-        write: ["git add", "git commit", "mise run test"],
-        writable: true,                  // 没有它，web/.gen、生成物目录写不进去
-        writablePaths: ["~/.pi/worktrees"],
-      },
-    },
-  },
-}
-```
-
-三层授权各管各的，别混：
-
-| 层 | 字段 | 管什么 |
-| --- | --- | --- |
-| 读 | `scope` | `read` / `grep` / `find` / `ls` |
-| 写（工具） | `writeScope` | `edit` / `write` |
-| 写（进程） | `bash.writablePaths`（配 `writable`） | bash 子进程的 Landlock |
-
-- **`.git` 不要放进 `writeScope`**：沙箱自己会给 git 要写的那部分，放进去等于让子代理改 `hooks`/`config`，而父代理之后会执行它们。
-- `writeScope` 不写 = 等于 `scope`；`readOnly: true` = 空写范围。
-- 审核岗就是「读整个仓库、只写报告」：`scope: ["."]`、`writeScope: [".pi/reviews"]`。
-- 写被拒有**独立预算** `maxWriteDenies`（默认 2），跟读预算分开 —— 一直想写是用法错，正确出路是交报告。
-
-**任务正文里出现的每个路径，都必须落在对应那一层里。** 派单前对着任务正文数一遍。
-今晚四次失败全是这一条没做：漏 `scope`、写 `lib/router/**`、漏 `git switch`、漏 `pnpm-lock.yaml`。
-
-### 审核类 agent 没有写工具
-
-`be-review` / `fe-review` / `pr-review` / `privacy-review` 的 agent 定义里 `tools` 是
-`read, grep, find, ls, bash` —— **没有 `write`/`edit`**。所以：
-
-- 不要让它们「把报告写进 `.pi/reviews/`」。它们做不到，会反复试然后被判原地打转。
-- 它们的完整报告由运行时自动落盘到 `…/subagent-artifacts/<run>-<agent>_output.md`，
-  大报告（实测 20 KB）也能完整保存；截断只发生在「单次回复超出模型输出上限」时。
-- 所以大范围审核要**拆小**（一次一个子系统），或者明确要求「每节给结论，篇幅控制」。
-  想要逐段落盘，只能先给审核 agent 加 `write` 工具——那是改角色定义，得单独决定。
-
-Rules that came out of those failures:
-
-- **Write scope entries as plain directories**, not `dir/**` — the glob form has been
-  mis-parsed (a file under `lib/router/**` was reported as `"lib" not in scope`).
-- **A worktree's dependencies are installed for you.** `.pi/worktree-setup.sh` runs
-  `pnpm install` before the child starts, so the child never runs `pnpm install` itself; it
-  only needs `mise run …` in `bash.read` / `bash.write`.
-- **A worktree keeps itself alive while it is dirty.** The child creates
-  `.pi/worklogs/<task>.md` first and commits it, then the tree survives a kill. Nobody needs
-  `git switch -c`: the worktree already sits on its own branch.
-- **`maxDenies: 0` unless you want the run to die.** The default latch (3) stops the whole
-  run on repeated denials — including the tools the child still needs for its report.
-- `mise.toml` belongs in scope whenever the task adds a test: the new file has to be wired
-  into a task, and `mise run test` enumerates files rather than globbing.
-- The child runs in a sandbox that cannot bind `127.0.0.1`, so harness tests
-  (`test:catalog-parity` and friends) fail there. Let it write, and run those gates yourself.
-
-### 让子代理真的能跑 `mise run …`
-
-子代理**应该**跑 mise task，而不是绕过它去直接调 `pnpm exec`。它会挂死，但病根不在
-mise，也不在「要不要联网」—— 依赖早就在全局 store 里了，离线安装实测只要 90ms。
-真正的原因是**工作树里少装了一个项目**：
-
-```text
-mise run web:typecheck
-└─ cd web && pnpm typecheck
-   └─ pnpm install --verify-deps-before-run-install   ← 挂 4 分钟，CPU 时间 00:00:00
-```
-
-`web/` 是**独立的 pnpm 项目**（自己的 `pnpm-workspace.yaml` 与 `pnpm-lock.yaml`），
-不是根的 workspace 成员。`.pi/worktree-setup.sh` 以前只装了根，`web/node_modules` 就不存在，
-pnpm 只好在沙箱里现装 —— 那里 store 不可写、网络被切断，于是挂在锁上。沙箱里的三个症状
-都是同一件事：
-
-```text
-[WARN] The store at ~/.local/share/pnpm/store/v11 is not used because packages cannot
-       be hard linked from it into this project.      ← 工作树与总 store 不同文件系统
-✗ Lockfile failed supply-chain policy check (378 entries)   ← 孤立缓存里没有验过的记录
-sh: line 1: tsr: command not found                        ← web/node_modules/.bin 不存在
-```
-
-**修法有两半，缺一半都不行**：
-
-1. **setup 把两个项目都装上**（`931dd60`）：趁还有真 store 和网络时装。实测 web 一次
-   离线安装 90ms，之后 `web:typecheck` 5.3 秒、`web:test` 527 项 25 秒。
-2. **给沙箱里的 pnpm 一份只读、离线、允许拷贝的配置**：
-
-```js
-bash: {
-  env: {
-    pnpm_config_verify_deps_before_run: "false",  // pnpm 自己的 WARN 就建议这么写
-    pnpm_config_offline: "true",
-    pnpm_config_frozen_store: "true",             // 只读 store，允许它不写 store
-    pnpm_config_trust_lockfile: "true",           // 跳过供应链策略校验（离线验不了）
-    pnpm_config_package_import_method: "copy",    // 硬链接不了就拷贝
-  },
-  writable: true,          // web:typecheck 会重写 web/.gen
-  writablePaths: ["~/.pi/worktrees"],
-}
-```
-
-两个 flag 的用途不是我编的，`pnpm install --help` 里原话：`--frozen-store` 是“Open the
-store read-only and skip all store writes. For installing against a store on a read-only
-filesystem”，`--trust-lockfile` 是“Skip verifying the lockfile against supply-chain
-policies”。
-
-**修好之后的证据**（同一个沙箱，同一个命令）：三个症状全没，`pnpm install` 一步也不再出现。
-
-> 教训：第一次遇到挂死，我把它当成了流程问题（“子代理别跑 mise”）。那是错的 —— 是环境
-> 没配好。看到子代理跑不动时，先去拆根因，不要先改流程。
-
-### 面板测试要用面板自己的配置跑
-
-`web` 的 vitest 配置里有 `@/` 别名，**在仓库根直接 `npx vitest` 会报 `Cannot find package
-'@/gen/…'`，整个文件 0 test**（看起来像测试坏了，其实只是跑错地方）。要在 `web/` 里跑：
-
-```sh
-cd web && pnpm exec vitest run src/features/x.test.tsx
-```
-
-> 子代理被杀在“原地打转”上时，先看是不是**主代理让它重复跑了它已经跑过的命令**。
-> 探测按整轮累计，同一条命令第三次就停 —— 我在 steer 里写「再确认一下 `git status --short`」，
-> 直接把一单送走了。要问状态就用 `git log --oneline -3` 之类没跑过的读法。
-
-## Never reach into someone else's files
-
-Parallel subagents may share a checkout (the main agent decides). Either way these are
-forbidden, because they take other people's uncommitted work with them:
+并行子代理可能共用同一个工作树（由主代理决定）。无论哪种情况，下面三个命令都禁用，它们会把别人未提交的活一起带走：
 
 ```sh
 git stash        git checkout -- <file>        git restore <file>
 ```
 
-To see what a file looked like before your change, read `git show HEAD:<path>` or open a
-throwaway worktree of your own (`git worktree add /tmp/base HEAD`). That answers the same
-question without touching the shared tree.
+要看某个文件改之前长什么样，用 `git show HEAD:<path>`，或者自己开一个临时 worktree（`git worktree add /tmp/base HEAD`）。同样能回答那个问题，而且不碰共享树。
 
-## Facts that cost someone an afternoon
+## 几个踩过的领域事实
 
-- Upstream response bodies belong in the log, not just the status code. When hunting an
-  upstream's behaviour, record one real response, then replay it against a local fake.
-- The panel shows a platform green only when it can actually serve a request today.
-- Out-of-credits, out-of-balance and queueing are different states; do not map one onto
-  another.
+- 上游响应正文要进日志，不只是状态码。排查上游行为时，先录一次真实响应，之后对着假上游重放。
+- 面板把平台显示成绿色，必须表示「最近真的发得出去」。
+- 额度用尽、余额不足、排队是三种不同状态，不要把一种映射成另一种。
 
-## Local experiments
+## 测试样例
 
-You may start another instance on this machine only if it uses its **own** `BUDDY_DATA_DIR`
-and holds **no session** that the NAS accounts use — sharing one session between two
-processes burns the token (that is the 2026-10-25 incident). Never start a second gateway
-on a copy of the production database.
-
-### 这台机器就是生产机：不要碰 `/data`
-
-`/data` 是指向 `/mnt/data/agents` 的符号链接，里面是**生产数库**，而且生产网关容器
-（`buddy-router`）正在这台机器上跑。因此：
-
-- **不许挂载、改权限、绑定覆盖 `/data` 或 `/mnt/data`** —— 哪怕在私有 mount namespace
-  里、哪怕只读。想造一个「目录写不进去」的环境，不该拿生产路径做道具。
-- **不许在主目录建库**。跑任何可能触及默认数据目录的测试，先把 `BUDDY_DATA_DIR`
-  指向 `/tmp` 下的临时目录，跑完删掉。默认回落顺序是
-  `BUDDY_DATA_DIR` → `/data`（存在就优先）→ `$HOME/.buddy-proxy`。
-- 测试/实验产生的一切垃圾（库、日志、临时目录、反证时拷出的旧版本文件）都只能落在
-  **本仓库目录或 `/tmp`**，并且收尾时清掉。
-
-> 教训：为了复现「默认数据目录不可写」，我挂载过 `/mnt/data`（错），后来又没挡住
-> 回落，在一次跑修复前版本的测试时在主目录留下了 `~/.buddy-proxy/buddy.db`（也错）。
-> 实际上复现这类缺陷**不需要只读、不需要挂载**：缺陷是「库开错地方」，那就看那个
-> 地方有没有多出文件。用 `BUDDY_DATA_DIR=/tmp/…` 把「默认地方」换成临时目录，
-> 观察文件落在哪里就够了。
-
-## Test samples
-
-Fabricated credentials and upstream responses go in tests as obviously fake values
-(`sk-TESTONLY…`, `example.com`, `probe.example`). When the shape itself is what the test
-must preserve, mark that single line:
+编造的凭据与上游响应写成一眼能看出是假的（`sk-TESTONLY…`、`example.com`、`probe.example`）。测试要验证的正是那个形状时，在那一行上标：
 
 ```ts
 api_key: "sk-TESTONLY0000000000", // privacy:allow — fabricated sample
 ```
 
-The marker covers one line only, and never a real value. This repository is public.
+标记只覆盖那一行，永远不覆盖真值。这个仓库是公开的。
+
+## 临时文件落在仓库目录或 `/tmp`
+
+测试与实验产生的库、日志、临时目录都放在本仓库目录或 `/tmp` 下，收尾时删掉。不要在用户主目录里建任何东西。
+
+默认数据目录的回落顺序是 `BUDDY_DATA_DIR` → `/data`（存在就优先）→ `$HOME/.buddy-proxy`。跑可能触及默认目录的测试时，先把 `BUDDY_DATA_DIR` 指到 `/tmp` 下的临时目录。
+
+## 面板的测试用面板自己的配置跑
+
+`web` 的 vitest 配置里有 `@/` 别名。在仓库根直接 `npx vitest` 会报 `Cannot find package '@/gen/…'`、整个文件 0 test —— 看起来像测试坏了，其实只是跑错了地方。要在 `web/` 里跑：
+
+```sh
+cd web && pnpm exec vitest run src/features/x.test.tsx
+```
