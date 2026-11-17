@@ -96,7 +96,11 @@ bash: {
 
 教训：第一次遇到挂死，我把它当成了流程问题（「子代理别跑 mise」），那是错的。看到子代理跑不动，先拆根因，不要先改流程。
 
-扩展侧的闸门（`bash.dependencyGate`，默认开）会在命令跑起来之前检查「有 lockfile 的目录必须有 `node_modules/.bin`」，缺了直接拒并点名目录。它是同一类问题的第一道防线，但它**挡全部 bash**，包括 `git`；真撞到了，子代理的出路是 `contact_supervisor`，不是重试。
+扩展侧的闸门（`bash.dependencyGate`，默认开）会在命令跑起来之前检查「有 lockfile 的目录必须有 `node_modules/.bin`」。它只管会去装依赖的那几类：写类命令（构建、测试）与包管理器本身（即使被写进 `read` 列）；`git` 与只读命令放行 —— git 不需要 `node_modules`，而「先落任务日志再提交」这种保树纪律恰好在依赖缺失时最要用得上。
+
+真撞到了，子代理的出路是 `contact_supervisor`，不是重试：这类拒不计入任何预算，因为重试装不上任何东西。
+
+闸门只判「没装」，不判「装了但与 lockfile 不同步」；后者是 pnpm 的 `verify-deps-before-run` 在沙箱里试图自我修复，判据要拿 `.modules.yaml` 与 lockfile 对账，那就是项目知识了，扩展不带 —— 所以上面那条 `verify_deps_before_run=false` 仍然需要。
 
 ## 这台机器就是生产机：不要碰 `/data`
 
