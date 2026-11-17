@@ -268,6 +268,25 @@ and holds **no session** that the NAS accounts use — sharing one session betwe
 processes burns the token (that is the 2026-10-25 incident). Never start a second gateway
 on a copy of the production database.
 
+### 这台机器就是生产机：不要碰 `/data`
+
+`/data` 是指向 `/mnt/data/agents` 的符号链接，里面是**生产数库**，而且生产网关容器
+（`buddy-router`）正在这台机器上跑。因此：
+
+- **不许挂载、改权限、绑定覆盖 `/data` 或 `/mnt/data`** —— 哪怕在私有 mount namespace
+  里、哪怕只读。想造一个「目录写不进去」的环境，不该拿生产路径做道具。
+- **不许在主目录建库**。跑任何可能触及默认数据目录的测试，先把 `BUDDY_DATA_DIR`
+  指向 `/tmp` 下的临时目录，跑完删掉。默认回落顺序是
+  `BUDDY_DATA_DIR` → `/data`（存在就优先）→ `$HOME/.buddy-proxy`。
+- 测试/实验产生的一切垃圾（库、日志、临时目录、反证时拷出的旧版本文件）都只能落在
+  **本仓库目录或 `/tmp`**，并且收尾时清掉。
+
+> 教训：为了复现「默认数据目录不可写」，我挂载过 `/mnt/data`（错），后来又没挡住
+> 回落，在一次跑修复前版本的测试时在主目录留下了 `~/.buddy-proxy/buddy.db`（也错）。
+> 实际上复现这类缺陷**不需要只读、不需要挂载**：缺陷是「库开错地方」，那就看那个
+> 地方有没有多出文件。用 `BUDDY_DATA_DIR=/tmp/…` 把「默认地方」换成临时目录，
+> 观察文件落在哪里就够了。
+
 ## Test samples
 
 Fabricated credentials and upstream responses go in tests as obviously fake values
