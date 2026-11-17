@@ -16,3 +16,6 @@
 # `pnpm install --frozen-lockfile` 会报 ERR_PNPM_LOCKFILE_CONFIG_MISMATCH。
 virtualStoreType: global
 addMissingPeerTypes: true
+permissions:
+  e2e:
+    skills: true

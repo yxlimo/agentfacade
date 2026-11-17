@@ -3,6 +3,8 @@ name: e2e
 description: 端到端测试的编写与维护：对着假上游跑完整流程的场景测试（test/ 下的 e2e、路由、浏览器脚本）。
 inheritSkills: false
 inheritProjectContext: true
+skills: e2e
+skillPath: ../../.agents/skills
 tools: read, grep, find, ls, bash, write, edit
 thinking: medium
 subagentOnlyExtensions: ~/extensions/pi-subagent-extend/packages/pi-plugin/src/index.ts, ~/extensions/pi-subagent-extend/packages/pi-plugin/src/child-context.ts
