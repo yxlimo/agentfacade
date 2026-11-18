@@ -9,5 +9,5 @@
     "types": ["node"],
     "allowImportingTsExtensions": true
   },
-  "include": ["router-proxy.ts", "lib/**/*.ts"]
+  "include": ["router-proxy.ts", "lib/**/*.ts", "tools/verify-image.ts"]
 }

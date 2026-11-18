@@ -27,6 +27,20 @@ RUN cd web && pnpm build
 # ── 运行时 ────────────────────────────────────────────────────────────────
 FROM node:24-alpine
 
+# The identity of the image: which commit, which version this code is.
+#
+# ARG belongs to this stage: an ARG only reaches the stages below the one that
+# declares it, so an ARG at the top of the file would not be visible here.
+#
+# These two labels are the only record of which code is in the image.
+# tools/verify-image.ts compares them with git rev-parse HEAD and with the
+# version in package.json; a mismatch means the image was not built from this
+# worktree. mise passes the two values in as --build-arg.
+ARG GIT_REVISION=unknown
+ARG APP_VERSION=0.0.0
+LABEL org.opencontainers.image.revision=$GIT_REVISION
+LABEL org.opencontainers.image.version=$APP_VERSION
+
 WORKDIR /app
 
 # Dependencies first so this layer is cached.

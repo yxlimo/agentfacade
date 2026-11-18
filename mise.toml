@@ -577,12 +577,29 @@ run = "pnpm exec tsc -p tsconfig.e2e.json"
 # ── 构建 ──────────────────────────────────────────────────────────────────
 
 [tasks.build]
-description = "Build the panel and the image"
-depends = ["web:build", "image:build"]
+description = "Build the panel and the image, then prove the image is this commit"
+depends = ["web:build", "image:build", "image:verify"]
 
 [tasks."image:build"]
-description = "Build the image that carries the router and the panel"
-run = "podman build --format docker -t localhost/buddy-proxy:latest ."
+description = "Build the image that carries the router and the panel (a dirty worktree is refused)"
+# 脏工作区直接拒绝：镜像里会是不存在于任何提交的代码，之后的验证也无从谈起。
+run = '''
+set -e
+if [ -n "$(git status --porcelain)" ]; then
+  echo "工作区有未提交的改动，镜像里会是不存在于任何提交的代码。先提交（或 stash）再构建。"
+  git status --short
+  exit 1
+fi
+podman build --format docker \
+  -t localhost/buddy-proxy:latest \
+  --build-arg GIT_REVISION="$(git rev-parse HEAD)" \
+  --build-arg APP_VERSION="$(node -p "require('./package.json').version")" \
+  .
+'''
+
+[tasks."image:verify"]
+description = "Prove the image is this commit: the labels, the panel, and a container that answers"
+run = "node --experimental-strip-types tools/verify-image.ts"
 
 # ── 检查 ──────────────────────────────────────────────────────────────────
 

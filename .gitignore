@@ -28,7 +28,11 @@ reference/qoder/
 
 # Helpers for the machine this runs on, not for the service: they rewrite
 # personal client configs and poke at the opencode client's own storage.
-tools/
+#
+# The image verifier is the exception: it is part of the build gate, so it has
+# to travel with the repo. tools/* ignores everything else in the directory.
+tools/*
+!tools/verify-image.ts
 
 # The panel's dependencies and build output
 web/node_modules/
