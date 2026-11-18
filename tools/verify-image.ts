@@ -6,13 +6,13 @@
 // 换一批字符串，检查强度就跟着心情漂。这个脚本把那件事固定下来：构建之后跑
 // 一遍，答案只有两种 —— 这个镜像确实是这份提交构建出来的，或者不是。
 //
-// 它查什么：podman 在不在、工作区干净不干净、镜像在不在、镜像的提交号与版本
+// 它查什么：容器 CLI 在不在、工作区干净不干净、镜像在不在、镜像的提交号与版本
 // 号跟仓库对不对得上、面板的产物完整不完整、容器起不起来、/health 与
 // /admin/ 答不答。任何一条不过就非零退出，并说一句能直接看懂的中文原因。
 //
 // 它不查什么：镜像有没有推到 registry（那要网络与凭据，不是这里的事）。
 //
-// 边界：只用 node 内置模块与 podman 命令行，不装新依赖；测试数据一律落在
+// 边界：只用 node 内置模块与容器 CLI 命令行，不装新依赖；测试数据一律落在
 // /tmp 下并收尾删掉，绝不碰 /data 与 /mnt/data，也不在主目录里留东西。
 
 import { spawnSync } from "node:child_process";
@@ -25,6 +25,13 @@ import { fileURLToPath } from "node:url";
 
 /** 默认的镜像 tag。 */
 const DEFAULT_TAG = "localhost/buddy-proxy:latest";
+
+/**
+ * 容器 CLI 的可执行文件名。默认 podman（本机）；CI 里跑 docker，用
+ * CONTAINER_CLI=docker 指定。docker 与 podman 的 image inspect / inspect
+ * --format / run / rm -f 子命令形状一致，所以这里只换名字，不写两套逻辑。
+ */
+const CLI = (process.env.CONTAINER_CLI || "").trim() || "podman";
 
 /** 仓库根目录：这个脚本在 tools/ 下面。 */
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -86,14 +93,16 @@ function get(url: string): Promise<{ status: number; body: string }> {
   });
 }
 
-/** 1. podman 在不在：这台机器没有它就什么都验不了。 */
-function checkPodman(): string {
-  const result = tryRun("podman", ["version", "--format", "{{.Client.Version}}"]);
-  if (result.missing) throw new CheckFailure("这台机器没有 podman，无法验证镜像");
-  if (!result.ok) {
-    throw new CheckFailure("podman 装了，但连不上它的服务：" + (result.err || "没有更多说明"));
+/** 1. 容器 CLI 在不在：这台机器没有它就什么都验不了。 */
+function checkCli(): string {
+  const result = tryRun(CLI, ["version", "--format", "{{.Client.Version}}"]);
+  if (result.missing) {
+    throw new CheckFailure("找不到容器 CLI：" + CLI + "，可以用 CONTAINER_CLI 指定");
   }
-  return "podman 可用";
+  if (!result.ok) {
+    throw new CheckFailure(CLI + " 装了，但连不上它的服务：" + (result.err || "没有更多说明"));
+  }
+  return CLI + " 可用";
 }
 
 /** 2. 工作区干净不干净：镜像里不该有不属于任何提交的代码。 */
@@ -111,17 +120,17 @@ function checkWorktreeClean(): string {
 
 /** 3. 镜像在不在。 */
 function inspectImage(tag: string): Record<string, unknown> {
-  const result = tryRun("podman", ["image", "inspect", tag]);
+  const result = tryRun(CLI, ["image", "inspect", tag]);
   if (!result.ok) throw new CheckFailure("镜像 " + tag + " 不在本机，先构建它");
   let parsed: unknown;
   try {
     parsed = JSON.parse(result.out);
   } catch {
-    throw new CheckFailure("podman image inspect 的输出不是 JSON，看不懂");
+    throw new CheckFailure(CLI + " image inspect 的输出不是 JSON，看不懂");
   }
   const image = Array.isArray(parsed) ? parsed[0] : parsed;
   if (!image || typeof image !== "object") {
-    throw new CheckFailure("podman image inspect 没有给出镜像信息");
+    throw new CheckFailure(CLI + " image inspect 没有给出镜像信息");
   }
   return image as Record<string, unknown>;
 }
@@ -179,7 +188,7 @@ function checkVersion(image: Record<string, unknown>, tag: string): string {
 
 /** 读镜像里的一个文件。 */
 function readImageFile(tag: string, file: string): string {
-  const result = tryRun("podman", ["run", "--rm", "--pull=never", "--entrypoint", "cat", tag, file]);
+  const result = tryRun(CLI, ["run", "--rm", "--pull=never", "--entrypoint", "cat", tag, file]);
   if (!result.ok) {
     throw new CheckFailure("镜像里没有 " + file + "：" + (result.err || "没有更多说明"));
   }
@@ -199,7 +208,7 @@ function checkPanel(tag: string): string {
   if (refs.size === 0) {
     throw new CheckFailure("镜像里的面板 index.html 没有引用任何 assets/ 资源，面板是空的");
   }
-  const listed = tryRun("podman", ["run", "--rm", "--pull=never", "--entrypoint", "ls", tag, PANEL_DIR + "/assets"]);
+  const listed = tryRun(CLI, ["run", "--rm", "--pull=never", "--entrypoint", "ls", tag, PANEL_DIR + "/assets"]);
   const names = new Set(
     (listed.ok ? listed.out : "")
       .split("\n")
@@ -227,7 +236,7 @@ async function checkRuns(tag: string): Promise<string> {
   fs.chmodSync(dataDir, 0o777);
   const name = "buddy-proxy-verify-" + process.pid + "-" + Date.now();
   try {
-    const started = tryRun("podman", [
+    const started = tryRun(CLI, [
       "run", "-d", "--name", name, "--pull=never",
       "-p", "127.0.0.1:" + port + ":6450",
       "-e", "ROUTER_PORT=6450",
@@ -257,7 +266,7 @@ async function checkRuns(tag: string): Promise<string> {
     return "容器起来了：/health 正常，/admin/ 返回 200";
   } finally {
     // 收尾不留东西：容器与临时目录都删掉。
-    tryRun("podman", ["rm", "-f", name]);
+    tryRun(CLI, ["rm", "-f", name]);
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
 }
@@ -268,9 +277,9 @@ async function waitForHealth(port: number, name: string): Promise<Record<string,
   const url = "http://127.0.0.1:" + port + "/health";
   let last = "还没有试过";
   while (Date.now() < deadline) {
-    const running = tryRun("podman", ["inspect", "-f", "{{.State.Running}}", name]);
+    const running = tryRun(CLI, ["inspect", "-f", "{{.State.Running}}", name]);
     if (running.ok && running.out.trim() !== "true") {
-      const logs = tryRun("podman", ["logs", "--tail", "20", name]);
+      const logs = tryRun(CLI, ["logs", "--tail", "20", name]);
       throw new CheckFailure("容器起来就退了。它的日志：\n" + (logs.out || logs.err || "（没有日志）"));
     }
     let response: { status: number; body: string } | null = null;
@@ -321,7 +330,7 @@ async function main(argv: string[]): Promise<number> {
   const tag = argv[0] && argv[0].trim() !== "" ? argv[0].trim() : DEFAULT_TAG;
   const notes: string[] = [];
   try {
-    notes.push(checkPodman());
+    notes.push(checkCli());
     notes.push(checkWorktreeClean());
     const image = inspectImage(tag);
     notes.push(checkRevision(image));

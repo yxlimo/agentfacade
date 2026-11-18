@@ -1,0 +1,133 @@
+# 镜像发布：打 v* 的 tag 自动构建镜像并推到 docker.io。
+#
+# 为什么放在 CI 里：本机推镜像只对本机有意义（tag 还要在本机留着给
+# podman 用），别的机器拿不到。推到 registry 之后，任何机器都能
+# docker pull 到同一份镜像，tag 与镜像的对应关系也留在 CI 的历史里。
+#
+# 触发只有一种：push 一个 v* 的 tag。main 的每次提交、每个 PR 都不推镜像，
+# 因为推了也没人引用，还会把 registry 里塞满没人要的版本。
+name: Image
+
+on:
+  push:
+    tags: ['v*']
+
+# 只需要读代码，不要写权限。
+permissions:
+  contents: read
+
+# 同一个 tag 被重复推送时，前一次还在跑的那次没有意义了，取消它。
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Build and push the image
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    env:
+      TZ: Asia/Shanghai
+      # 镜像在 registry 里的位置。仓库名写死是正常的，版本号与提交号不写死。
+      IMAGE_REPO: docker.io/shaylulimo/buddy-proxy
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          # 标签推送时 checkout 默认就是 detached HEAD，`git rev-parse HEAD`
+          # 正好是 tag 指向的提交，镜像的 revision label 因此能和仓库对上。
+          fetch-depth: 1
+
+      # 从 tag 推出两个值：版本号（去掉前导 v）与是不是预发布（含 - 就是）。
+      # 预发布不推 latest：latest 只给正式版用，否则预发布会把正式版的
+      # latest 顶掉，别人 docker pull 到的是不该拿到的版本。
+      - name: Derive the version and the prerelease flag from the tag
+        id: meta
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          prerelease=false
+          if [[ "$version" == *-* ]]; then
+            prerelease=true
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          tags="${IMAGE_REPO}:${version}"
+          if [ "$prerelease" = "false" ]; then
+            tags="${tags},${IMAGE_REPO}:latest"
+          fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "image=${IMAGE_REPO}:${version}" >> "$GITHUB_OUTPUT"
+
+      # 版本号必须与 package.json 一致。
+      # 因果：镜像的 version label 与镜像里的 package.json 都来自仓库的
+      # package.json，而 registry 上的 tag 来自 git tag。两边不是同一个来源，
+      # 所以打 tag 之前必须先 bump package.json，否则镜像 label 与 tag
+      # 对不上——下错版本、查错镜像，而且本地构建与 CI 构建会给出不同的
+      # 版本号。这里直接失败，不给「先推上去再说」的机会。
+      - name: Check that package.json matches the tag
+        shell: bash
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          pkg=$(node -p "require('./package.json').version")
+          echo "package.json 的版本：$pkg"
+          echo "tag 推出的版本：$VERSION"
+          if [ "$pkg" != "$VERSION" ]; then
+            echo "打 tag 前先 bump package.json，否则镜像 label 与 tag 对不上" >&2
+            exit 1
+          fi
+
+      # 面板由 Dockerfile 自己在 `AS web` 那一段构建，CI 不需要先跑一遍
+      # `mise run web:build`。这里的 mise 只有一个用途：verify 那一步要用
+      # 仓库钉的 node 版本跑 .ts 脚本（runner 自带的 node 版本不保证支持
+      # type stripping）。
+      - name: Install mise and the toolchain it pins
+        uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+          github_token: ${{ github.token }}
+
+      - name: Log in to docker.io
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up docker buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 构建并推送。GIT_REVISION 与 APP_VERSION 是构建参数，版本号与提交号
+      # 都不写死：它们来自 tag 与这次构建的提交。
+      # platforms 只有 linux/amd64：NAS 是 x86_64，别的架构没人用。
+      - name: Build and push the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            GIT_REVISION=${{ github.sha }}
+            APP_VERSION=${{ steps.meta.outputs.version }}
+          tags: ${{ steps.meta.outputs.tags }}
+
+      # 刚推上去的那份镜像拉回本机验证：标签、提交号、面板产物、容器起不来
+      # 这些问题要在这一步暴露，而不是等别人 pull 的时候才发现。
+      - name: Pull the pushed image back
+        run: docker pull ${{ steps.meta.outputs.image }}
+
+      - name: Verify the pushed image
+        shell: bash
+        env:
+          CONTAINER_CLI: docker
+          IMAGE: ${{ steps.meta.outputs.image }}
+        run: |
+          mise exec -- node --experimental-strip-types \
+            tools/verify-image.ts "$IMAGE"
