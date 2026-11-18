@@ -112,6 +112,12 @@ api_key: "sk-TESTONLY0000000000", // privacy:allow — fabricated sample
 
 **不许**在 bash 里手写服务器文件、用 `&` 起后台进程再 `sleep` + `wait`：那条命令永不返回，看起来像卡死（已经有人这么把自己挂死过几分钟）。也别自己 `http.createServer` 再起一套 —— 收口在这两个入口里，keep-alive 挂死这类坑才不用每个用例重新踩一遍。
 
+## 在测试里跑 git 前先清环境
+
+先清掉继承来的 `GIT_*` 环境变量（`GIT_DIR`、`GIT_WORK_TREE`、`GIT_INDEX_FILE`、`GIT_CONFIG*` 等）：git 认这些变量胜过 `cwd`，不清的话一次性仓库的提交与 config 会落到调用方的真仓库上 —— 已经发生过一次：一次性提交串进了别人的分支，主仓库的 `.git/config` 被改成 `core.bare = true`。本地永远绿，只在有这些变量的沙箱里炸。
+
+反过来，故意在**当前**仓库里跑 git 的脚本（比如按 diff 算门禁的那个）要**保留**继承环境，别一并清掉。
+
 ## 面板的测试用面板自己的配置跑
 
 `web` 的 vitest 配置里有 `@/` 别名。在仓库根直接 `npx vitest` 会报 `Cannot find package '@/gen/…'`、整个文件 0 test —— 看起来像测试坏了，其实只是跑错了地方。要在 `web/` 里跑：
