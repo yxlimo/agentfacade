@@ -15,7 +15,7 @@ import {
   type VendorProbe,
 } from "./shared.ts";
 import { loadSession, zcodeStatus } from "../zcode/auth.ts";
-import type { ZcodeClaimSnapshot } from "../provider-kinds.ts";
+import type { CredentialView, ZcodeClaimSnapshot } from "../provider-kinds.ts";
 import { zcodeModelsInUse } from "../zcode/models.ts";
 import { ZCODE_MESSAGES_URL } from "../zcode/transport.ts";
 import { peekHealthSnapshot } from "../health-cache.ts";
@@ -326,11 +326,29 @@ registerKind({
     refused: (accountId) => zcodeRefused(accountId),
   }),
   credential: (provider) => {
-    const view = fromUpstreamStatus(zcodeStatus(provider.id), "session");
     // 会话还在 ≠ 凭据可用：zcode 的 JWT 没有 exp，网关只能凭「在不在」答
     // authenticated，于是被上游拒掉的令牌在面板上显示成「凭据可用」。上游明说
     // 拒了，而且拒的是现在这一把 —— 那就是过期了，要人重新登录。
-    if (!zcodeRefused(provider.id)) return view;
+    const refused = zcodeRefused(provider.id);
+    let view: CredentialView;
+    try {
+      view = fromUpstreamStatus(zcodeStatus(provider.id), "session");
+    } catch {
+      // zcodeStatus 把登录时刻拼成 ISO，缺那个时刻的旧会话会直接抛。到这里
+      // 凭据本身还在（会话在不在已经问过了），所以照实答：上游拒了就是过期，
+      // 没拒就是可用 —— 不因为一个时刻的缺失把整条凭据线弄崩。
+      view = {
+        kind: "session",
+        status: refused ? CredentialState.EXPIRED : CredentialState.AUTHENTICATED,
+        fingerprint: "",
+        expiresAt: 0,
+        remainingSec: 0,
+        warning: false,
+        detail: refused ? "令牌被上游拒绝，需重新登录" : "会话里没有登录时刻",
+        generation: 0,
+      };
+    }
+    if (!refused) return view;
     return {
       ...view,
       status: CredentialState.EXPIRED,

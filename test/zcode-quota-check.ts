@@ -679,6 +679,24 @@ check(
 );
 writeSession(LOGIN_AT);
 
+// 会话里**根本没有** loginAtMs 这个字段（更老的会话）：判据读不到它，
+// 按被拒处理；会话那一层拼时刻时抛的错也不能把凭据线弄崩。
+setSecret(providerSecretId(ACCOUNT.id), "session", {
+  token: "zcode-test-token",
+  accessToken: "zcode-test-token",
+  userId: "u-1",
+  provider: "zai",
+  deviceId: "device-1234",
+  generation: 1,
+  expiresAtMs: 0,
+});
+check(
+  "会话里没有 loginAtMs 字段 → 被拒仍算过期（不抛）",
+  credentialState(unauthorizedProbe()) === CredentialState.EXPIRED,
+  String(credentialState(unauthorizedProbe())),
+);
+writeSession(LOGIN_AT);
+
 section("账号那一行：被拒的会话在凭据行上也是过期");
 
 /** 凭据行读出来的那一份（面板上每个账号下面那一行）。 */
