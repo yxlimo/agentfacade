@@ -88,7 +88,7 @@ describe('额度按种类渲染', () => {
     expect(within(detail).queryByText(/¥/)).not.toBeInTheDocument()
   })
 
-  it('平台没报总额的时候不写数字，也不硬凑总额和已用', async () => {
+  it('平台只报剩余、不报总额的时候，剩余那个数照旧显示', async () => {
     const client = clientWith('workbuddy-cn', [
       create(UpstreamQuotaSchema, {
         upstreamId: 'workbuddy-cn',
@@ -104,10 +104,38 @@ describe('额度按种类渲染', () => {
     const detail = await openPlatform(client, 'workbuddy-cn')
 
     expect(within(detail).getByText('积分')).toBeInTheDocument()
-    // 总额是 0 = 平台没报总额：这时候写「剩 42 点」会把「不知道」说成「有 42 点」。
-    expect(within(detail).queryByText('42 点')).not.toBeInTheDocument()
+    // 平台只报剩余、不报总额（total 为 0）的时候，那个余量是唯一有信息量的
+    // 数字，藏起来就只剩一句没有信息的话了。所以照旧显示。
+    expect(within(detail).getAllByText('42 点').length).toBeGreaterThan(0)
+    // 总额和已用是平台没给的说法，不硬凑。
     expect(within(detail).queryByText('总额')).not.toBeInTheDocument()
     expect(within(detail).queryByText('已用')).not.toBeInTheDocument()
+  })
+
+  it('一个数字都没有的时候不写数字，让 note 说话', async () => {
+    const client = clientWith('workbuddy-cn', [
+      create(UpstreamQuotaSchema, {
+        upstreamId: 'workbuddy-cn',
+        accountId: 'workbuddy-cn',
+        credits: create(CreditSummarySchema, {
+          total: 0,
+          used: 0,
+          remaining: 0,
+          note: '额度用尽',
+        }),
+      }),
+    ])
+
+    const detail = await openPlatform(client, 'workbuddy-cn')
+
+    // 「剩 0 点」会被读成「额度用完了」，而平台其实什么都没报。
+    expect(within(detail).queryByText('剩 0 点')).not.toBeInTheDocument()
+    expect(within(detail).queryByText('剩余 0 点')).not.toBeInTheDocument()
+    expect(within(detail).queryByText('0 点')).not.toBeInTheDocument()
+    expect(within(detail).queryByText('总额')).not.toBeInTheDocument()
+    expect(within(detail).queryByText('已用')).not.toBeInTheDocument()
+    // 原因由 note 说。
+    expect(within(detail).getByText('额度用尽')).toBeInTheDocument()
   })
 
   it('余额账号显示钱、明细、最早到期和会过期的那部分', async () => {
