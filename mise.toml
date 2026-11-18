@@ -578,7 +578,7 @@ run = "pnpm exec tsc -p tsconfig.e2e.json"
 
 [tasks.build]
 description = "Build the panel and the image"
-depends = ["web.build", "image.build"]
+depends = ["web:build", "image:build"]
 
 [tasks."image:build"]
 description = "Build the image that carries the router and the panel"
