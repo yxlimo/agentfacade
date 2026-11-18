@@ -412,10 +412,12 @@ export interface HealthSnapshot {
    *
    * 存的是结论（VendorProbe）而不是原样答复：面板要能回答「为什么这里没有
    * 数字」，而「凭据被拒」「问不到」「额度用完」长得完全不一样。
-   * `loginAtMs` 是问这一轮时那份会话的登录时刻 —— 凭据那一头拿它与结论的时刻
-   * 比：重新登录之后旧的那次拒绝就自动作废了。
+   *
+   * 登录时刻不在这里：判「上游拒的是不是现在这一把令牌」要读的是**实时会话**
+   * （lib/kinds/zcode.ts 的 zcodeRefused），重登之后那个红要立刻消失，不能等
+   * 快照刷新。
    */
-  zcode: Record<string, { quota: unknown; loginAtMs?: number; claim?: ZcodeClaimSnapshot }>;
+  zcode: Record<string, { quota: unknown; claim?: ZcodeClaimSnapshot }>;
   workbuddy: Record<string, { credits: unknown }>;
   /**
    * 额度插件问回来的结论：插件 id → 账号 id → 那一次的结论。

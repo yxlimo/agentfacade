@@ -53,12 +53,19 @@ function currentSnapshot(): HealthSnapshot | null {
  *     否则人已经登录过了，账号却永远挂着一个红
  *
  * 没有会话就没有可拒的东西：那时候凭据是「没登录」，不是「被拒」。
+ *
+ * 会话在、但缺登录时刻（旧会话）时按**被拒**处理：登录路径每次登录都会写
+ * loginAtMs（lib/zcode/auth.ts），所以用户一重登这个红就自动消失 —— 判错
+ * 的代价是「刚重登的那几分钟红着」，自愈；反过来按「没被拒」处理，被拒的
+ * 令牌会一直显示成可用，那是不会自愈的。
  */
 function zcodeRefused(providerId: string, snapshot?: HealthSnapshot | null): boolean {
   const probe = zcodeProbeOf(providerId, snapshot ?? currentSnapshot());
   if (probe?.state !== "unauthorized") return false;
-  const loginAtMs = loadSession(providerId)?.loginAtMs ?? 0;
-  if (!loginAtMs) return false;
+  const session = loadSession(providerId);
+  if (!session) return false;
+  const loginAtMs = Number(session.loginAtMs ?? 0);
+  if (!loginAtMs) return true;
   return probe.at > loginAtMs;
 }
 

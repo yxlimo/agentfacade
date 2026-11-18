@@ -230,8 +230,15 @@ writeSession(LOGIN_AT);
  * ------------------------------------------------------------------ */
 
 /** 快照里这个账号那一份。 */
-const snapshotOf = (quota: unknown, loginAtMs = LOGIN_AT): HealthSnapshot =>
-  ({ zcode: { [ACCOUNT.id]: { quota, loginAtMs } } }) as unknown as HealthSnapshot;
+/**
+ * 快照里这个账号那一份。
+ *
+ * 快照里**没有**登录时刻：判据读的是实时会话（lib/kinds/zcode.ts 的
+ * zcodeRefused），快照只带结论。这里也不写 loginAtMs，免得测试看起来像是在
+ * 测快照里的那个字段（它根本不被读）。
+ */
+const snapshotOf = (quota: unknown): HealthSnapshot =>
+  ({ zcode: { [ACCOUNT.id]: { quota } } }) as unknown as HealthSnapshot;
 
 const okProbe = (buckets: unknown[], plans: unknown[] = [], serverTime = "2026-11-01T00:00:00.000Z"): any => ({
   state: "ok",
@@ -604,8 +611,8 @@ section("四、凭据那一头");
 const refusedByUpstream = await probeFor("unauthorized");
 const failedByUpstream = await probeFor("server-error");
 
-const credentialState = (probe: unknown, loginAtMs = LOGIN_AT): number => {
-  putHealthSnapshot(snapshotOf(probe, loginAtMs));
+const credentialState = (probe: unknown): number => {
+  putHealthSnapshot(snapshotOf(probe));
   return Number(kind.credential(ACCOUNT)?.status ?? 0);
 };
 
@@ -645,8 +652,30 @@ const rejectedAt = Date.now();
 writeSession(rejectedAt + 1000);
 check(
   "重新登录 → 旧的那次拒绝自动作废",
-  credentialState(unauthorizedProbe(rejectedAt), rejectedAt + 1000) === CredentialState.AUTHENTICATED,
-  String(credentialState(unauthorizedProbe(rejectedAt), rejectedAt + 1000)),
+  credentialState(unauthorizedProbe(rejectedAt)) === CredentialState.AUTHENTICATED,
+  String(credentialState(unauthorizedProbe(rejectedAt))),
+);
+writeSession(LOGIN_AT);
+
+// 旧会话：有令牌但没有登录时刻（那次登录早于写 loginAtMs 的版本，这里用 0
+// 表示「没有」—— 字段整个缺掉的话 lib/zcode/auth.ts 的 zcodeStatus 自己先崩，
+// 那是另一处的问题）。
+// 判据读的是实时会话，缺这个时刻就按被拒处理（fail-closed）：重登一次这个红
+// 就没了 —— 判错的代价是自愈的，按「没被拒」处理的代价不是。
+setSecret(providerSecretId(ACCOUNT.id), "session", {
+  token: "zcode-test-token",
+  accessToken: "zcode-test-token",
+  userId: "u-1",
+  provider: "zai",
+  deviceId: "device-1234",
+  generation: 1,
+  loginAtMs: 0,
+  expiresAtMs: 0,
+});
+check(
+  "旧会话（缺登录时刻）→ 被拒仍算过期（fail-closed）",
+  credentialState(unauthorizedProbe()) === CredentialState.EXPIRED,
+  String(credentialState(unauthorizedProbe())),
 );
 writeSession(LOGIN_AT);
 

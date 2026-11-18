@@ -9,7 +9,6 @@
 
 import { configNumber, configString } from "../config.ts";
 import { zcodeQuota } from "../zcode/credits.ts";
-import { zcodeLoginAtMs } from "../zcode/auth.ts";
 import { zcodeClaimSnapshot } from "../zcode/auto-claim.ts";
 import { readCredential } from "../minimax/auth.ts";
 import { regionKey } from "../minimax/hosts.ts";
@@ -531,11 +530,11 @@ async function refreshOne(snapshot: HealthSnapshot, row: ProviderRow): Promise<v
     case "zcode": {
       // 存的是结论（VendorProbe），不是原样答复：面板要能分清「上游拒了这把
       // 令牌」「这一轮问不到」「额度用完了」—— 它们长得一样，后果完全不同。
-      // loginAtMs 一起存：凭据那一头拿它与结论的时刻比，重新登录之后旧的那次
-      // 拒绝就自动作废了。
+      // 登录时刻不在这里：凭据那一头读的是实时会话（判据在
+      // lib/kinds/zcode.ts 的 zcodeRefused），重登之后那个红要立刻消失，
+      // 等快照刷新太慢。
       snapshot.zcode[row.id] = {
         quota: await zcodeQuota(300_000, row.id),
-        loginAtMs: zcodeLoginAtMs(row.id),
         // 领取的结论：成功与失败都存。面板从这一格读出「今天领了没有、为什么
         // 没领成」。它从领取那一步的记处取（进程内存里），不是这里问来的 ——
         // 这里再问一遍就是第二次领取。
