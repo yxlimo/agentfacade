@@ -41,6 +41,13 @@ tools/*
 # The diff-based gate chooser: same reason — every subagent runs it.
 !tools/verify-changes.ts
 
+# The probe is not machine-local: its configs in tools/probes/ are the shared
+# request lists, and mise runs it (`mise run probe`). Unignore the executor
+# and the config directory only.
+!tools/probe.ts
+!tools/probes/
+!tools/probes/*
+
 # The panel's dependencies and build output
 web/node_modules/
 web/dist/
