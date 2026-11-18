@@ -14,6 +14,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { scrubForLog } from "../lib/log-scrub.ts";
+// 假上游只有两条固定入口之一：手动看探针会发什么，用 --dry-run / --fake，
+// 不许自己在 /tmp 写服务器文件用 & 起后台进程。
+import { startFakeUpstream } from "../test/fake-upstream.ts";
 import { loadSession, ZCODE_BASE, ZCODE_VERSION } from "../lib/zcode/auth.ts";
 import { ZCODE_CLAIM_APP_VERSION } from "../lib/zcode/claim.ts";
 import { ZCODE_CLIENT_PLATFORM, zcodePlatformHeaders } from "../lib/zcode/transport.ts";
@@ -146,10 +149,12 @@ interface Args {
   raw: boolean;
   timeoutMs: number;
   list: boolean;
+  dryRun: boolean;
+  fake: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { arg: {}, yesWrite: false, raw: false, timeoutMs: 20_000, list: false };
+  const args: Args = { arg: {}, yesWrite: false, raw: false, timeoutMs: 20_000, list: false, dryRun: false, fake: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--account") args.account = argv[++i];
@@ -168,6 +173,8 @@ function parseArgs(argv: string[]): Args {
       if (!Number.isFinite(n) || n <= 0) throw new Error(`--timeout 要正整数毫秒，拿到的是 "${argv[i]}"`);
       args.timeoutMs = n;
     } else if (a === "--list") args.list = true;
+    else if (a === "--dry-run") args.dryRun = true;
+    else if (a === "--fake") args.fake = true;
     else throw new Error(`不认识的参数：${a}`);
   }
   return args;
@@ -332,8 +339,21 @@ async function runOne(config: ProbeConfig, req: ProbeRequest, args: Args, file: 
     throw new Error(`缺命令行参数：\n  - ${missing.join("\n  - ")}`);
   }
 
-  const headers = headerFactory(args.account ?? "");
-  assertCredentialHeader(headers);
+  // 看而不发的两个开关不经过发送闸门：凭据头加载不出来照样摆事实（没有
+  // --account 也能看形状）；真正要发送的路径仍走 assertCredentialHeader。
+  let headers: Record<string, string>;
+  let headerNote = "";
+  if (args.dryRun || args.fake) {
+    try {
+      headers = headerFactory(args.account ?? "");
+    } catch (err) {
+      headers = {};
+      headerNote = `（凭据头没加载出来：${(err as Error).message}）`;
+    }
+  } else {
+    headers = headerFactory(args.account ?? "");
+    assertCredentialHeader(headers);
+  }
 
   const { url, constErrors } = buildUrl(base, req, args.arg);
   if (constErrors.length) throw new Error(`配置引用了未登记的常量：\n  - ${constErrors.join("\n  - ")}`);
@@ -342,6 +362,38 @@ async function runOne(config: ProbeConfig, req: ProbeRequest, args: Args, file: 
       ? undefined
       : JSON.stringify(substitute(req.body, args.arg, "body", missing, constErrors));
   const method = req.method.toUpperCase();
+
+  // 「我要看这个探针到底会发什么」的标准答案，替代自己在 /tmp 写个 srv.mjs。
+  // --dry-run：一个请求都不发；--fake：发到进程内假上游，绝不碰真上游。
+  if (args.dryRun || args.fake) {
+    const describe = (target: string) => {
+      console.log(`${method} ${target}${headerNote}`);
+      for (const [k, v] of Object.entries(headers)) console.log(`  ${k}: <值长度 ${v.length}>`);
+      console.log(body === undefined ? "  body:（无）" : `  body: ${body}`);
+    };
+    if (args.dryRun) {
+      console.log("--dry-run：不发送，将要发出的请求如下");
+      describe(url);
+      return;
+    }
+    const fake = await startFakeUpstream();
+    try {
+      const u = new URL(url);
+      const target = `${fake.url}${u.pathname}${u.search}`;
+      console.log("--fake：发到进程内假上游，发出去的是：");
+      describe(target);
+      const res = await fetch(target, {
+        method,
+        headers: { ...headers, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+        body,
+      });
+      const text = await res.text();
+      console.log(`← 收到 HTTP ${res.status}：${text}`);
+    } finally {
+      await fake.close();
+    }
+    return;
+  }
 
   console.log(`→ ${method} ${url}`);
   const started = Date.now();

@@ -105,6 +105,13 @@ api_key: "sk-TESTONLY0000000000", // privacy:allow — fabricated sample
 
 默认数据目录的回落顺序是 `FACADE_DATA_DIR` → `/data`（存在就优先）→ `$HOME/.agentfacade`。跑可能触及默认目录的测试时，先把 `FACADE_DATA_DIR` 指到 `/tmp` 下的临时目录。
 
+## 假上游只有两条固定入口
+
+- 测试里：`import { startFakeUpstream } from "./fake-upstream.ts"`（`test/fake-upstream.ts`）。端口随机、请求按序记录、`close()` 会真的关掉 keep-alive 连接。
+- 手动看探针会发什么：`mise run probe -- … --dry-run`（不发送）或 `--fake`（发到进程内假上游，打印「发出」与「收到」两侧）。
+
+**不许**在 bash 里手写服务器文件、用 `&` 起后台进程再 `sleep` + `wait`：那条命令永不返回，看起来像卡死（已经有人这么把自己挂死过几分钟）。也别自己 `http.createServer` 再起一套 —— 收口在这两个入口里，keep-alive 挂死这类坑才不用每个用例重新踩一遍。
+
 ## 面板的测试用面板自己的配置跑
 
 `web` 的 vitest 配置里有 `@/` 别名。在仓库根直接 `npx vitest` 会报 `Cannot find package '@/gen/…'`、整个文件 0 test —— 看起来像测试坏了，其实只是跑错了地方。要在 `web/` 里跑：
