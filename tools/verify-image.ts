@@ -135,12 +135,21 @@ function inspectImage(tag: string): Record<string, unknown> {
   return image as Record<string, unknown>;
 }
 
-/** 镜像上的一个 label。 */
+/** 镜像上的一个 label。
+ *
+ * 两个 CLI 的 inspect 形状不一样，两处都要看：docker 只把 label 放在
+ * `Config.Labels` 下，podman 另外还有一个顶层 `Labels`。只按 podman 的形状写，
+ * 结果是「本地绿、CI 红」，而且报出来是「没有这个 label」——看着像构建参数没传，
+ * 实际是读错了地方。
+ */
 function labelOf(image: Record<string, unknown>, key: string): string {
-  const labels = image["Labels"];
-  if (!labels || typeof labels !== "object") return "";
-  const value = (labels as Record<string, unknown>)[key];
-  return typeof value === "string" ? value : "";
+  const read = (source: unknown): string => {
+    if (!source || typeof source !== "object") return "";
+    const value = (source as Record<string, unknown>)[key];
+    return typeof value === "string" ? value : "";
+  };
+  const config = image["Config"] as Record<string, unknown> | undefined;
+  return read(image["Labels"]) || read(config?.["Labels"]);
 }
 
 /** 4. 身份：镜像的提交号必须就是仓库的 HEAD。 */
