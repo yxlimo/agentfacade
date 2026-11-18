@@ -5,7 +5,6 @@ inheritSkills: false
 inheritProjectContext: true
 tools: read, grep, find, ls, bash
 thinking: medium
-subagentOnlyExtensions: ~/extensions/pi-subagents-extend/packages/pi-plugin/src/child-context.ts, ~/.pi/agent-profiles/review.ts
 systemPromptMode: replace
 ---
 

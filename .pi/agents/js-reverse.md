@@ -7,7 +7,6 @@ skills: hello-js-reverse-skill
 skillPath: ../../.agents/skills
 tools: read, grep, find, ls, bash, write, edit
 thinking: medium
-subagentOnlyExtensions: ~/extensions/pi-subagents-extend/packages/pi-plugin/src/child-context.ts, ~/.pi/agent-profiles/coder.ts
 systemPromptMode: replace
 ---
 
