@@ -216,10 +216,10 @@ process.env.ZCODE_CLAIM_TIMEOUT_MS = "400";
 await import("../lib/kinds/zcode.ts");
 const { kindOf } = await import("../lib/provider-kinds.ts");
 const { previewClaims, claimPlan } = await import("../lib/zcode/claim.ts");
-const { claimOnce, runZcodeAutoClaim, zcodeClaimSnapshot } = await import("../lib/zcode/auto-claim.ts");
+const { claimOnce, runZcodeAutoClaim, zcodeClaimSnapshot, mergePendingClaims } = await import("../lib/zcode/auto-claim.ts");
 const { fetchZcodeQuota } = await import("../lib/zcode/credits.ts");
 const { ZCODE_CLIENT_PLATFORM } = await import("../lib/zcode/transport.ts");
-const { putHealthSnapshot, peekHealthSnapshot } = await import("../lib/health-cache.ts");
+const { putHealthSnapshot, peekHealthSnapshot, clearHealthSnapshot } = await import("../lib/health-cache.ts");
 const { setSecret } = await import("../lib/store.ts");
 const { providerSecretId } = await import("../lib/credential-ids.ts");
 const { addAccount, listProviders } = await import("../lib/providers.ts");
@@ -260,6 +260,16 @@ function reset(preview: PreviewMode = "plans", claim: ClaimMode = "ok"): void {
 }
 
 /**
+ * 一份**完整**的快照（每个桶都在）。
+ *
+ * 造快照要造完整的：少几个桶的那份形状不对，读它的人（面板、路由）会崩 ——
+ * 那正是这一族要钉住的东西。
+ */
+function fullSnapshot(zcode: HealthSnapshot["zcode"] = {}): HealthSnapshot {
+  return { qoder: {}, minimax: {}, zcode, workbuddy: {}, plugins: {} };
+}
+
+/**
  * 复位领取的状态。
  *
  * 领取的结论与「已经领过哪些计划」都存在现役的那份健康快照里
@@ -267,7 +277,7 @@ function reset(preview: PreviewMode = "plans", claim: ClaimMode = "ok"): void {
  * 「只给测试用」的开关。
  */
 function resetClaimState(): void {
-  putHealthSnapshot({ zcode: {} } as unknown as HealthSnapshot);
+  putHealthSnapshot(fullSnapshot());
 }
 
 /* ------------------------------------------------------------------ *
@@ -527,10 +537,10 @@ section("七、结论进快照，面板看得见");
 reset("plans");
 // 复位领取的结论：结论存在现役的那份健康快照里（zcode[账号].claim），
 // 所以复位就是换一份没有结论的快照 —— lib/ 里没有「只给测试用」的开关。
-putHealthSnapshot({ zcode: {} } as unknown as HealthSnapshot);
+putHealthSnapshot(fullSnapshot());
 // 先摆一份快照：领取的结论要当场写进去，不能等下一次全量刷新。
-putHealthSnapshot({
-  zcode: {
+putHealthSnapshot(
+  fullSnapshot({
     [ACCOUNT_ID]: {
       quota: {
         state: "ok",
@@ -538,28 +548,26 @@ putHealthSnapshot({
         at: Date.now(),
       },
     },
-  },
-} as unknown as HealthSnapshot);
+  }),
+);
 await claimOnce(ACCOUNT_ID);
-const liveClaim = (peekHealthSnapshot<HealthSnapshot>()?.data?.zcode?.[ACCOUNT_ID] as any)?.claim;
+const liveClaim = peekHealthSnapshot<HealthSnapshot>()?.data?.zcode?.[ACCOUNT_ID]?.claim;
 check(
   "领取的结论当场写进了现役的快照",
   liveClaim?.state === "claimed" && liveClaim?.planName === "ALPHA PLAN",
   JSON.stringify(liveClaim),
 );
 
-const snapshot = {
-  zcode: {
-    [ACCOUNT_ID]: {
-      quota: {
-        state: "ok",
-        value: { buckets: [], plans: [], serverTime: new Date(1800000000 * 1000).toISOString() },
-        at: Date.now(),
-      },
-      claim: zcodeClaimSnapshot(ACCOUNT_ID),
+const snapshot = fullSnapshot({
+  [ACCOUNT_ID]: {
+    quota: {
+      state: "ok",
+      value: { buckets: [], plans: [], serverTime: new Date(1800000000 * 1000).toISOString() },
+      at: Date.now(),
     },
+    claim: zcodeClaimSnapshot(ACCOUNT_ID),
   },
-} as unknown as HealthSnapshot;
+});
 putHealthSnapshot(snapshot);
 const note = kind.quotas(
   { id: ACCOUNT_ID, platform: "zcode", kind: "zcode" } as unknown as ProviderRow,
@@ -575,18 +583,16 @@ check(
 // 终态也要看得见：面板要能说出「今天为什么没领到」。
 reset("plans", "terminal");
 await claimOnce(ACCOUNT_ID);
-const terminalSnapshot = {
-  zcode: {
-    [ACCOUNT_ID]: {
-      quota: {
-        state: "ok",
-        value: { buckets: [], plans: [], serverTime: new Date(1800000000 * 1000).toISOString() },
-        at: Date.now(),
-      },
-      claim: zcodeClaimSnapshot(ACCOUNT_ID),
+const terminalSnapshot = fullSnapshot({
+  [ACCOUNT_ID]: {
+    quota: {
+      state: "ok",
+      value: { buckets: [], plans: [], serverTime: new Date(1800000000 * 1000).toISOString() },
+      at: Date.now(),
     },
+    claim: zcodeClaimSnapshot(ACCOUNT_ID),
   },
-} as unknown as HealthSnapshot;
+});
 putHealthSnapshot(terminalSnapshot);
 const terminalNote =
   kind.quotas(
@@ -603,18 +609,16 @@ check(
 // 名额用完了、已经领过，还是活动还没开始 —— 不能编一个结论。
 reset("empty");
 await claimOnce(ACCOUNT_ID);
-const noneSnapshot = {
-  zcode: {
-    [ACCOUNT_ID]: {
-      quota: {
-        state: "ok",
-        value: { buckets: [], plans: [], serverTime: new Date(1800000000 * 1000).toISOString() },
-        at: Date.now(),
-      },
-      claim: zcodeClaimSnapshot(ACCOUNT_ID),
+const noneSnapshot = fullSnapshot({
+  [ACCOUNT_ID]: {
+    quota: {
+      state: "ok",
+      value: { buckets: [], plans: [], serverTime: new Date(1800000000 * 1000).toISOString() },
+      at: Date.now(),
     },
+    claim: zcodeClaimSnapshot(ACCOUNT_ID),
   },
-} as unknown as HealthSnapshot;
+});
 putHealthSnapshot(noneSnapshot);
 const noneNote =
   kind.quotas(
@@ -633,7 +637,7 @@ check(
 );
 
 // 结论只有一份，就在现役的快照里：换了快照就没有旧结论（进程里不再另存一份）。
-putHealthSnapshot({ zcode: {} } as unknown as HealthSnapshot);
+putHealthSnapshot(fullSnapshot());
 check(
   "换了快照 → 结论也跟着换（没有另一份内存里的旧结论）",
   zcodeClaimSnapshot(ACCOUNT_ID) === undefined,
@@ -656,7 +660,7 @@ check(
   JSON.stringify(quota?.state === "ok" ? quota.value.plans : null),
 );
 
-putHealthSnapshot({ zcode: {} } as unknown as HealthSnapshot);
+putHealthSnapshot(fullSnapshot());
 
 /* ------------------------------------------------------------------ *
  * 九、每次尝试都有一行日志
@@ -825,6 +829,70 @@ check(
   "换一个计划 → 领到的是那个计划",
   thirdRound?.state === "claimed" && thirdRound.planName === "BETA PLAN",
   JSON.stringify(thirdRound),
+);
+
+/* ------------------------------------------------------------------ *
+ * 十二、整个快照都还没有的时候
+ * ------------------------------------------------------------------ */
+
+section("十二、整个快照都还没有的时候：结论不丢，快照的形状也不坏");
+
+// 进程刚起来的样子：一次健康轮询都还没有。领取跑在前面（两个定时器各有各的
+// 节奏），那时候内存里没有快照。
+reset("plans");
+clearHealthSnapshot();
+check("一开始就没有快照", peekHealthSnapshot() === null, JSON.stringify(peekHealthSnapshot()));
+
+const noSnapshotClaim = await claimOnce(ACCOUNT_ID);
+check(
+  "没有快照时领取 → 结论仍然读得到（不丢）",
+  zcodeClaimSnapshot(ACCOUNT_ID)?.state === "claimed",
+  JSON.stringify(zcodeClaimSnapshot(ACCOUNT_ID)),
+);
+check(
+  "没有快照时领取 → 没有留下半份快照",
+  peekHealthSnapshot() === null,
+  JSON.stringify(peekHealthSnapshot()?.data),
+);
+
+// 别的桶的读法：面板与路由都这么读（snapshot.qoder[id]）。半份快照少的就是
+// 这些桶 —— 读它的人会崩（Cannot read properties of undefined）。
+const qoderRead = (): unknown => {
+  const live = peekHealthSnapshot<HealthSnapshot>()?.data;
+  if (!live) return null; // 没有快照：没有桶可读
+  return live.qoder[ACCOUNT_ID] ?? null;
+};
+let qoderThrew = "";
+let qoderValue: unknown = null;
+try {
+  qoderValue = qoderRead();
+} catch (e) {
+  qoderThrew = (e as Error)?.message ?? String(e);
+}
+check("读 snapshot.qoder 不会崩", qoderThrew === "", qoderThrew);
+check("读 snapshot.qoder 读得到（没有快照就是没有）", qoderValue === null, String(qoderValue));
+
+// 下一份快照写出来的时候，窗口里的结论被并进去（面板读的是快照那份）。
+const nextSnapshot = fullSnapshot();
+mergePendingClaims(nextSnapshot);
+putHealthSnapshot(nextSnapshot);
+check(
+  "下一份快照带走了领取的结论",
+  nextSnapshot.zcode[ACCOUNT_ID]?.claim?.state === "claimed",
+  JSON.stringify(nextSnapshot.zcode[ACCOUNT_ID]?.claim),
+);
+check(
+  "并进快照之后结论还读得到",
+  zcodeClaimSnapshot(ACCOUNT_ID)?.state === "claimed",
+  JSON.stringify(zcodeClaimSnapshot(ACCOUNT_ID)),
+);
+
+// 进了快照之后内存里就不再留一份：换一份没有结论的快照 → 结论跟着没了。
+putHealthSnapshot(fullSnapshot());
+check(
+  "进了快照之后内存里不再留第二份",
+  zcodeClaimSnapshot(ACCOUNT_ID) === undefined,
+  JSON.stringify(zcodeClaimSnapshot(ACCOUNT_ID)),
 );
 
 const { closeStore } = await import("../lib/store.ts");

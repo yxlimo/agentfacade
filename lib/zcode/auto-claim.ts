@@ -24,7 +24,7 @@
 import { configFlag, configNumber, markHotSetting } from "../config.ts";
 import { parseBool, readEnvValue } from "../env.ts";
 import { listProviders, provider, type ProviderRow } from "../providers.ts";
-import { peekHealthSnapshot, putHealthSnapshot } from "../health-cache.ts";
+import { peekHealthSnapshot } from "../health-cache.ts";
 import type { HealthSnapshot, ZcodeClaimSnapshot } from "../provider-kinds.ts";
 import { claimPlan, describeClaimedPlan, logClaimAttempt, previewClaims } from "./claim.ts";
 
@@ -66,16 +66,79 @@ export function autoClaimEnabled(): boolean {
 /**
  * 这个账号最近一次的领取结论。
  *
- * 结论只存在现役的那份健康快照里（zcode[providerId].claim）：面板读的就是它，
- * 没有第二处。进程里再存一份的话，两处迟早走样 —— 面板显示的是快照那份，
- * 读的是内存那份。
+ * 结论的落点是现役的那份健康快照（zcode[providerId].claim）：面板读的就是它。
  *
- * 没有 = 还没领过（不是「领了但没结论」）。
+ * 整个快照都还没有的那一段窗口里，结论先放在模块级的 pending 里（见
+ * pendingClaims）：领取是**写上游**的动作，一天一次的结果丢了就没人知道今天
+ * 领没领。快照一出现，pending 就并进快照（mergePendingClaims），之后只读快照。
  */
 export function zcodeClaimSnapshot(providerId: string): ZcodeClaimSnapshot | undefined {
-  const live = peekHealthSnapshot<HealthSnapshot>()?.data;
+  const live = peekHealthSnapshot<HealthSnapshot>()?.data ?? null;
   const claim = live?.zcode?.[providerId]?.claim;
-  return claim ? (claim as ZcodeClaimSnapshot) : undefined;
+  if (claim) {
+    // 已经在快照里了：pending 那份是旧的，删掉。
+    pendingClaims.delete(providerId);
+    return claim;
+  }
+  const pending = pendingClaims.get(providerId);
+  if (!pending) return undefined;
+  // 窗口过去了：快照已经在了，更新的那份才是权威（它要么带走了这个结论，
+  // 要么已经重新问过上游）。这一份不留着。
+  if (pending.snapshot !== live) {
+    pendingClaims.delete(providerId);
+    return undefined;
+  }
+  return pending.claim;
+}
+
+/**
+ * 还没写进快照的领取结论。
+ *
+ * 什么时候会有：进程刚起来、第一次健康轮询还没写出快照的时候，领取已经跑过
+ * 一轮了（领取与健康刷新各有各的节奏，领取常常赶在前面）。领取是**写上游**
+ * 的动作，结果丢了就没人知道今天领没领 —— 所以那一份先放在这里，等下一份
+ * 快照写出来时并进去（mergePendingClaims）。
+ *
+ * 这是**运行期**的需要，不是给测试留的开关：所以这里没有「复位」入口。结论
+ * 进了快照就删掉（快照是唯一的落点）；测试复位靠换一份快照
+ * （putHealthSnapshot）—— 换了快照就说明有了更新的真相，这一窗口就过去了。
+ */
+interface PendingClaim {
+  /**
+   * 记下来时现役的那份快照。
+   *
+   * 窗口只有「整个快照都还没有」这一段，所以这里记的是 null。快照一旦出现，
+   * 这一份就是旧的了。
+   */
+  snapshot: HealthSnapshot | null;
+  claim: ZcodeClaimSnapshot;
+}
+
+/** 还没写进快照的领取结论：账号 id → 那一份。 */
+const pendingClaims = new Map<string, PendingClaim>();
+
+/**
+ * 把窗口里的结论并进一份刚写出来的快照。
+ *
+ * 谁写快照谁调它：结论是**写上游**的结果，丢了就没人知道今天领没领。
+ * 写完就删掉 pending —— 快照是唯一的落点，两处不留同一份。
+ */
+export function mergePendingClaims(snapshot: HealthSnapshot): void {
+  const live = peekHealthSnapshot<HealthSnapshot>()?.data ?? null;
+  for (const [providerId, pending] of pendingClaims) {
+    if (pending.snapshot !== live) {
+      // 窗口已经过去了（快照换过了）：这份是旧的。
+      pendingClaims.delete(providerId);
+      continue;
+    }
+    const existing = snapshot.zcode?.[providerId]?.claim;
+    snapshot.zcode = { ...(snapshot.zcode ?? {}) };
+    snapshot.zcode[providerId] = {
+      ...(snapshot.zcode[providerId] ?? { quota: null }),
+      claim: existing ?? pending.claim,
+    };
+    pendingClaims.delete(providerId);
+  }
 }
 
 /**
@@ -91,12 +154,14 @@ export function zcodeClaimSnapshot(providerId: string): ZcodeClaimSnapshot | und
  * 额度那一格还没有的时候，造出来的那一份带着 `quota: null` —— 那是「没问过
  * 额度」，不是「额度是 0」（null 那一档面板不摆额度卡）。
  *
- * 整个快照都还没有的时候造一份只带这个账号的：领取是**写上游**的动作，结果
- * 丢了就没人知道今天领没领。
+ * 整个快照都还没有的时候（进程刚起来，第一次健康轮询还没跑）：结论先放在
+ * pending 里，等下一份快照写出来时并进去。**不造**一份半份快照 —— 造出来的
+ * 那个形状不对（少了 qoder / minimax 那些桶），读它的人会崩。
  */
 function record(providerId: string, snapshot: ZcodeClaimSnapshot): void {
-  const live = peekHealthSnapshot<HealthSnapshot>()?.data;
-  const previous = live?.zcode?.[providerId]?.claim as ZcodeClaimSnapshot | undefined;
+  const live = peekHealthSnapshot<HealthSnapshot>()?.data ?? null;
+  const previous =
+    live?.zcode?.[providerId]?.claim ?? pendingClaims.get(providerId)?.claim;
   // 合并「已经领过哪些计划」：新的结论（none / failed）不该把这份记忆抹掉。
   const claimed = Array.from(
     new Set([...(previous?.claimedPlanIds ?? []), ...(snapshot.claimedPlanIds ?? [])]),
@@ -105,9 +170,7 @@ function record(providerId: string, snapshot: ZcodeClaimSnapshot): void {
     ? { ...snapshot, claimedPlanIds: claimed }
     : snapshot;
   if (!live) {
-    putHealthSnapshot({
-      zcode: { [providerId]: { quota: null, claim: merged } },
-    } as unknown as HealthSnapshot);
+    pendingClaims.set(providerId, { snapshot: null, claim: merged });
     return;
   }
   const entry = live.zcode?.[providerId];

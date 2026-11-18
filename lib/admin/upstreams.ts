@@ -9,7 +9,7 @@
 
 import { configNumber, configString } from "../config.ts";
 import { zcodeQuota } from "../zcode/credits.ts";
-import { zcodeClaimSnapshot } from "../zcode/auto-claim.ts";
+import { zcodeClaimSnapshot, mergePendingClaims } from "../zcode/auto-claim.ts";
 import { readCredential } from "../minimax/auth.ts";
 import { regionKey } from "../minimax/hosts.ts";
 import { fetchMiniMaxBalance, fetchMiniMaxTokenPlanWithSession } from "../minimax/credits.ts";
@@ -461,6 +461,10 @@ export async function refreshHealthSnapshot(): Promise<void> {
     applyPartial(snapshot, partial, rows);
   }
 
+  // 领取的结论：快照还没有的那段窗口里它先放在内存里（lib/zcode/auto-claim.ts
+  // 的 pending），写快照的这一刻并进来 —— 它是**写上游**的结果，丢了就没人
+  // 知道今天领没领。
+  mergePendingClaims(snapshot);
   putHealthSnapshot(snapshot);
   healthRefreshedAt = Date.now();
 }
@@ -683,6 +687,7 @@ async function freshPlatformSnapshot(id: string, force = false): Promise<HealthS
         // 合并进现有快照：别的平台的桶不动。
         const merged = copySnapshot(peekHealthSnapshot<HealthSnapshot>()?.data ?? emptySnapshot());
         applyPartial(merged, partial, rows);
+        mergePendingClaims(merged);
         putHealthSnapshot(merged);
       } catch (e) {
         console.warn(`[HEALTH] ${platform} 的额度没问到：${(e as Error)?.message}`);
