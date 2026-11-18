@@ -204,9 +204,7 @@ process.env.ZCODE_CLAIM_TIMEOUT_MS = "400";
 await import("../lib/kinds/zcode.ts");
 const { kindOf } = await import("../lib/provider-kinds.ts");
 const { previewClaims, claimPlan } = await import("../lib/zcode/claim.ts");
-const { claimOnce, runZcodeAutoClaim, zcodeClaimSnapshot, forgetZcodeClaim } = await import(
-  "../lib/zcode/auto-claim.ts"
-);
+const { claimOnce, runZcodeAutoClaim, zcodeClaimSnapshot } = await import("../lib/zcode/auto-claim.ts");
 const { fetchZcodeQuota } = await import("../lib/zcode/credits.ts");
 const { ZCODE_CLIENT_PLATFORM } = await import("../lib/zcode/transport.ts");
 const { putHealthSnapshot, peekHealthSnapshot } = await import("../lib/health-cache.ts");
@@ -488,7 +486,9 @@ check(
 section("七、结论进快照，面板看得见");
 
 reset("plans");
-forgetZcodeClaim();
+// 复位领取的结论：结论存在现役的那份健康快照里（zcode[账号].claim），
+// 所以复位就是换一份没有结论的快照 —— lib/ 里没有「只给测试用」的开关。
+putHealthSnapshot({ zcode: {} } as unknown as HealthSnapshot);
 // 先摆一份快照：领取的结论要当场写进去，不能等下一次全量刷新。
 putHealthSnapshot({
   zcode: {

@@ -20,7 +20,7 @@
 import { configFlag, configNumber, markHotSetting } from "../config.ts";
 import { parseBool, readEnvValue } from "../env.ts";
 import { listProviders, provider, type ProviderRow } from "../providers.ts";
-import { peekHealthSnapshot } from "../health-cache.ts";
+import { peekHealthSnapshot, putHealthSnapshot } from "../health-cache.ts";
 import type { HealthSnapshot, ZcodeClaimSnapshot } from "../provider-kinds.ts";
 import { claimPlan, describeClaimedPlan, logClaimAttempt, previewClaims } from "./claim.ts";
 
@@ -59,16 +59,19 @@ export function autoClaimEnabled(): boolean {
   return configFlag("FACADE_ZCODE_AUTO_CLAIM", true);
 }
 
-/** 每个账号最近一次的结论。 */
-const conclusions = new Map<string, ZcodeClaimSnapshot>();
-
 /**
  * 这个账号最近一次的领取结论。
+ *
+ * 结论只存在现役的那份健康快照里（zcode[providerId].claim）：面板读的就是它，
+ * 没有第二处。进程里再存一份的话，两处迟早走样 —— 面板显示的是快照那份，
+ * 读的是内存那份。
  *
  * 没有 = 还没领过（不是「领了但没结论」）。
  */
 export function zcodeClaimSnapshot(providerId: string): ZcodeClaimSnapshot | undefined {
-  return conclusions.get(providerId);
+  const live = peekHealthSnapshot<HealthSnapshot>()?.data;
+  const claim = live?.zcode?.[providerId]?.claim;
+  return claim ? (claim as ZcodeClaimSnapshot) : undefined;
 }
 
 /**
@@ -77,15 +80,23 @@ export function zcodeClaimSnapshot(providerId: string): ZcodeClaimSnapshot | und
  * 同时写进现在的那份快照（如果有）：面板读的是快照，等下一次全量刷新才看到
  * 结论的话，人会以为没领（这一轮与下一次刷新之间最多差五分钟）。
  *
- * 只改已经存在的那一份：额度那一格还没有的时候不凭空造一个 —— 造出来的
- * 额度卡是「额度是 0」，那是撒谎。
+ * 额度那一格还没有的时候，造出来的那一份带着 `quota: null` —— 那是「没问过
+ * 额度」，不是「额度是 0」（null 那一档面板不摆额度卡）。
+ *
+ * 整个快照都还没有的时候造一份只带这个账号的：领取是**写上游**的动作，结果
+ * 丢了就没人知道今天领没领。
  */
 function record(providerId: string, snapshot: ZcodeClaimSnapshot): void {
-  conclusions.set(providerId, snapshot);
   const live = peekHealthSnapshot<HealthSnapshot>()?.data;
-  const entry = live?.zcode?.[providerId];
-  if (!live || !entry) return;
-  live.zcode[providerId] = { ...entry, claim: snapshot };
+  if (!live) {
+    putHealthSnapshot({
+      zcode: { [providerId]: { quota: null, claim: snapshot } },
+    } as unknown as HealthSnapshot);
+    return;
+  }
+  const entry = live.zcode?.[providerId];
+  live.zcode = { ...(live.zcode ?? {}) };
+  live.zcode[providerId] = { ...(entry ?? { quota: null }), claim: snapshot };
 }
 
 /**
@@ -269,10 +280,4 @@ export async function runZcodeAutoClaim(): Promise<void> {
       console.warn(`[ZCODE] 账号 ${row.id} 的领取没跑成：${(e as Error)?.message ?? String(e)}`);
     }
   }
-}
-
-/** 清掉记着的结论（测试用）。 */
-export function forgetZcodeClaim(providerId?: string): void {
-  if (providerId) conclusions.delete(providerId);
-  else conclusions.clear();
 }
