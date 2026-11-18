@@ -370,11 +370,13 @@ export async function claimPlan(
   }
   // 失败：服务端的中文原话（data.message，没有就 msg）。
   const message = String(body?.data?.message ?? body?.msg ?? "");
-  if (code !== null && ZCODE_CLAIM_TERMINAL_CODES.includes(code)) {
-    return { state: "already", at: Date.now(), code, message };
-  }
+  // 验证码先判：文案兜底是为「上游换了码」准备的，而终态组里也可能带着验证码
+  // 文案 —— 先判终态的话，那种答复会被说成「已领过」，人就不会去解验证码了。
   if ((code !== null && code === CAPTCHA_CODE) || message.includes(CAPTCHA_TEXT)) {
     return { state: "captcha", at: Date.now(), code: code ?? CAPTCHA_CODE, message };
+  }
+  if (code !== null && ZCODE_CLAIM_TERMINAL_CODES.includes(code)) {
+    return { state: "already", at: Date.now(), code, message };
   }
   return { state: "failed", at: Date.now(), code, message };
 }

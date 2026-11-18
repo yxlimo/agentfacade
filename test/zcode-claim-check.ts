@@ -42,6 +42,7 @@ type PreviewMode = "plans" | "empty" | "unauthorized" | "server-error";
 type ClaimMode =
   | "ok"
   | "terminal"
+  | "terminal-captcha"
   | "captcha"
   | "captcha-text"
   | "unauthorized"
@@ -117,6 +118,9 @@ const fake = http.createServer((req, res) => {
       case "terminal":
         // 终态那一组（1001–1005）里的一条：服务端说不能再领了。
         return send(200, { code: 1001, msg: "", data: { message: "今日领取名额已用完" } });
+      case "terminal-captcha":
+        // 终态码 + 验证码文案：上游换了码，文案兜底要能盖过终态组。
+        return send(200, { code: 1003, msg: "", data: { message: "验证码校验失败，请重试" } });
       case "captcha":
         return send(200, { code: 3007, msg: "", data: { message: "验证码校验失败" } });
       case "captcha-text":
@@ -412,6 +416,19 @@ check(
   JSON.stringify(captchaText),
 );
 
+reset("plans", "terminal-captcha");
+const terminalCaptcha = await claimOnce(ACCOUNT_ID);
+check(
+  "终态码 + 验证码文案 → captcha（不是 already）",
+  terminalCaptcha?.state === "captcha",
+  JSON.stringify(terminalCaptcha),
+);
+check(
+  "终态码 + 验证码文案 → 原话带上来",
+  terminalCaptcha?.state === "captcha" && terminalCaptcha.message.includes("验证码"),
+  JSON.stringify(terminalCaptcha),
+);
+
 reset("plans", "unauthorized");
 const claimUnauthorized = await claimOnce(ACCOUNT_ID);
 check(
@@ -558,6 +575,39 @@ check(
   "终态的 note 说着「已领过」并带上原话",
   /领取：已领过/.test(terminalNote) && terminalNote.includes("名额"),
   JSON.stringify(terminalNote),
+);
+
+// 「此刻没有可领的」不能被写成「名额已用完」：preview 没给 data，分不出来是
+// 名额用完了、已经领过，还是活动还没开始 —— 不能编一个结论。
+reset("empty");
+await claimOnce(ACCOUNT_ID);
+const noneSnapshot = {
+  zcode: {
+    [ACCOUNT_ID]: {
+      quota: {
+        state: "ok",
+        value: { buckets: [], plans: [], serverTime: new Date(1800000000 * 1000).toISOString() },
+        at: Date.now(),
+      },
+      claim: zcodeClaimSnapshot(ACCOUNT_ID),
+    },
+  },
+} as unknown as HealthSnapshot;
+putHealthSnapshot(noneSnapshot);
+const noneNote =
+  kind.quotas(
+    { id: ACCOUNT_ID, platform: "zcode", kind: "zcode" } as unknown as ProviderRow,
+    noneSnapshot,
+  )[0]?.credits?.note ?? "";
+check(
+  "note 说的是「此刻没有可领的」",
+  /领取：此刻没有可领的/.test(noneNote),
+  JSON.stringify(noneNote),
+);
+check(
+  "note 没有把「此刻」说成「名额已用完」",
+  !noneNote.includes("名额已用完"),
+  JSON.stringify(noneNote),
 );
 
 /* ------------------------------------------------------------------ *

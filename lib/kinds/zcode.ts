@@ -169,8 +169,10 @@ function zcodeClaimNote(
     case "already":
       return `领取：已领过${message ? `（${message}）` : ""}`;
     case "none":
-      // preview 的列表是空的：今天的名额用完了。服务端说了什么就带上什么。
-      return `领取：今日领取名额已用完${message ? `（${message}）` : ""}`;
+      // preview 的列表是空的：此刻没有可领的。可能是名额用完了，也可能已经领过、
+      // 活动还没开始 —— preview 没给 data 就分不出来，所以不编结论，只说「此刻」。
+      // 服务端说了什么就带上什么。
+      return `领取：此刻没有可领的${message ? `（${message}）` : ""}`;
     case "captcha":
       return `领取：需要人工过验证码${message ? `（${message}）` : ""}`;
     case "unauthorized":
