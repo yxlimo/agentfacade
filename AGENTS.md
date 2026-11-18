@@ -1,12 +1,16 @@
-# LLM 代理网关
+# AgentFacade
 
-对外提供 OpenAI 与 Anthropic 两种方言的接口，对内模拟 MiniMax Code、Qoder、WorkBuddy 等桌面客户端，向上游转发请求。
+LLM 代理网关。对外提供 OpenAI 与 Anthropic 两种方言的接口，对内模拟 MiniMax Code、Qoder、WorkBuddy 等桌面客户端，向上游转发请求。
+
+调用方只看到模型清单；平台、账号、方言、冷却、配额都在立面之后。
+
+环境变量前缀目前仍是 `BUDDY_`（`BUDDY_DATA_DIR` 等），数据文件名也还是 `buddy.db`。前缀改成 `FACADE_*` 是第二阶段的事，届时与部署一起改。
 
 ## 术语定义
 
-**Agent**：专指 buddyProxy API 的调用方，例如 pi、opencode、hermes、dsh。
+**Agent**：专指 AgentFacade API 的调用方，例如 pi、opencode、hermes、dsh。
 
-**模拟端**：部分上游只允许自家封闭客户端调用，buddyProxy 需要在调用时把请求指纹与上游对应的封闭客户端对齐，达到欺骗效果。维持这些封闭客户端的会话活跃、模拟其请求指纹的行为主题（代码模块）叫**模拟客户端**，简称**模拟端**。
+**模拟端**：部分上游只允许自家封闭客户端调用，AgentFacade 需要在调用时把请求指纹与上游对应的封闭客户端对齐，达到欺骗效果。维持这些封闭客户端的会话活跃、模拟其请求指纹的行为主题（代码模块）叫**模拟客户端**，简称**模拟端**。
 
 **Upstream**：上游的 API。一个 upstream 对应一个平台的某个服务；同一平台可能有多个服务，例如 MiniMax 的开放 API（API Key 认证）与 MiniMax Code（OAuth 认证），权益不同，属于不同的 upstream。
 

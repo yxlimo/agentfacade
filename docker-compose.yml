@@ -4,11 +4,11 @@ name: buddy-proxy
 # `podman save --format docker-archive` and loaded here with `docker load`.
 # This file is the only thing that lives on the NAS beside ./data.
 #
-# One service, one image: the router serves every upstream and answers in both
+# One service, one image: AgentFacade serves every upstream and answers in both
 # dialects.
 services:
   router:
-    image: buddy-proxy:latest
+    image: agentfacade:latest
     container_name: buddy-router
     command: ["node", "router-proxy.ts"]
     ports:

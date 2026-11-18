@@ -24,7 +24,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** 默认的镜像 tag。 */
-const DEFAULT_TAG = "localhost/buddy-proxy:latest";
+const DEFAULT_TAG = "localhost/agentfacade:latest";
 
 /**
  * 容器 CLI 的可执行文件名。默认 podman（本机）；CI 里跑 docker，用
@@ -231,10 +231,10 @@ function checkPanel(tag: string): string {
 /** 7. 起容器：/health 与 /admin/ 都要答。 */
 async function checkRuns(tag: string): Promise<string> {
   const port = await freePort();
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "buddy-verify-"));
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentfacade-verify-"));
   // 容器里的运行用户要能写这个目录：它挂进去当数据目录用。
   fs.chmodSync(dataDir, 0o777);
-  const name = "buddy-proxy-verify-" + process.pid + "-" + Date.now();
+  const name = "agentfacade-verify-" + process.pid + "-" + Date.now();
   try {
     const started = tryRun(CLI, [
       "run", "-d", "--name", name, "--pull=never",

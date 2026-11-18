@@ -591,7 +591,7 @@ if [ -n "$(git status --porcelain)" ]; then
   exit 1
 fi
 podman build --format docker \
-  -t localhost/buddy-proxy:latest \
+  -t localhost/agentfacade:latest \
   --build-arg GIT_REVISION="$(git rev-parse HEAD)" \
   --build-arg APP_VERSION="$(node -p "require('./package.json').version")" \
   .

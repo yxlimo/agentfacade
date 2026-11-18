@@ -1,4 +1,9 @@
-# buddy-proxy
+# AgentFacade
+
+One facade for agents: one model list, two dialects, many upstream accounts
+behind it.
+
+调用方只看到模型清单；平台、账号、方言、冷却、配额都在立面之后。
 
 One gateway in front of eleven model platforms. It answers in the OpenAI
 dialect and in the Anthropic dialect on the same port, and it sends every
@@ -40,13 +45,13 @@ The image carries the gateway and the panel.
 
 ```bash
 # build the image (the panel is built into it)
-podman build --format docker -t buddy-proxy:latest .    # or: docker build -t buddy-proxy:latest .
+podman build --format docker -t agentfacade:latest .    # or: docker build -t agentfacade:latest .
 
 # run it: one process, one port, one data directory
-podman run -d --name buddy-proxy \
+podman run -d --name agentfacade \
   -p 6450:6450 \
   -v "$PWD/data:/data" \
-  buddy-proxy:latest
+  agentfacade:latest
 ```
 
 `./data` is the volume the service works in. It has to survive a rebuild: it
@@ -58,9 +63,9 @@ The same image, run by compose:
 
 ```yaml
 services:
-  buddy-proxy:
-    image: shaylulimo/buddy-proxy:0.2.1
-    container_name: buddy-proxy
+  agentfacade:
+    image: shaylulimo/agentfacade:latest
+    container_name: agentfacade
     restart: unless-stopped
     ports:
       - "6450:6450"
@@ -175,7 +180,7 @@ model    = "qoder-cn/glm-5.3"
 ```
 
 The key goes in `Authorization: Bearer <key>` for the OpenAI dialect and in
-`x-api-key: <key>` for the Anthropic one. The gateway does not check the key
+`x-api-key: <key>` for the Anthropic one. AgentFacade does not check the key
 unless the deployment asks it to, so a fresh installation accepts anything.
 
 ### With curl
@@ -233,7 +238,7 @@ platforms. The platform's policy decides which of its accounts takes a request.
 ## The daily credits
 
 Several platforms hand out credits for showing up — MiniMax's sign-in,
-WorkBuddy's check-in and growth centre, Qoder's campaigns. The gateway claims
+WorkBuddy's check-in and growth centre, Qoder's campaigns. AgentFacade claims
 them for you: once when it starts and then every hour. Asking twice on the
 same day is a no-op, so a restart does not cost you the day's credits. A
 platform that is switched off is not asked at all.
@@ -299,6 +304,12 @@ not usage and is not counted; it shows up in the request log instead.
 
 The rest of the settings are changed in the panel, not in the environment.
 
+The environment variables still start with `BUDDY_` (`BUDDY_DATA_DIR` and the
+rest). A later phase renames that prefix to `FACADE_*`; this release keeps the
+current names, so nothing has to be changed on an existing deployment. The
+data directory name (`~/.buddy-proxy`, `buddy.db`) stays as it is for the same
+reason.
+
 `PERIODIC_ENABLED=false` is the one to know about: with it off, the service
 never touches a login state — no refresh, no check-in, no balance scan. Use it
 while you are debugging, or when the official desktop client should be the
@@ -309,7 +320,7 @@ restart.
 
 ### 429 or 503 says no account of this platform can serve right now
 
-The gateway tried the accounts of that platform and none could take the
+AgentFacade tried the accounts of that platform and none could take the
 request: out of quota, cooling down after a failure, or not logged in. Open
 `/health` or the panel's 上游 tab — it says which account and until when. Then
 either add or switch on another account for that platform, or wait for the
@@ -327,7 +338,7 @@ account served each request and which ones failed.
 
 A session has exactly one holder. The refresh token is replaced on every
 refresh, and the platform withdraws every session of that account as soon as
-it sees an old token used again. So a second copy of the gateway on the same
+it sees an old token used again. So a second copy of AgentFacade on the same
 account — or the official desktop client holding the same session — breaks it.
 Log the account out in the panel and log in again.
 

@@ -1,7 +1,7 @@
 {
-  "name": "buddy-proxy",
+  "name": "agentfacade",
   "version": "0.4.1",
-  "description": "Ten model providers behind OpenAI and Anthropic compatible APIs",
+  "description": "One facade for agents: callers see one model list, while many upstream accounts sit behind OpenAI and Anthropic compatible APIs",
   "packageManager": "pnpm@12.16.1",
   "type": "module",
   "main": "router-proxy.ts",

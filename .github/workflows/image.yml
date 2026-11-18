@@ -30,7 +30,7 @@ jobs:
     env:
       TZ: Asia/Shanghai
       # 镜像在 registry 里的位置。仓库名写死是正常的，版本号与提交号不写死。
-      IMAGE_REPO: docker.io/shaylulimo/buddy-proxy
+      IMAGE_REPO: docker.io/shaylulimo/agentfacade
 
     steps:
       - name: Check out the repository
