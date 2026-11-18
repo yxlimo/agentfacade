@@ -19,7 +19,7 @@ import { zcodeModelsInUse } from "../zcode/models.ts";
 import { ZCODE_MESSAGES_URL } from "../zcode/transport.ts";
 import { peekHealthSnapshot } from "../health-cache.ts";
 import { CredentialState } from "../gen/agentfacade/admin/v1/admin_pb.ts";
-import type { ZcodeQuota } from "../zcode/credits.ts";
+import type { ZcodePlan, ZcodeQuota } from "../zcode/credits.ts";
 
 /**
  * 快照里这个账号那一次的结论。null = 没问过（快照里没有这一份）。
@@ -90,6 +90,86 @@ function zcodeBucketsOf(provider: ProviderRow, snapshot: HealthSnapshot): any[] 
   return Array.isArray(buckets) ? buckets : null;
 }
 
+/**
+ * 账号领到的计划。null = 不知道（没问过 / 问不到），[] = 问过了，一个计划也没有。
+ *
+ * 与 buckets 各自独立：balances 空不等于 plans 空，反过来也一样。
+ */
+function zcodePlansOf(provider: ProviderRow, snapshot: HealthSnapshot): ZcodePlan[] | null {
+  const probe = zcodeProbeOf(provider.id, snapshot);
+  if (!probe || probe.state !== "ok") return null;
+  const plans = probe.value?.plans;
+  return Array.isArray(plans) ? plans : [];
+}
+
+/**
+ * 上游的服务器时间（毫秒）。
+ *
+ * 判「计划生效了没有」要用上游那把尺子，不是本机时钟：两边差着几分钟，
+ * 结论就反了。快照里存的是 ISO 字符串，早一版的快照存的是 unix 秒，两种都认。
+ * 上游没给时刻（本机时钟）时退回本机时钟 —— 那时上游也没说清。
+ */
+function zcodeServerNowMs(probe: VendorProbe<ZcodeQuota> | null): number {
+  const raw = probe?.state === "ok" ? probe.value?.serverTime : null;
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw * 1000;
+  if (typeof raw === "string" && raw) {
+    const at = Date.parse(raw);
+    if (Number.isFinite(at)) return at;
+  }
+  return Date.now();
+}
+
+/** 一个「领到了但还没生效」的计划。 */
+interface PendingPlan {
+  /** 计划的名字（面板上要念给人听）。 */
+  name: string;
+  /** 什么时候开始算数（毫秒，绝对时刻）。 */
+  effectiveAtMs: number;
+  /** 这个计划一共给了多少 token。 */
+  grantUnits: number;
+}
+
+/**
+ * 领到了、但还没生效的计划。
+ *
+ * 判据三条，缺一不可：
+ *
+ *   · status 是 active —— 别的状态（expired 之类）不算「还没生效」
+ *   · 上游给了生效时刻 —— 没给就说不清，不编
+ *   · 上游的尺子还没走到那个时刻 —— 走过了就是「生效中」，不是「还没生效」
+ *
+ * 一个计划里多个权益的生效时刻不一样时，取最早的那个：那时候开始有额度。
+ */
+function zcodePendingPlan(
+  plans: ZcodePlan[] | null,
+  nowMs: number,
+): PendingPlan | null {
+  if (!plans) return null;
+  let best: PendingPlan | null = null;
+  for (const plan of plans) {
+    if (String(plan.status ?? "").toLowerCase() !== "active") continue;
+    const times = (plan.entitlements ?? [])
+      .map((e) => (e?.effectiveAt ? Date.parse(String(e.effectiveAt)) : NaN))
+      .filter((t) => Number.isFinite(t));
+    // 生效时刻说不清：这个计划不当「还没生效」处理（也不编恢复时刻）。
+    if (!times.length) continue;
+    // 已经有一个权益生效了 → 这个计划在生效中。
+    if (times.some((t) => t <= nowMs)) continue;
+    const at = Math.min(...times);
+    if (!best || at < best.effectiveAtMs) {
+      best = {
+        name: String(plan.name ?? ""),
+        effectiveAtMs: at,
+        grantUnits: (plan.entitlements ?? []).reduce(
+          (sum, e) => sum + Number(e?.grantUnits ?? 0),
+          0,
+        ),
+      };
+    }
+  }
+  return best;
+}
+
 function zcodeQuotas(provider: ProviderRow, snapshot: HealthSnapshot): QuotaView[] {
   const probe = zcodeProbeOf(provider.id, snapshot);
   const view = (credits: QuotaView["credits"]): QuotaView[] => [
@@ -119,7 +199,24 @@ function zcodeQuotas(provider: ProviderRow, snapshot: HealthSnapshot): QuotaView
   if (buckets === null) return [];
   // An empty list is the answer "spent", so the panel gets a card that says so
   // instead of no card at all. Showing nothing would read as "no quota here".
+  //
+  // 例外：空桶 + 一个领到了但还没生效的计划 —— 那是「已领到，今晚 23:00 生效」。
+  // 这时摆的那张 0 卡是**真的**：现在可用的额度就是 0（还没生效，一分都用不了）。
+  // 这和「凭据被拒却摆 0 卡」不是一回事：那一次我们对额度一无所知；这一次上游
+  // 明确答复了额度领到了、还差多久生效。不要把它当成重复问题删掉。
   if (!buckets.length) {
+    const pending = zcodePendingPlan(zcodePlansOf(provider, snapshot), zcodeServerNowMs(probe));
+    if (pending) {
+      return view({
+        total: 0,
+        used: 0,
+        remaining: 0,
+        lots: [],
+        note:
+          `已领到「${pending.name}」，${new Date(pending.effectiveAtMs).toISOString()} 生效` +
+          `（${pending.grantUnits} token）`,
+      });
+    }
     return view({
       total: 0,
       used: 0,
@@ -180,13 +277,24 @@ registerKind({
     if (!probe || probe.state !== "ok") return false;
     const buckets = zcodeBucketsOf(provider, snapshot) ?? [];
     // Asked and not a single bucket: spent (see zcodeBucketsOf).
+    //
+    // 空桶 + 领到了但还没生效的计划 → 也是「现在用不了」（outOfCredits 为真）：
+    // 现在确实一个字节都用不了，只是等一会儿就有了。区别体现在恢复时刻与
+    // 额度卡的那句 note 上。
     if (!buckets.length) return true;
     return buckets.every((b: any) => Number(b.remaining ?? 0) <= 0);
   },
   recoverAt: (provider, snapshot) => {
+    const probe = zcodeProbeOf(provider.id, snapshot);
+    const buckets = zcodeBucketsOf(provider, snapshot) ?? [];
+    // 没有桶：桶的到期时间无从谈起（用完就是用完）。除非有一个领到了、还没生效
+    // 的计划 —— 那时候额度会在它生效的时刻回来，冷却到那一刻就放行。
+    if (!buckets.length) {
+      const pending = zcodePendingPlan(zcodePlansOf(provider, snapshot), zcodeServerNowMs(probe));
+      return pending ? pending.effectiveAtMs : null;
+    }
     // 额度桶的到期时间：最早到期的那个先回来。桶空了就是不知道 —— 没有桶
     // 就没有到期时间，不编一个。凭据被拒、问不到、没有会话同样不编。
-    const buckets = zcodeBucketsOf(provider, snapshot) ?? [];
     const now = Date.now();
     let soonest: number | null = null;
     for (const bucket of buckets) {

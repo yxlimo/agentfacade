@@ -10,6 +10,10 @@
 // balances[] 每项是一个额度桶：meter、unit_type、capabilities（哪些模型能用
 // 这个桶）、total_units、used_units、remaining_units、period_start/end。
 //
+// plans[] 是账号领到的**计划**（活动免费额度之类）：一个计划带若干 entitlements，
+// 每个 entitlement 有自己的 effective_at —— 领到不等于立刻能用，要等它生效。
+// buckets 与 plans 各自独立：balances 空不等于 plans 空（见 lib/kinds/zcode.ts）。
+//
 // 依据：docs/zcode/FINDINGS.md §9。
 
 import {
@@ -41,10 +45,44 @@ export interface ZcodeBucket {
   expiresAt: string | null;
 }
 
+/** 计划里的一项权益：哪些模型能用、给多少、什么时候开始算数。 */
+export interface ZcodePlanEntitlement {
+  entitlementId: string;
+  showName: string;
+  /** 这个权益适用哪些模型（`model:glm-5.3-flash` 这样）。 */
+  capabilities: string[];
+  /** 给了多少额度（token）。 */
+  grantUnits: number;
+  /** 计量周期：one_time / recurring 之类。 */
+  period: string;
+  /** 什么时候开始算数（unix 秒 → ISO）。null = 上游没给。 */
+  effectiveAt: string | null;
+}
+
+/** 账号领到的一个计划（活动免费额度之类）。 */
+export interface ZcodePlan {
+  userPlanId: string;
+  planId: string;
+  name: string;
+  /** active / expired / 别的。 */
+  status: string;
+  startsAt: string | null;
+  endsAt: string | null;
+  entitlements: ZcodePlanEntitlement[];
+}
+
 export interface ZcodeQuota {
   /** 额度桶。 */
   buckets: ZcodeBucket[];
-  /** 平台说的服务器时间。 */
+  /**
+   * 账号领到的计划。
+   *
+   * 与 buckets 各自独立解析：balances 空不等于 plans 空，反过来也一样。
+   * 留着它们是为了下一单（领取）能分辨「可领 / 已领待生效 / 生效中 / 已用完」，
+   * 所以别把它拆散成别的地方存。
+   */
+  plans: ZcodePlan[];
+  /** 平台说的服务器时间（ISO）。判「生效了没有」要用它，别用本机时钟。 */
   serverTime: string | null;
 }
 
@@ -89,6 +127,8 @@ const ZCODE_QUOTA_TIMEOUT_MS = configNumber("ZCODE_QUOTA_TIMEOUT_MS", 20_000);
  *
  * 答了 200 且 `balances: []` 是 **ok**：那是「额度用完了」，不是「不知道」——
  * 这两件事在面板上长得一样（都没有桶），但只有前者能判成用尽。
+ * （「额度用完了」和「额度领到了但还没生效」在答复里长得一样：都是空桶。差别
+ * 在 plans 里，所以那一块也得读。）
  */
 export async function fetchZcodeQuota(providerId = "zcode"): Promise<ZcodeQuotaProbe> {
   const session = loadSession(providerId);
@@ -132,10 +172,34 @@ export async function fetchZcodeQuota(providerId = "zcode"): Promise<ZcodeQuotaP
       periodEnd: isoFromSeconds(row?.period_end),
       expiresAt: isoFromSeconds(row?.expires_at),
     }));
+    // plans 与 buckets 各读各的：balances 空不代表没有计划（额度领到了、还没生效
+    // 时上游就只给 plans 不给 balances），plans 空也不代表没有桶。
+    const plans: ZcodePlan[] = (Array.isArray(data.plans) ? data.plans : []).map((row: any) => ({
+      userPlanId: String(row?.user_plan_id ?? ""),
+      planId: String(row?.plan_id ?? ""),
+      name: String(row?.name ?? ""),
+      status: String(row?.status ?? ""),
+      startsAt: isoFromSeconds(row?.starts_at),
+      endsAt: isoFromSeconds(row?.ends_at),
+      entitlements: (Array.isArray(row?.entitlements) ? row.entitlements : []).map((e: any) => ({
+        entitlementId: String(e?.entitlement_id ?? ""),
+        showName: String(e?.show_name ?? ""),
+        capabilities: (Array.isArray(e?.capabilities) ? e.capabilities : []).map((c: any) => String(c)),
+        grantUnits: num(e?.grant_units),
+        period: String(e?.period ?? ""),
+        effectiveAt: isoFromSeconds(e?.effective_at),
+      })),
+    }));
     // 平台按账号限定能用哪些模型（每个额度桶带 capabilities）。它也是
     // 公布目录的依据 —— 不在这份清单里的模型，上游回 3006 model not allowed。
     setZcodeCapabilities(buckets.flatMap((b) => b.capabilities));
-    return vendorOk({ buckets, serverTime: data?.server_time ?? null });
+    // server_time 是 unix 秒。统一落成 ISO：判「生效了没有」要拿它当尺子，
+    // 而别处（快照、面板）拿的都是 ISO 字符串。
+    const rawServerTime = data?.server_time;
+    const serverTime =
+      isoFromSeconds(rawServerTime) ??
+      (typeof rawServerTime === "string" && rawServerTime ? rawServerTime : null);
+    return vendorOk({ buckets, plans, serverTime });
   } catch (e) {
     return vendorFailed(`读额度失败：${(e as Error)?.message ?? String(e)}`);
   }

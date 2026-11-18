@@ -17,9 +17,10 @@
 // 吃 401。插件那一族（lib/quota-state.ts）早就把这条规矩写清楚了，厂商 kind
 // 这一族没照做；这一节把它补上。
 //
-// 断言分三块：
+// 断言分四块：
 //
 //   1. 读快照的规则：四种结论各自得到什么（额度卡、用尽、恢复时刻）
+//   1之二. plans：领到了但还没生效（空桶 + active 计划 + 生效时刻未到）
 //   2. 假上游：401 / 403 / 5xx / 超时 / 业务码 / 空桶 / 有桶 → 各自的结论
 //   3. 凭据那一头：被拒 → 过期；重新登录 → 旧的那次拒绝自动作废
 //
@@ -45,6 +46,7 @@ process.env.FACADE_DATA_DIR = DATA_DIR;
 type Mode =
   | "ok"
   | "ok-empty"
+  | "ok-plans"
   | "unauthorized"
   | "forbidden"
   | "server-error"
@@ -77,6 +79,36 @@ const fake = http.createServer((req, res) => {
       return send(200, { code: 1005, msg: "token expired" });
     case "ok-empty":
       return send(200, { code: 0, msg: "", data: { server_time: 1792923642, balances: [] } });
+    case "ok-plans":
+      // 领到了活动额度，但还没生效：上游只给 plans，balances 是空的。
+      return send(200, {
+        code: 0,
+        msg: "",
+        data: {
+          server_time: 1795008620,
+          balances: [],
+          plans: [
+            {
+              user_plan_id: "upl-test",
+              plan_id: "zcode-v3-start-plan-test",
+              name: "ZCODE GLOBAL BUILD",
+              status: "active",
+              starts_at: 1795003404,
+              ends_at: 1795050000,
+              entitlements: [
+                {
+                  entitlement_id: "ent-test",
+                  show_name: "GLM-5.3-Flash",
+                  capabilities: ["model:glm-5.3-flash"],
+                  grant_units: 300000000,
+                  period: "one_time",
+                  effective_at: 1795014000,
+                },
+              ],
+            },
+          ],
+        },
+      });
     case "reset":
       // 连接被掐断：fetch 抛错，走的是超时那条路。
       req.socket.destroy();
@@ -199,9 +231,9 @@ writeSession(LOGIN_AT);
 const snapshotOf = (quota: unknown, loginAtMs = LOGIN_AT): HealthSnapshot =>
   ({ zcode: { [ACCOUNT.id]: { quota, loginAtMs } } }) as unknown as HealthSnapshot;
 
-const okProbe = (buckets: unknown[]): any => ({
+const okProbe = (buckets: unknown[], plans: unknown[] = [], serverTime = "2026-11-01T00:00:00.000Z"): any => ({
   state: "ok",
-  value: { buckets, serverTime: "2026-11-01T00:00:00.000Z" },
+  value: { buckets, plans, serverTime },
   at: Date.now(),
 });
 const unauthorizedProbe = (at = Date.now()): any => ({
@@ -293,10 +325,180 @@ check(
 );
 
 /* ------------------------------------------------------------------ *
+ * 一之二、plans：领到了但还没生效
+ *
+ * 上一单栽在这里：上游说「额度领到了，23:00 才生效」，答复里 balances 是空的，
+ * 于是旧实现把空桶读成「套餐额度已用完」。真相在 data.plans 里。
+ *
+ * 判据按「有没有桶」×「有没有生效中的计划」分，时间用上游的 server_time。
+ * ------------------------------------------------------------------ */
+
+const HOUR = 3_600_000;
+const NOW = Date.now();
+const EFFECTIVE_AT = NOW + HOUR;
+const EFFECTIVE_ISO = new Date(EFFECTIVE_AT).toISOString();
+
+/** 一个领到了、还没生效的计划（快照里的形状）。 */
+const PENDING_PLAN = {
+  userPlanId: "upl-test",
+  planId: "zcode-v3-start-plan-test",
+  name: "ZCODE GLOBAL BUILD",
+  status: "active",
+  startsAt: new Date(NOW - HOUR).toISOString(),
+  endsAt: new Date(NOW + 12 * HOUR).toISOString(),
+  entitlements: [
+    {
+      entitlementId: "ent-test",
+      showName: "GLM-5.3-Flash",
+      capabilities: ["model:glm-5.3-flash"],
+      grantUnits: 300_000_000,
+      period: "one_time",
+      effectiveAt: EFFECTIVE_ISO,
+    },
+  ],
+};
+
+const SERVER_BEFORE = new Date(NOW - HOUR).toISOString();
+const SERVER_AFTER = new Date(EFFECTIVE_AT + HOUR).toISOString();
+
+section("plans：领到了但还没生效");
+
+// 1. 空桶 + 领到了还没生效 → 现在用不了（真的用不了），但额度会回来。
+const pendingViews = kind.quotas(ACCOUNT, snapshotOf(okProbe([], [PENDING_PLAN], SERVER_BEFORE)));
+check(
+  "还没生效 → 一张额度卡",
+  pendingViews.length === 1,
+  JSON.stringify(pendingViews),
+);
+check("还没生效 → 剩余是 0", pendingViews[0]?.credits?.remaining === 0, String(pendingViews[0]?.credits?.remaining));
+check(
+  "还没生效 → 卡上写明已领到与生效时刻",
+  /ZCODE GLOBAL BUILD/.test(pendingViews[0]?.credits?.note ?? "") &&
+    pendingViews[0]?.credits?.note?.includes(EFFECTIVE_ISO) === true,
+  JSON.stringify(pendingViews[0]?.credits?.note),
+);
+check(
+  "还没生效 → 卡上写明额度量",
+  /300000000/.test(pendingViews[0]?.credits?.note ?? ""),
+  JSON.stringify(pendingViews[0]?.credits?.note),
+);
+check(
+  "还没生效 → 算用尽（现在确实一个字节都用不了）",
+  kind.outOfCredits(ACCOUNT, snapshotOf(okProbe([], [PENDING_PLAN], SERVER_BEFORE))) === true,
+);
+check(
+  "还没生效 → 恢复时刻是生效时刻",
+  kind.recoverAt?.(ACCOUNT, snapshotOf(okProbe([], [PENDING_PLAN], SERVER_BEFORE))) === EFFECTIVE_AT,
+  String(kind.recoverAt?.(ACCOUNT, snapshotOf(okProbe([], [PENDING_PLAN], SERVER_BEFORE)))),
+);
+
+// 2. 空桶 + 计划已生效 → 就是「用完」，不拿生效时刻冒充恢复时刻。
+const usedUpViews = kind.quotas(ACCOUNT, snapshotOf(okProbe([], [PENDING_PLAN], SERVER_AFTER)));
+check(
+  "已生效 → 卡上写的是用完",
+  /用完/.test(usedUpViews[0]?.credits?.note ?? ""),
+  JSON.stringify(usedUpViews[0]?.credits?.note),
+);
+check(
+  "已生效 → 不拿生效时刻当恢复时刻",
+  kind.recoverAt?.(ACCOUNT, snapshotOf(okProbe([], [PENDING_PLAN], SERVER_AFTER))) !== EFFECTIVE_AT,
+  String(kind.recoverAt?.(ACCOUNT, snapshotOf(okProbe([], [PENDING_PLAN], SERVER_AFTER)))),
+);
+check(
+  "已生效 → 没有恢复时刻（用完就是用完）",
+  kind.recoverAt?.(ACCOUNT, snapshotOf(okProbe([], [PENDING_PLAN], SERVER_AFTER))) === null,
+  String(kind.recoverAt?.(ACCOUNT, snapshotOf(okProbe([], [PENDING_PLAN], SERVER_AFTER)))),
+);
+
+// 3. 空桶 + 没有计划 → 现状：用完。
+const noPlanViews = kind.quotas(ACCOUNT, snapshotOf(okProbe([], [], SERVER_BEFORE)));
+check(
+  "没有计划 → 卡上写的是用完",
+  /用完/.test(noPlanViews[0]?.credits?.note ?? ""),
+  JSON.stringify(noPlanViews[0]?.credits?.note),
+);
+check(
+  "没有计划 → 算用尽",
+  kind.outOfCredits(ACCOUNT, snapshotOf(okProbe([], [], SERVER_BEFORE))) === true,
+);
+check(
+  "没有计划 → 没有恢复时刻",
+  kind.recoverAt?.(ACCOUNT, snapshotOf(okProbe([], [], SERVER_BEFORE))) === null,
+);
+
+// 4. 有桶 + 有计划 → 数值照现状（计划不搅局）。
+const bothViews = kind.quotas(ACCOUNT, snapshotOf(okProbe([BUCKET], [PENDING_PLAN], SERVER_BEFORE)));
+check("有桶 + 有计划 → 剩余照旧", bothViews[0]?.credits?.remaining === 2_880_000, String(bothViews[0]?.credits?.remaining));
+check(
+  "有桶 + 有计划 → 不算用尽",
+  kind.outOfCredits(ACCOUNT, snapshotOf(okProbe([BUCKET], [PENDING_PLAN], SERVER_BEFORE))) === false,
+);
+check(
+  "有桶 + 有计划 → 恢复时刻是桶的到期时间",
+  kind.recoverAt?.(ACCOUNT, snapshotOf(okProbe([BUCKET], [PENDING_PLAN], SERVER_BEFORE))) ===
+    Date.parse(BUCKET.expiresAt),
+  String(kind.recoverAt?.(ACCOUNT, snapshotOf(okProbe([BUCKET], [PENDING_PLAN], SERVER_BEFORE)))),
+);
+
+// 5. 不是 active 的计划不算「还没生效」。
+const expiredPlan = { ...PENDING_PLAN, status: "expired" };
+check(
+  "计划不是 active → 不算还没生效",
+  kind.recoverAt?.(ACCOUNT, snapshotOf(okProbe([], [expiredPlan], SERVER_BEFORE))) === null,
+  String(kind.recoverAt?.(ACCOUNT, snapshotOf(okProbe([], [expiredPlan], SERVER_BEFORE)))),
+);
+check(
+  "计划不是 active → 卡上写的是用完",
+  /用完/.test(
+    kind.quotas(ACCOUNT, snapshotOf(okProbe([], [expiredPlan], SERVER_BEFORE)))[0]?.credits?.note ?? "",
+  ),
+);
+
+// 6. 生效时刻缺失 → 不编恢复时刻。
+const noEffectivePlan = {
+  ...PENDING_PLAN,
+  entitlements: [{ ...PENDING_PLAN.entitlements[0], effectiveAt: null }],
+};
+check(
+  "生效时刻缺失 → 不编恢复时刻",
+  kind.recoverAt?.(ACCOUNT, snapshotOf(okProbe([], [noEffectivePlan], SERVER_BEFORE))) === null,
+  String(kind.recoverAt?.(ACCOUNT, snapshotOf(okProbe([], [noEffectivePlan], SERVER_BEFORE)))),
+);
+
+// 7. 尺子是上游的 server_time，不是本机时钟。
+//    生效时刻在本机时钟里已经过了，但上游的尺子还没走到 → 仍然算「还没生效」。
+const staleLocalPlan = {
+  ...PENDING_PLAN,
+  entitlements: [
+    { ...PENDING_PLAN.entitlements[0], effectiveAt: new Date(NOW - HOUR).toISOString() },
+  ],
+};
+const staleServerTime = new Date(NOW - 2 * HOUR).toISOString();
+check(
+  "server_time 是尺子 → 本机时钟过了生效时刻仍然算还没生效",
+  kind.recoverAt?.(ACCOUNT, snapshotOf(okProbe([], [staleLocalPlan], staleServerTime))) ===
+    Date.parse(new Date(NOW - HOUR).toISOString()),
+  String(kind.recoverAt?.(ACCOUNT, snapshotOf(okProbe([], [staleLocalPlan], staleServerTime)))),
+);
+//    反过来：本机时钟还没到，上游的尺子已经过了 → 算「生效中」，不编恢复时刻。
+const futureLocalPlan = {
+  ...PENDING_PLAN,
+  entitlements: [
+    { ...PENDING_PLAN.entitlements[0], effectiveAt: new Date(NOW + 2 * HOUR).toISOString() },
+  ],
+};
+const aheadServerTime = new Date(NOW + 3 * HOUR).toISOString();
+check(
+  "server_time 是尺子 → 上游说生效了就不算还没生效",
+  kind.recoverAt?.(ACCOUNT, snapshotOf(okProbe([], [futureLocalPlan], aheadServerTime))) === null,
+  String(kind.recoverAt?.(ACCOUNT, snapshotOf(okProbe([], [futureLocalPlan], aheadServerTime)))),
+);
+
+/* ------------------------------------------------------------------ *
  * 二、假上游：每一种答复得到哪个结论
  * ------------------------------------------------------------------ */
 
-section("假上游：答复 → 结论");
+section("三、假上游：答复 → 结论");
 
 const probeFor = async (m: Mode): Promise<any> => {
   mode = m;
@@ -349,6 +551,41 @@ check(
   String(filled?.value?.buckets?.[0]?.remaining),
 );
 
+// 上游把计划也给了：plans 与 buckets 各读各的，空桶不代表没有计划。
+const withPlans = await probeFor("ok-plans");
+check("200 + 只有计划 → ok", withPlans?.state === "ok", JSON.stringify(withPlans));
+check(
+  "200 + 只有计划 → 桶是空的",
+  (withPlans?.value?.buckets ?? []).length === 0,
+  JSON.stringify(withPlans?.value?.buckets),
+);
+check(
+  "200 + 只有计划 → 计划读出来了",
+  (withPlans?.value?.plans ?? []).length === 1,
+  JSON.stringify(withPlans?.value?.plans),
+);
+check(
+  "200 + 只有计划 → 计划的名字与状态",
+  withPlans?.value?.plans?.[0]?.name === "ZCODE GLOBAL BUILD" &&
+    withPlans?.value?.plans?.[0]?.status === "active",
+  JSON.stringify(withPlans?.value?.plans?.[0]),
+);
+check(
+  "200 + 只有计划 → 权益的生效时刻",
+  withPlans?.value?.plans?.[0]?.entitlements?.[0]?.effectiveAt === "2026-11-18T15:00:00.000Z",
+  JSON.stringify(withPlans?.value?.plans?.[0]?.entitlements?.[0]),
+);
+check(
+  "200 + 只有计划 → 权益的额度量",
+  withPlans?.value?.plans?.[0]?.entitlements?.[0]?.grantUnits === 300_000_000,
+  String(withPlans?.value?.plans?.[0]?.entitlements?.[0]?.grantUnits),
+);
+check(
+  "200 + 只有计划 → 服务器时间是 ISO",
+  typeof withPlans?.value?.serverTime === "string",
+  String(withPlans?.value?.serverTime),
+);
+
 // 没有会话：压根没问。
 setSecret(providerSecretId("acc-zcode-none"), "session", { token: "" });
 const noSession = await fetchZcodeQuota("acc-zcode-none");
@@ -358,7 +595,7 @@ check("没有会话 → missing", noSession?.state === "missing", JSON.stringify
  * 三、凭据那一头
  * ------------------------------------------------------------------ */
 
-section("凭据：上游拒了就是过期，重新登录就清掉");
+section("四、凭据那一头");
 
 // 这一节的结论是**从假上游拿的**（不是手写的）：上游真的拒了，这把令牌就是
 // 过期了。旧实现里这一段拿不到结论（只有一个 null），于是凭据照旧答「可用」。
@@ -440,7 +677,7 @@ check(
  * 四、旧的数据形状：折成 null 之后面板上剩下什么
  * ------------------------------------------------------------------ */
 
-section("旧的数据形状（quota 是 null）：折成一种之后剩下一片空白");
+section("五、旧的数据形状：折成 null 之后面板上剩下什么");
 
 // 旧实现写进快照的就是这么一份：答不上来就是 null。它把「上游拒了令牌」
 // 「问不到」「没问」折成一种，于是面板上没有额度卡，凭据那一边照旧答「可用」。
