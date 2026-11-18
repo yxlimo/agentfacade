@@ -159,6 +159,7 @@ const { putHealthSnapshot } = await import("../lib/health-cache.ts");
 const { setSecret } = await import("../lib/store.ts");
 const { providerSecretId } = await import("../lib/credential-ids.ts");
 const { CredentialState } = await import("../lib/gen/agentfacade/admin/v1/admin_pb.ts");
+const { zcodeStatus } = await import("../lib/zcode/auth.ts");
 
 let pass = 0;
 let fail = 0;
@@ -238,7 +239,16 @@ writeSession(LOGIN_AT);
  * 测快照里的那个字段（它根本不被读）。
  */
 const snapshotOf = (quota: unknown): HealthSnapshot =>
-  ({ zcode: { [ACCOUNT.id]: { quota } } }) as unknown as HealthSnapshot;
+  fullSnapshot({ [ACCOUNT.id]: { quota } });
+
+/**
+ * 一份**完整**的快照（每个桶都在）。
+ *
+ * 造快照要造完整的：少几个桶的那份形状不对，读它的人会崩。
+ */
+function fullSnapshot(zcode: HealthSnapshot["zcode"] = {}): HealthSnapshot {
+  return { qoder: {}, minimax: {}, zcode, workbuddy: {}, plugins: {} };
+}
 
 const okProbe = (buckets: unknown[], plans: unknown[] = [], serverTime = "2026-11-01T00:00:00.000Z"): any => ({
   state: "ok",
@@ -271,16 +281,16 @@ section("四种结论：面板上得到什么");
 // 1. 没问过（快照里没有这一份）：没有额度卡 —— 摆一张全 0 的卡等于说「额度是 0」。
 check(
   "没问过 → 没有额度卡",
-  kind.quotas(ACCOUNT, { zcode: {} } as unknown as HealthSnapshot).length === 0,
-  JSON.stringify(kind.quotas(ACCOUNT, { zcode: {} } as unknown as HealthSnapshot)),
+  kind.quotas(ACCOUNT, fullSnapshot()).length === 0,
+  JSON.stringify(kind.quotas(ACCOUNT, fullSnapshot())),
 );
 check(
   "没问过 → 不算用尽",
-  kind.outOfCredits(ACCOUNT, { zcode: {} } as unknown as HealthSnapshot) === false,
+  kind.outOfCredits(ACCOUNT, fullSnapshot()) === false,
 );
 check(
   "没问过 → 没有恢复时刻",
-  kind.recoverAt?.(ACCOUNT, { zcode: {} } as unknown as HealthSnapshot) === null,
+  kind.recoverAt?.(ACCOUNT, fullSnapshot()) === null,
 );
 
 // 2. unauthorized：不摆额度卡 —— 「剩余 0 点」读起来是「额度用完了」，而真相是
@@ -695,6 +705,27 @@ check(
   credentialState(unauthorizedProbe()) === CredentialState.EXPIRED,
   String(credentialState(unauthorizedProbe())),
 );
+
+// 会话那一层也要答得出来：缺登录时刻的旧会话不能让 zcodeStatus 抛 ——
+// 根因在会话那一层修（那一格给空串），上层不重复防御。
+let statusThrew = "";
+let statusView: Record<string, unknown> | null = null;
+try {
+  statusView = zcodeStatus(ACCOUNT.id);
+} catch (e) {
+  statusThrew = (e as Error)?.message ?? String(e);
+}
+check("旧会话（没有 loginAtMs）→ zcodeStatus 不抛", statusThrew === "", statusThrew);
+check(
+  "旧会话 → 登录时刻那一格是空串（不是 1970）",
+  statusView?.loginAt === "",
+  JSON.stringify(statusView?.loginAt),
+);
+check(
+  "旧会话 → 凭据线仍然答得出状态",
+  statusView?.status === "authenticated",
+  JSON.stringify(statusView?.status),
+);
 writeSession(LOGIN_AT);
 
 section("账号那一行：被拒的会话在凭据行上也是过期");
@@ -743,7 +774,7 @@ check(
 );
 
 // 收尾：把快照清掉，别留给别的用例。
-putHealthSnapshot({ zcode: {} } as unknown as HealthSnapshot);
+putHealthSnapshot(fullSnapshot());
 
 // Close the database before removing its directory: on Windows an open file
 // cannot be deleted (EPERM), so the handle has to go first.

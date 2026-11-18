@@ -67,7 +67,13 @@ export interface ZcodeSession {
   /** 设备 id：请求的 metadata.user_id 里带着。 */
   deviceId: string;
   generation: number;
-  loginAtMs: number;
+  /**
+   * 登录时刻（Unix 毫秒）。
+   *
+   * 可选：写这个字段之前的旧会话没有它。读的时候按「没有」处理（0 / 空串），
+   * 不抛 —— 缺一个时刻不该把整条凭据线弄崩。
+   */
+  loginAtMs?: number;
   expiresAtMs: number;
 }
 
@@ -275,6 +281,9 @@ export function zcodeStatus(providerId = "zcode"): Record<string, unknown> {
   // 时候（0），不说它过期，也不编一个日子出来：面板上显示「—」。
   const known = session.expiresAtMs > 0;
   const remainingMs = known ? session.expiresAtMs - Date.now() : 0;
+  // 登录时刻也是可有可无的：旧会话没有这个字段。没有就说没有（空串），
+  // 不要拼一个 1970 出来 —— 更不要因为缺一个时刻就把整条凭据线弄崩。
+  const loginAtMs = Number(session.loginAtMs ?? 0);
   return {
     source: sessionId(providerId),
     status: known && remainingMs <= 0 ? "expired" : "authenticated",
@@ -284,7 +293,7 @@ export function zcodeStatus(providerId = "zcode"): Record<string, unknown> {
     expiresAt: known ? new Date(session.expiresAtMs).toISOString() : "",
     remainingSec: known ? Math.round(remainingMs / 1000) : 0,
     warning: false,
-    loginAt: new Date(session.loginAtMs).toISOString(),
+    loginAt: loginAtMs > 0 ? new Date(loginAtMs).toISOString() : "",
   };
 }
 
