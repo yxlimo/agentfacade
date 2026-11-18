@@ -18,7 +18,13 @@ import { openPlatformKeyOf, writeOpenPlatformKey } from "../open-platform-creden
 
 export {
   fromUpstreamStatus,
+  isVendorProbe,
   registerKind,
+  vendorFailed,
+  vendorMissing,
+  vendorOk,
+  vendorProbeOf,
+  vendorUnauthorized,
   type BalanceLotView,
   type CreditLotView,
   type CredentialField,
@@ -31,6 +37,7 @@ export {
   type QuotaView,
   type SlotReading,
   type TokenPlanView,
+  type VendorProbe,
 } from "../provider-kinds.ts";
 export { isIgnoredPlanWindow } from "../cooldown.ts";
 export type { ProviderRow } from "../providers.ts";
@@ -66,6 +73,14 @@ export function sessionSlot(
     token?: (raw: any) => string;
     /** 换一种读法：有的平台要先按自己的规矩读一遍会话。 */
     load?: (accountId: string) => any;
+    /**
+     * 这一份会话是不是被上游拒过了。
+     *
+     * 默认只看网关自己记住的那次拒绝（换令牌被拒）。有的平台没有刷新通道，
+     * 令牌被拒只能从上游问额度的那次答复里看出来 —— 那种平台给一条自己的判断
+     * 进来，判据是「上游拒了，而且那次拒绝比这份会话的登录时刻新」。
+     */
+    refused?: (accountId: string) => boolean;
   } = {},
 ): CredentialSlot {
   const defaultToken = (raw: any): string => String(raw?.accessToken ?? raw?.cookie ?? raw?.token ?? "");
@@ -91,7 +106,7 @@ export function sessionSlot(
           expiresAt: Number(raw?.expiresAtMs ?? 0),
           generation: Number(raw?.generation ?? 0),
           lastOkAt: Number(raw?.refreshedAtMs ?? raw?.obtainedAtMs ?? raw?.loginAtMs ?? 0),
-          refused: Boolean(deadSession(id(account))),
+          refused: Boolean(deadSession(id(account))) || options.refused?.(account.id) === true,
         },
       };
     },
@@ -165,11 +180,13 @@ export function valueSlot(options: {
  * `noKeyNote` 只有 MiniMax Code 用：面板已经习惯了「这一类不收 key」这个答复，
  * 换一句话就是换了它看到的意思。
  */
-export function sessionOnlyPlan(options: { title: string; noKeyNote?: string } = { title: "" }): CredentialPlan {
+export function sessionOnlyPlan(
+  options: { title: string; noKeyNote?: string; refused?: (accountId: string) => boolean } = { title: "" },
+): CredentialPlan {
   return {
     title: options.title,
     noKeyNote: options.noKeyNote,
-    slots: () => [sessionSlot()],
+    slots: () => [sessionSlot({ refused: options.refused })],
     fields: () => [],
     write: () => 0,
   };

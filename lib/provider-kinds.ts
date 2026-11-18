@@ -286,6 +286,84 @@ export interface QuotaView {
   tokenPlan?: TokenPlanView;
 }
 
+/* ------------------------------------------------------------------ *
+ * 厂商探测的结论
+ * ------------------------------------------------------------------ */
+
+/**
+ * 一次厂商探测的结论。
+ *
+ * 厂商 kind（zcode / minimax / qoder / workbuddy 这些）自己问上游，回来的东
+ * 西要先落成一个结论，再往面板上写。四种结论说的是四件不同的事：
+ *
+ *   ok             上游答了，答复里有我们要的东西
+ *   unauthorized   上游明确说这把凭据不行（401/403，或业务码表明鉴权失败）。
+ *                  要人重新登录才能好 —— 所以它进的是凭据那条线，不是额度那条线
+ *   failed         问到了，没拿到答案：网络、超时、5xx、看不懂的答复。这一轮
+ *                  不知道，但不说明凭据坏了
+ *   missing        本地就没有凭据，压根没问 —— 用户还没登录
+ *
+ * 为什么不能只留「有数」与「无数」两种：面板要能回答「为什么这里没有数字」。
+ * 把「凭据被拒」「问不到」「没填凭据」折成一种，就把它们全变回「不知道」——
+ * 于是被拒的令牌在面板上显示成「凭据可用 + 额度区空白」，等于告诉用户这个账号
+ * 正常（2026-11 ZCode 的 401 就是这么静下来的）。
+ *
+ * 每一种都带 `at`（结论的时刻）：凭据的结论要与「这份会话是什么时候登录的」
+ * 比 —— 重新登录之后旧的那次拒绝必须自动作废，否则账号永远挂着一个红。
+ */
+export type VendorProbe<T> =
+  | { state: "ok"; value: T; at: number }
+  | { state: "unauthorized"; message: string; at: number }
+  | { state: "failed"; message: string; at: number }
+  | { state: "missing"; at: number };
+
+/** 结论的四种状态。 */
+export const VENDOR_PROBE_STATES = ["ok", "unauthorized", "failed", "missing"] as const;
+
+/**
+ * 这一份是不是一个认得的结论。
+ *
+ * 认不出来的那一份读成「没有结论」，而不是当成 ok —— 把一份不知道什么形状的
+ * 东西当成功读，面板上就会出现一份来源不明的数字。
+ */
+export function isVendorProbe(value: unknown): value is VendorProbe<unknown> {
+  if (!value || typeof value !== "object") return false;
+  const state = String((value as { state?: unknown }).state ?? "");
+  if (!(VENDOR_PROBE_STATES as readonly string[]).includes(state)) return false;
+  if (state === "ok") return "value" in (value as object);
+  if (state === "missing") return true;
+  return typeof (value as { message?: unknown }).message === "string";
+}
+
+/**
+ * 读快照里存的那一份结论；没有（或认不出来）就是 null。
+ *
+ * null 的意思是「没人问过」：不是「问了，什么都没有」。
+ */
+export function vendorProbeOf<T>(value: unknown): VendorProbe<T> | null {
+  return isVendorProbe(value) ? (value as VendorProbe<T>) : null;
+}
+
+/** 造一份「问到了」的结论。 */
+export function vendorOk<T>(value: T, at = Date.now()): VendorProbe<T> {
+  return { state: "ok", value, at };
+}
+
+/** 造一份「上游说凭据不行」的结论。 */
+export function vendorUnauthorized(message: string, at = Date.now()): VendorProbe<never> {
+  return { state: "unauthorized", message, at };
+}
+
+/** 造一份「问到了但没拿到答案」的结论。 */
+export function vendorFailed(message: string, at = Date.now()): VendorProbe<never> {
+  return { state: "failed", message, at };
+}
+
+/** 造一份「本地就没有凭据」的结论。 */
+export function vendorMissing(at = Date.now()): VendorProbe<never> {
+  return { state: "missing", at };
+}
+
 /**
  * /health 里的快照：各家报上来的原始数字。
  *
@@ -304,8 +382,15 @@ export interface HealthSnapshot {
       creditFallbackEnabled?: { enabled: boolean | null; at: number };
     }
   >;
-  /** ZCode 的 Start Plan 额度。 */
-  zcode: Record<string, { quota: unknown }>;
+  /**
+   * ZCode 的 Start Plan 额度。
+   *
+   * 存的是结论（VendorProbe）而不是原样答复：面板要能回答「为什么这里没有
+   * 数字」，而「凭据被拒」「问不到」「额度用完」长得完全不一样。
+   * `loginAtMs` 是问这一轮时那份会话的登录时刻 —— 凭据那一头拿它与结论的时刻
+   * 比：重新登录之后旧的那次拒绝就自动作废了。
+   */
+  zcode: Record<string, { quota: unknown; loginAtMs?: number }>;
   workbuddy: Record<string, { credits: unknown }>;
   /**
    * 额度插件问回来的结论：插件 id → 账号 id → 那一次的结论。

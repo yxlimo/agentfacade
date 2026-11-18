@@ -9,6 +9,7 @@
 
 import { configNumber, configString } from "../config.ts";
 import { zcodeQuota } from "../zcode/credits.ts";
+import { zcodeLoginAtMs } from "../zcode/auth.ts";
 import { readCredential } from "../minimax/auth.ts";
 import { regionKey } from "../minimax/hosts.ts";
 import { fetchMiniMaxBalance, fetchMiniMaxTokenPlanWithSession } from "../minimax/credits.ts";
@@ -526,9 +527,17 @@ async function refreshOne(snapshot: HealthSnapshot, row: ProviderRow): Promise<v
       };
       return;
     }
-    case "zcode":
-      snapshot.zcode[row.id] = { quota: await zcodeQuota(300_000, row.id) };
+    case "zcode": {
+      // 存的是结论（VendorProbe），不是原样答复：面板要能分清「上游拒了这把
+      // 令牌」「这一轮问不到」「额度用完了」—— 它们长得一样，后果完全不同。
+      // loginAtMs 一起存：凭据那一头拿它与结论的时刻比，重新登录之后旧的那次
+      // 拒绝就自动作废了。
+      snapshot.zcode[row.id] = {
+        quota: await zcodeQuota(300_000, row.id),
+        loginAtMs: zcodeLoginAtMs(row.id),
+      };
       return;
+    }
     case "workbuddy":
       // 签到状态与积分账本是两件事：一个是连签，一个是平台自己的余额。
       snapshot.workbuddy[row.id] = {

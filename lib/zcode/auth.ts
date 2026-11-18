@@ -247,6 +247,16 @@ export function loadSession(providerId = "zcode"): ZcodeSession | null {
 }
 
 /**
+ * 这个账号的会话是什么时候登录的（Unix 毫秒）。没有会话就是 0。
+ *
+ * 凭据那一头拿它与「上游拒了这把令牌」的时刻比：重新登录之后旧的那次拒绝就
+ * 自动作废了 —— 否则账号会永远挂着一个红，而人已经登录过了。
+ */
+export function zcodeLoginAtMs(providerId = "zcode"): number {
+  return loadSession(providerId)?.loginAtMs ?? 0;
+}
+
+/**
  * 忘掉会话：下一次调用会重新登录。
  *
  * 旧位置（全局的 session:zcode）也清掉：留着它，注销的账号会带着旧身份
