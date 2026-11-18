@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "periodic-off-"));
-process.env.BUDDY_DATA_DIR = tmp;
+process.env.FACADE_DATA_DIR = tmp;
 // 开关：环境变量。必须在读配置之前设好（配置读一次就定了）。
 process.env.PERIODIC_ENABLED = "false";
 

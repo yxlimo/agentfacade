@@ -59,7 +59,7 @@ python3 helper/buddy_sync.py --check       # 只比对：有差异退出码 1，
 ```
 
 网关地址默认 `http://127.0.0.1:6450`（连不上就试局域网里网关所在机器那份地址），
-`--gateway` 或环境变量 `BUDDY_GATEWAY` 可以指定。
+`--gateway` 或环境变量 `FACADE_GATEWAY` 可以指定。
 
 ## 盯额度 + 发消息
 

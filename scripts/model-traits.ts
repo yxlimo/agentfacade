@@ -25,7 +25,7 @@
 //
 // ## 从哪读平台
 //
-// BUDDY_DATA_DIR 指向的那个库（与网关同一个约定，见 lib/paths.ts 的 dbPath()）：
+// FACADE_DATA_DIR 指向的那个库（与网关同一个约定，见 lib/paths.ts 的 dbPath()）：
 // platform 行的 base_url / kind，推理 key 走 kind 登记表的 keyOf —— 与「问上游要
 // 模型目录」（lib/open-platform-catalog.ts 的 accountKeyOf）同一个口径，不另写一套
 // 凭据解析。

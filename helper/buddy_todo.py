@@ -14,7 +14,7 @@
 会话要自己选（防止发错地方）：脚本把当前目录的会话列出来编号，回车确认才发，
 `--session <编号或 id>` 可以跳过这步（给自动化用）。
 
-网关地址的来源：`--gateway` > 环境变量 `BUDDY_GATEWAY` > 配置文件
+网关地址的来源：`--gateway` > 环境变量 `FACADE_GATEWAY` > 配置文件
 `~/.config/buddy-helper/config.json`；三个都没有就报错退出（退出码 5）。
 """
 from __future__ import annotations
@@ -436,7 +436,7 @@ def main(argv: list) -> int:
     parser.add_argument("--at", default=None, help="到点发（本地时间 HH:MM，也接受 HH:MM:SS）")
     parser.add_argument("--client", choices=["pi", "opencode"], default=None, help="用哪个客户端（默认两个都列，挑哪个算哪个）")
     parser.add_argument("--session", default=None, help="会话编号或 id（给了就不问）")
-    parser.add_argument("--gateway", default=None, help="网关地址（优先于 BUDDY_GATEWAY 和配置文件）")
+    parser.add_argument("--gateway", default=None, help="网关地址（优先于 FACADE_GATEWAY 和配置文件）")
     parser.add_argument("--set-gateway", default=None, metavar="URL", help="把网关地址写进配置文件")
     parser.add_argument("--grace", type=int, default=DEFAULT_GRACE, help=f"额度回来之后多等几秒（默认 {DEFAULT_GRACE}）")
     parser.add_argument("--poll", type=int, default=DEFAULT_POLL, help=f"每隔多久重读一次额度（默认 {DEFAULT_POLL} 秒）")

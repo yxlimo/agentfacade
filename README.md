@@ -101,23 +101,44 @@ mise run serve    # node router-proxy.ts, on http://localhost:6450
 
 ### The data directory
 
-Everything the service keeps lives in one directory, `BUDDY_DATA_DIR`:
+Everything the service keeps lives in one directory, `FACADE_DATA_DIR`:
 
 | | |
 |---|---|
-| `buddy.db` | the accounts, their credentials, the settings, the published models, the usage |
+| `agentfacade.db` | the accounts, their credentials, the settings, the published models, the usage |
 | `admin-token` | the panel's own token, written on the first start |
 | `auth.log` | the log of the credential events (logins, refreshes) |
 | `identity.salt` | the fingerprint salt of an older installation — read once so the fingerprint does not change; the salt itself now lives in the database |
 
-In Docker it is `/data`; outside it is `~/.buddy-proxy`. Back it up: it is the
+In Docker it is `/data`; outside it is `~/.agentfacade`. Back it up: it is the
 whole installation.
+
+### Upgrade to this version
+
+This release renames the environment prefix to `FACADE_*`, the database file
+to `agentfacade.db` and the home directory to `~/.agentfacade`. The old names
+are **not** read any more — there is no fallback, so a deployment that is not
+migrated comes up with an empty database and no accounts.
+
+To upgrade an existing deployment:
+
+1. Stop the container.
+2. Rename the database in place: `mv /data/buddy.db /data/agentfacade.db`.
+   Skipping this step is what makes the accounts disappear: the new code finds
+   no `agentfacade.db` and creates an empty one next to the old file.
+3. In the compose file, change `BUDDY_DATA_DIR: /data` to
+   `FACADE_DATA_DIR: /data`.
+4. Start the container again.
+
+If you run the service outside Docker, rename `~/.buddy-proxy` to
+`~/.agentfacade` (or point `FACADE_DATA_DIR` at the old directory) and set
+`FACADE_DATA_DIR` accordingly.
 
 ## The first time
 
 1. Start the service.
 2. Open `http://<host>:6450/admin/`.
-3. Sign in with the token in `<BUDDY_DATA_DIR>/admin-token`. It is created on
+3. Sign in with the token in `<FACADE_DATA_DIR>/admin-token`. It is created on
    the first start and printed in the log that one time.
 4. The panel is meant for the network it runs on: it holds the credentials, so
    reach it over a private network or behind HTTPS, not over the open internet.
@@ -298,17 +319,16 @@ not usage and is not counted; it shows up in the request log instead.
 
 | Variable | Default | What |
 |----------|---------|------|
-| `BUDDY_DATA_DIR` | `/data` in Docker, `~/.buddy-proxy` outside it | where the database, the panel token, the credential log and the fingerprint salt live |
+| `FACADE_DATA_DIR` | `/data` in Docker, `~/.agentfacade` outside it | where the database, the panel token, the credential log and the fingerprint salt live |
 | `ROUTER_PORT` | `6450` | the port the gateway listens on |
 | `PERIODIC_ENABLED` | `true` | the background timer: refresh the tokens before they expire, take the daily credits, scan the balances. `false` turns all of it off |
 
 The rest of the settings are changed in the panel, not in the environment.
 
-The environment variables still start with `BUDDY_` (`BUDDY_DATA_DIR` and the
-rest). A later phase renames that prefix to `FACADE_*`; this release keeps the
-current names, so nothing has to be changed on an existing deployment. The
-data directory name (`~/.buddy-proxy`, `buddy.db`) stays as it is for the same
-reason.
+The environment variables start with `FACADE_` (`FACADE_DATA_DIR` and the
+rest). The data directory name (`~/.agentfacade`, `agentfacade.db`) follows
+the same name. An installation from an earlier release has to be migrated
+before it is started — see [Upgrade to this version](#upgrade-to-this-version).
 
 `PERIODIC_ENABLED=false` is the one to know about: with it off, the service
 never touches a login state — no refresh, no check-in, no balance scan. Use it

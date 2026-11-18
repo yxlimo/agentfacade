@@ -15,11 +15,11 @@ import re
 import subprocess
 import urllib.parse
 
-# 网关地址的来源有三级：命令行 --gateway > 环境变量 BUDDY_GATEWAY >
+# 网关地址的来源有三级：命令行 --gateway > 环境变量 FACADE_GATEWAY >
 # 配置文件 ~/.config/buddy-helper/config.json。
 # 不内置默认地址 —— 猜错（127.0.0.1 还是 NAS 上那份）就是对着错的网关查
 # 额度，报出来的恢复时间没意义。
-ENV_GATEWAY = "BUDDY_GATEWAY"
+ENV_GATEWAY = "FACADE_GATEWAY"
 CONFIG_DIR = pathlib.Path.home() / ".config" / "buddy-helper"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 
@@ -61,7 +61,7 @@ def read_gateway_config(config_path=None) -> str:
 def resolve_gateway(explicit: str | None = None, config_path=None) -> tuple:
     """要用的网关地址。返回 (地址, 错误信息)。
 
-    优先级：命令行 --gateway > 环境变量 BUDDY_GATEWAY > 配置文件。
+    优先级：命令行 --gateway > 环境变量 FACADE_GATEWAY > 配置文件。
     三个都没有就报错（错误信息里带着怎么给的提示）。
     """
     if explicit and explicit.strip():

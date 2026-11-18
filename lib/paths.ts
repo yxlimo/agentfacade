@@ -2,10 +2,10 @@
 //
 // One directory, one environment variable:
 //
-//   BUDDY_DATA_DIR=/data
+//   FACADE_DATA_DIR=/data
 //
 // In there:
-//   buddy.db        the database: the credentials, the settings, the cache
+//   agentfacade.db  the database: the credentials, the settings, the cache
 //   auth.log        the credential log
 //   identity.salt   the salt the device fingerprint is derived from
 //   *.json          the session files the service used to keep, read once
@@ -25,15 +25,15 @@ import { readEnvValue } from "./env.ts";
  * gets; then the home directory, for a machine that runs the service itself.
  */
 export function dataDir(): string {
-  const explicit = readEnvValue("BUDDY_DATA_DIR") || "";
+  const explicit = readEnvValue("FACADE_DATA_DIR") || "";
   if (explicit) return explicit;
   if (fs.existsSync("/data")) return "/data";
-  return path.join(os.homedir(), ".buddy-proxy");
+  return path.join(os.homedir(), ".agentfacade");
 }
 
 /** The database file. */
 export function dbPath(): string {
-  return path.join(dataDir(), "buddy.db");
+  return path.join(dataDir(), "agentfacade.db");
 }
 
 /** A file in the data directory. */

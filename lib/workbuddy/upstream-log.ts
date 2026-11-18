@@ -61,10 +61,10 @@ const DEBUG_FILE_MAX_BYTES = 8 * 1024 * 1024;
 /**
  * 把发给上游的请求体记下来（排查用）。
  *
- * 只有开了 BUDDY_DEBUG_UPSTREAM 才记：请求体有整个系统提示词那么长，
+ * 只有开了 FACADE_DEBUG_UPSTREAM 才记：请求体有整个系统提示词那么长，
  * 平时留着只是噪音。排查上游行为时打开它，一次就够。
  *
- * BUDDY_DEBUG_UPSTREAM_FILE 给一个**文件名**时，完整的请求体写进数据目录里
+ * FACADE_DEBUG_UPSTREAM_FILE 给一个**文件名**时，完整的请求体写进数据目录里
  * 的那个文件（一行一个 JSON），截断只留给控制台。排查「上游为什么拒这一条」
  * 要看的正是被截断的那半截。
  *
@@ -75,7 +75,7 @@ const DEBUG_FILE_MAX_BYTES = 8 * 1024 * 1024;
  * 到上限就不再写了。
  */
 export function logUpstreamPayload(payload: Json): void {
-  if (process.env.BUDDY_DEBUG_UPSTREAM !== "1") return;
+  if (process.env.FACADE_DEBUG_UPSTREAM !== "1") return;
   let text: string;
   try {
     text = JSON.stringify(payload);
@@ -110,7 +110,7 @@ export function logUpstreamPayload(payload: Json): void {
  * 认纯文件名，带路径的报一句、然后不写文件（正文还是截断着打给控制台）。
  */
 function debugFileInDataDir(): string | null {
-  const raw = (process.env.BUDDY_DEBUG_UPSTREAM_FILE ?? "").trim();
+  const raw = (process.env.FACADE_DEBUG_UPSTREAM_FILE ?? "").trim();
   if (!raw) return null;
   if (raw !== path.basename(raw)) {
     console.log(

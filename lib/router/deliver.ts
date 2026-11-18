@@ -74,10 +74,10 @@ const DRAIN_TIMEOUT_MS = 45_000;
 /**
  * 等多久算「客户端不读了」（毫秒）。
  *
- * 可以用 BUDDY_DRAIN_TIMEOUT_MS 改（测试要把它调短）。默认 45 秒。
+ * 可以用 FACADE_DRAIN_TIMEOUT_MS 改（测试要把它调短）。默认 45 秒。
  */
 function drainTimeoutMs(): number {
-  const value = Number(process.env.BUDDY_DRAIN_TIMEOUT_MS ?? 0);
+  const value = Number(process.env.FACADE_DRAIN_TIMEOUT_MS ?? 0);
   if (Number.isFinite(value) && value > 0) return value;
   return DRAIN_TIMEOUT_MS;
 }

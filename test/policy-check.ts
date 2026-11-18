@@ -32,7 +32,7 @@ import type { PlatformAvailability } from "../lib/router/availability.ts";
 import type { ProviderRow } from "../lib/providers.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "policy-check-"));
-process.env.BUDDY_DATA_DIR = tmp;
+process.env.FACADE_DATA_DIR = tmp;
 
 const { AuthError } = await import("../lib/credential.ts");
 const {

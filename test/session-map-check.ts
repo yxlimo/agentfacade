@@ -8,7 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-process.env.BUDDY_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "session-map-"));
+process.env.FACADE_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "session-map-"));
 
 const { upstreamSessionId, clearUpstreamSessionCache } = await import("../lib/upstream-session.ts");
 

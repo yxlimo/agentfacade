@@ -5,7 +5,7 @@
 // 接口，不发任何真上游请求。
 //
 // 数据目录每次运行新建（`mktemp -d`），路径写在 `.e2e/tmp/panel-data-dir`
-// 让测试读令牌 —— 绝不指向 `~/.buddy-proxy` 或 NAS 上的库。
+// 让测试读令牌 —— 绝不指向 `~/.agentfacade` 或 NAS 上的库。
 //
 // 浏览器用的是系统 chromium，通过 CDP 接进来：本机是 NixOS，
 // `~/.cache/ms-playwright` 里下载的 headless shell 缺 libglib / libnss，

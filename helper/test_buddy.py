@@ -246,7 +246,7 @@ class ResolveAtTest(unittest.TestCase):
 
 
 class GatewayConfigTest(unittest.TestCase):
-    """网关地址的优先级：--gateway > BUDDY_GATEWAY > 配置文件 > 报错。"""
+    """网关地址的优先级：--gateway > FACADE_GATEWAY > 配置文件 > 报错。"""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

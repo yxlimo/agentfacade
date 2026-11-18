@@ -23,7 +23,7 @@ services:
       # Everything the service keeps lives in this one directory: the database
       # with the credentials and the settings, the credential log, the salt the
       # device fingerprint is derived from. It has to survive a rebuild.
-      BUDDY_DATA_DIR: /data
+      FACADE_DATA_DIR: /data
       TZ: Asia/Shanghai
       KEYS_FILE: /data/api-keys.json
       # The check-in of the China accounts runs on its own timer (see

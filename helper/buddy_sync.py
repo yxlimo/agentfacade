@@ -9,7 +9,7 @@
     python3 helper/buddy_sync.py --check         # 只比对，不写；不一致退出码 1
 
 命令行：
-  --gateway URL    网关地址（优先于 BUDDY_GATEWAY 和配置文件）
+  --gateway URL    网关地址（优先于 FACADE_GATEWAY 和配置文件）
   --set-gateway URL  把网关地址写进 ~/.config/buddy-helper/config.json
   --api-key KEY    客户端 api key，默认 public（网关跑 public 模式时不校验 key）
   --providers      同时同步各上游分组的 provider（默认不同步）
@@ -936,7 +936,7 @@ def main(argv: list) -> int:
     global GATEWAY, API_KEY
 
     parser = argparse.ArgumentParser(description="把网关公布的模型同步到客户端的 provider 配置")
-    parser.add_argument("--gateway", default=None, help="网关地址（优先于 BUDDY_GATEWAY 和配置文件）")
+    parser.add_argument("--gateway", default=None, help="网关地址（优先于 FACADE_GATEWAY 和配置文件）")
     parser.add_argument("--set-gateway", default=None, metavar="URL", help="把网关地址写进 ~/.config/buddy-helper/config.json")
     parser.add_argument("--api-key", default=os.environ.get("ROUTER_API_KEY", DEFAULT_API_KEY), help="客户端 api key（默认 public）")
     parser.add_argument("--providers", action="store_true", help="同时同步各上游分组的 provider")

@@ -39,7 +39,7 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "model-overrides-"));
 // The data directory has to be set before the store is imported: the store opens
 // the file the first time it is asked for it.
-process.env.BUDDY_DATA_DIR = tmp;
+process.env.FACADE_DATA_DIR = tmp;
 
 const { closeStore, store } = await import("../lib/store.ts");
 const { listModelOverrides, upsertModelOverrides, deleteModelOverride, mergeModelOverrides } = await import(

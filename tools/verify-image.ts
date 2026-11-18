@@ -240,7 +240,7 @@ async function checkRuns(tag: string): Promise<string> {
       "run", "-d", "--name", name, "--pull=never",
       "-p", "127.0.0.1:" + port + ":6450",
       "-e", "ROUTER_PORT=6450",
-      "-e", "BUDDY_DATA_DIR=" + CONTAINER_DATA_DIR,
+      "-e", "FACADE_DATA_DIR=" + CONTAINER_DATA_DIR,
       "-v", dataDir + ":" + CONTAINER_DATA_DIR,
       tag,
     ]);

@@ -23,7 +23,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "qoder-models-"));
-process.env.BUDDY_DATA_DIR = tmp;
+process.env.FACADE_DATA_DIR = tmp;
 
 let pass = 0;
 let fail = 0;

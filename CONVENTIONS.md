@@ -98,7 +98,7 @@ api_key: "sk-TESTONLY0000000000", // privacy:allow — fabricated sample
 
 测试与实验产生的库、日志、临时目录都放在本仓库目录或 `/tmp` 下，收尾时删掉。不要在用户主目录里建任何东西。
 
-默认数据目录的回落顺序是 `BUDDY_DATA_DIR` → `/data`（存在就优先）→ `$HOME/.buddy-proxy`。跑可能触及默认目录的测试时，先把 `BUDDY_DATA_DIR` 指到 `/tmp` 下的临时目录。
+默认数据目录的回落顺序是 `FACADE_DATA_DIR` → `/data`（存在就优先）→ `$HOME/.agentfacade`。跑可能触及默认目录的测试时，先把 `FACADE_DATA_DIR` 指到 `/tmp` 下的临时目录。
 
 ## 面板的测试用面板自己的配置跑
 
