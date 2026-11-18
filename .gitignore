@@ -26,6 +26,11 @@ problem.md
 # traffic. Both stay on this machine.
 reference/qoder/
 
+# Material from reversing the ZCode client: the AppImage and its extracted
+# app.asar. Kept on this machine so the next question about the client's API is
+# a grep, not another 250 MB download.
+reference/zcode-client-*/
+
 # Helpers for the machine this runs on, not for the service: they rewrite
 # personal client configs and poke at the opencode client's own storage.
 #
