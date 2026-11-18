@@ -28,9 +28,9 @@
 | `mise run check:routing` | 选号、降级、冷却、健康、用量、定时任务（`lib/router`、`lib/cooldown*`、`lib/session*`、`lib/periodic*`） |
 | `mise run check:deliver` | 响应投递：帧、背压、方言、客户端离开、日志脱敏（`lib/router/handle.ts`、`lib/dialect`、`lib/log-scrub*`） |
 | `mise run check:kinds` | 上游 kind、模拟端与开放平台（`lib/kinds`、`lib/minimax`、`lib/qoder`、`lib/workbuddy`、`lib/zcode`、`lib/tokenrhythm`、`lib/intern-ai`、`lib/qiniu`、`lib/xinghuo`、`lib/sensenova`） |
-| `mise run check:misc` | 目录一致性、清理规则、辅助脚本、隐私扫描器自身的测试、离线矩阵 |
+| `mise run check:misc` | 目录一致性、清理规则、辅助脚本、隐私扫描器自身的测试、离线矩阵（`test/`、仓库根配置如 `.gitignore`） |
 | `mise run check:web` | 面板前端，不启浏览器（`web/src`） |
-| `mise run check:panel` | 面板端到端，真浏览器（需要系统 chromium，约三分钟） |
+| `mise run check:panel` | 面板端到端，真浏览器（仓库根的 `tests/` 用例与 `web/e2e`，需要系统 chromium，约三分钟） |
 
 改动 `proto/**` 时自己跑 `mise run proto`，两份生成物（`lib/gen` 与 `web/.gen`）都就位才算做完。
 改动了 `web/**` 里的用户可见文案或渲染条件时，`check:web` 不够：它只跑单测。文案在 e2e 里也有断言，跑一次 `mise run check:panel`（真浏览器，约三分钟），否则单测全绿、面板 e2e 红，主代理要重来一轮。

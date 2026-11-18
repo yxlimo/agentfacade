@@ -102,6 +102,63 @@ check(
   sameTasks(planTasks(["tools/verify-changes.ts"]), ["check:misc"])
 );
 
+// ── 面板 e2e 用例在仓库根的 tests/，不在 web/e2e/ ──
+
+check(
+  "tests/panel-balance.e2e.ts → check:panel（不许落进 unknown）",
+  sameTasks(planTasks(["tests/panel-balance.e2e.ts"]), ["check:panel"])
+);
+
+check(
+  "tests/panel.ts → check:panel",
+  sameTasks(planTasks(["tests/panel.ts"]), ["check:panel"])
+);
+
+check(
+  "tests/** 不与 test/** 合并（两者都是目录，归属不同）",
+  sameTasks(planTasks(["test/x.ts"]), ["check:misc"]) &&
+    sameTasks(planTasks(["tests/x.ts"]), ["check:panel"])
+);
+
+// ── 仓库根的配置类文件 → misc，不要拉全量 ──
+
+check(
+  ".gitignore → check:misc（不许全量）",
+  sameTasks(planTasks([".gitignore"]), ["check:misc"])
+);
+
+check(
+  "根配置类文件都归 misc",
+  sameTasks(planTasks([".dockerignore", ".editorconfig", ".prettierrc.json"]), ["check:misc"])
+);
+
+// ── 规则命中重叠时，计划里不要把同一批文件打两行 ──
+
+const webSrcOutput = planOutput(["web/src/x.tsx"]);
+// 只数「命中的规则」那些行：一条规则算一次，两条规则会打两行一样的话。
+const panelRuleLines = webSrcOutput
+  .split("\n")
+  .filter((line) => line.includes("check:web + check:panel"));
+check(
+  "web/src/x.tsx → 计划里 web 规则只出现一次（不因两条规则重复）",
+  panelRuleLines.length === 1 && !webSrcOutput.includes("web-other"),
+  "重复行 " + panelRuleLines.length + " 行"
+);
+
+const panelE2eOutput = planOutput(["tests/panel-balance.e2e.ts"]);
+check(
+  "tests/panel-balance.e2e.ts 的计划里没有 unknown",
+  !panelE2eOutput.includes("unknown") && panelE2eOutput.includes("check:panel"),
+  panelE2eOutput.trim()
+);
+
+const gitignoreOutput = planOutput([".gitignore"]);
+check(
+  ".gitignore 的计划里没有落到全量 check",
+  !gitignoreOutput.includes("unknown") && gitignoreOutput.includes("check:misc"),
+  gitignoreOutput.trim()
+);
+
 // ── CLI 的计划打印 ──
 
 const emptyOutput = planOutput([]);

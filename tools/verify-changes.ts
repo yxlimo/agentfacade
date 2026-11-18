@@ -38,6 +38,12 @@ interface Rule {
   patterns: string[];
   /** 为什么它要跑这些门禁。 */
   why: string;
+  /**
+   * 这条规则比哪些规则更具体：它命中的文件不再计入那些规则。
+   *
+   * 只有当两边的门禁完全一样时才能这么写（否则会丢门禁）。
+   */
+  supersedes?: string[];
 }
 
 /**
@@ -100,6 +106,9 @@ const RULES: Rule[] = [
     id: "web-src",
     tasks: ["check:web", "check:panel"],
     patterns: ["web/src/**"],
+    // web/src/** 是 web/** 的子集，门禁一样：命中更具体的这条就够了，
+    // 免得计划里同一个文件打两行一样的话。
+    supersedes: ["web-other"],
     why: "`web/src/**` 变了 → 面板 e2e 断言的是用户可见文案",
   },
   {
@@ -107,6 +116,12 @@ const RULES: Rule[] = [
     tasks: ["check:web", "check:panel"],
     patterns: ["web/**"],
     why: "web/** 变了（构建、e2e、依赖）→ 面板单测与 e2e 都要跑",
+  },
+  {
+    id: "panel-e2e",
+    tasks: ["check:panel"],
+    patterns: ["tests/**"],
+    why: "仓库根的 tests/ 是面板 e2e 用例（不是 web/e2e/）→ 改它要跑浏览器那套",
   },
   {
     id: "proto",
@@ -125,6 +140,12 @@ const RULES: Rule[] = [
       "tsconfig*.json",
       "tsconfig/**",
       ".github/**",
+      ".gitignore",
+      ".dockerignore",
+      ".editorconfig",
+      ".prettierrc",
+      ".prettierrc.*",
+      ".prettierignore",
     ],
     why: "门禁、测试与工具本身变了 → 跑 check:misc",
   },
@@ -214,10 +235,26 @@ export interface RuleHit {
  * 里），所以这里是「多条」，不是「一条」。
  */
 export function matchRules(files: string[]): RuleHit[] {
-  const hits: RuleHit[] = [];
+  // 先各算各的，再让更具体的规则把笼统规则里的同一批文件拿掉。
+  const matched = new Map<string, string[]>();
   for (const { rule, matchers } of COMPILED) {
     const hit = files.filter((file) => matchers.some((m) => m.test(file)));
-    if (hit.length > 0) hits.push({ rule, files: hit });
+    if (hit.length > 0) matched.set(rule.id, hit);
+  }
+  for (const { rule, matchers } of COMPILED) {
+    if (!rule.supersedes) continue;
+    for (const id of rule.supersedes) {
+      const other = matched.get(id);
+      if (!other) continue;
+      const remaining = other.filter((file) => !matchers.some((m) => m.test(file)));
+      if (remaining.length === 0) matched.delete(id);
+      else matched.set(id, remaining);
+    }
+  }
+  const hits: RuleHit[] = [];
+  for (const { rule } of COMPILED) {
+    const hit = matched.get(rule.id);
+    if (hit) hits.push({ rule, files: hit });
   }
   // 有文件一条规则都没命中，就是有不认识的路径 → 从严。
   const known = new Set(hits.flatMap((hit) => hit.files));
