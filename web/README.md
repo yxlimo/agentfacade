@@ -19,11 +19,11 @@ TanStack Router 的 `basepath` 都跟着它）。要改的话给 `VITE_PANEL_BAS
 
 ## 跟网关怎么连
 
-- 接口是 protobuf + Connect，服务描述是 `buddy.admin.v1.AdminService`。
-  契约在 `proto/buddy/admin/v1/admin.proto`，生成的 TypeScript 客户端在
+- 接口是 protobuf + Connect，服务描述是 `agentfacade.admin.v1.AdminService`。
+  契约在 `proto/agentfacade/admin/v1/admin.proto`，生成的 TypeScript 客户端在
   `lib/gen/`（仓库里共用的一份，不要拷进 `web/`）。
 - 面板是网关自己托管的静态文件，所以请求打回同源，baseUrl 用相对地址
-  （路径从根开始：`/buddy.admin.v1.AdminService/...`，不在 `/admin` 下面）。
+  （路径从根开始：`/agentfacade.admin.v1.AdminService/...`，不在 `/admin` 下面）。
   开发时 vite 把这个前缀代理到网关：
 
   ```bash

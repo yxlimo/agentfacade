@@ -13,7 +13,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type Koa from "koa";
 import { createConnectRouter, type Interceptor } from "@connectrpc/connect";
 import { universalRequestFromNodeRequest, universalResponseToNodeResponse } from "@connectrpc/connect-node";
-import { AdminService } from "../gen/buddy/admin/v1/admin_pb.ts";
+import { AdminService } from "../gen/agentfacade/admin/v1/admin_pb.ts";
 import { adminService } from "./service.ts";
 import { ADMIN_ERROR_HEADER } from "./error-codes.ts";
 import { checkAdminToken } from "./token.ts";
@@ -21,8 +21,8 @@ import { scrubForLog } from "../log-scrub.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
-/** Connect 的路径前缀：POST /buddy.admin.v1.AdminService/<方法>。 */
-export const CONNECT_PREFIX = "/buddy.admin.v1.AdminService";
+/** Connect 的路径前缀：POST /agentfacade.admin.v1.AdminService/<方法>。 */
+export const CONNECT_PREFIX = "/agentfacade.admin.v1.AdminService";
 
 /**
  * 这次调用是哪一个方法（写进日志用）。

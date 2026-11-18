@@ -1,7 +1,7 @@
 import type {
   TokenPlanWindow,
   UpstreamQuota,
-} from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
 import { BalanceLotsTable } from '@/features/balance/balance-lots'
 import { CreditLotsTable } from '@/features/balance/credit-lots'
 import {

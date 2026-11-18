@@ -58,7 +58,7 @@ import { kindOf, type HealthSnapshot } from "../provider-kinds.ts";
 import { listProviders, type ProviderRow } from "../providers.ts";
 import { platformOfAny, type Platform } from "../platforms.ts";
 import { deadSession } from "../session.ts";
-import { CredentialState } from "../gen/buddy/admin/v1/admin_pb.ts";
+import { CredentialState } from "../gen/agentfacade/admin/v1/admin_pb.ts";
 import { hasUsableCredential } from "./credentials.ts";
 import { inferenceCredentialsOf, type CredentialRow } from "./accounts.ts";
 

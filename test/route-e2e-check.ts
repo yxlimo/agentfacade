@@ -27,7 +27,7 @@ import { decodeLegacyBody, legacyChunk, legacyEnd, legacyErrorFrame, legacyModel
 import { startGateway, type Gateway } from "./harness.ts";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const SERVICE = "/buddy.admin.v1.AdminService";
+const SERVICE = "/agentfacade.admin.v1.AdminService";
 let pass = 0;
 let fail = 0;
 const problems: string[] = [];

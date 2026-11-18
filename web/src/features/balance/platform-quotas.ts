@@ -1,4 +1,4 @@
-import type { UpstreamQuota } from '@/gen/buddy/admin/v1/admin_pb'
+import type { UpstreamQuota } from '@/gen/agentfacade/admin/v1/admin_pb'
 
 /**
  * 这块额度里有没有数。

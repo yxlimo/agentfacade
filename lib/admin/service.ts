@@ -5,7 +5,7 @@
 // lib/admin/upstreams.ts，用量在 lib/admin/usage.ts。这里只做一件事：把它们
 // 摆成契约里的形状。
 //
-// 契约在 proto/buddy/admin/v1/admin.proto，生成物在 lib/gen/。改契约之后跑
+// 契约在 proto/agentfacade/admin/v1/admin.proto，生成物在 lib/gen/。改契约之后跑
 // `mise run proto` 重新生成，这里跟着改。
 
 import fs from "node:fs";
@@ -90,7 +90,7 @@ import {
   UsageBucketSchema,
   UsageEventSchema,
   UsageSummarySchema,
-} from "../gen/buddy/admin/v1/admin_pb.ts";
+} from "../gen/agentfacade/admin/v1/admin_pb.ts";
 import { adminTokenSet } from "./token.ts";
 // 计费的形状在 lib/catalog-billing.ts 一处定：这一层只把它摆成契约里的样子。
 import type { ModelBilling } from "../catalog-billing.ts";

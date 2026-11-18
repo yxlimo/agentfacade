@@ -10,7 +10,7 @@
 # when the first fails.
 #
 # The panel's side of it goes through Connect now: POST
-# /buddy.admin.v1.AdminService/<method> with the panel's token.
+# /agentfacade.admin.v1.AdminService/<method> with the panel's token.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -73,7 +73,7 @@ if [ -z "$BASE" ]; then
   tail -20 $LOG_DIR/aggregate-serve.log
   exit 1
 fi
-ADMIN="$BASE/buddy.admin.v1.AdminService"
+ADMIN="$BASE/agentfacade.admin.v1.AdminService"
 
 # One Connect call: the method, the body, and the answer.
 admin() {

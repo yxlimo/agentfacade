@@ -8,7 +8,7 @@ import {
   createClient,
   type Transport,
 } from '@connectrpc/connect'
-import { AdminService } from '@/gen/buddy/admin/v1/admin_pb'
+import { AdminService } from '@/gen/agentfacade/admin/v1/admin_pb'
 
 type Methods = typeof AdminService['method']
 
@@ -32,7 +32,7 @@ type AnyHandler = (input: never) => unknown
 /**
  * 一个假的 transport：按方法名派发到预先放好的处理器。
  *
- * 方法名长这样：buddy.admin.v1.AdminService/ListUpstreams。处理器可以写
+ * 方法名长这样：agentfacade.admin.v1.AdminService/ListUpstreams。处理器可以写
  * 全名，也可以只写最后一段。
  */
 function mockTransport(handlers: MockHandlers): Transport {

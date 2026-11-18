@@ -1,7 +1,7 @@
 import { create } from '@bufbuild/protobuf'
 import { useQuery } from '@tanstack/react-query'
-import { ListModelsRequestSchema } from '@/gen/buddy/admin/v1/admin_pb'
-import { UpstreamState } from '@/gen/buddy/admin/v1/admin_pb'
+import { ListModelsRequestSchema } from '@/gen/agentfacade/admin/v1/admin_pb'
+import { UpstreamState } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { useAdminClient } from '@/features/auth/client-provider'
 import { queryKeys } from '@/lib/query-keys'
 

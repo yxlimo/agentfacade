@@ -7,7 +7,7 @@
 // POST /v1/messages（只认 x-api-key，回 anthropic 格式，普通与 stream），
 // 把收到的每个请求的方法/路径/关键头记下来。
 //
-// 面板那一面走真的 Connect 端点（POST /buddy.admin.v1.AdminService/<Method>），
+// 面板那一面走真的 Connect 端点（POST /agentfacade.admin.v1.AdminService/<Method>），
 // 令牌是数据目录里的 admin-token。
 //
 // 离线：临时数据目录，不发任何真请求。
@@ -227,7 +227,7 @@ process.env.FACADE_DATA_DIR = gw.dataDir;
 const token = fs.readFileSync(path.join(gw.dataDir, "admin-token"), "utf8").trim();
 
 async function rpc(method: string, body: unknown = {}): Promise<any> {
-  const res = await fetch(`${gw.base}/buddy.admin.v1.AdminService/${method}`, {
+  const res = await fetch(`${gw.base}/agentfacade.admin.v1.AdminService/${method}`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
@@ -1113,7 +1113,7 @@ const gw2 = await startGateway({
 const token2 = fs.readFileSync(path.join(gw2.dataDir, "admin-token"), "utf8").trim();
 /** 起第二次网关之后的那一单：同样把响应头里的机器码挑出来。 */
 async function rpcOn(method: string, body: unknown = {}): Promise<any> {
-  const res = await fetch(`${gw2.base}/buddy.admin.v1.AdminService/${method}`, {
+  const res = await fetch(`${gw2.base}/agentfacade.admin.v1.AdminService/${method}`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token2}` },
     body: JSON.stringify(body),

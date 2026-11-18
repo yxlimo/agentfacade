@@ -71,7 +71,7 @@ async function adminToken(): Promise<string> {
 
 async function call(method: string, body: unknown = {}): Promise<any> {
   const token = await adminToken();
-  const r = await fetch(`${BASE}/buddy.admin.v1.AdminService/${method}`, {
+  const r = await fetch(`${BASE}/agentfacade.admin.v1.AdminService/${method}`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify(body),

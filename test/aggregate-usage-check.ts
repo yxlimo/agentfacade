@@ -20,7 +20,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { startGateway as startHarness, type Gateway as HarnessGateway } from "./harness.ts";
 
-const SERVICE = "/buddy.admin.v1.AdminService";
+const SERVICE = "/agentfacade.admin.v1.AdminService";
 const MODEL = "MiniMax-M3.1-Flash";
 /** 公布出去的模型名：客户端写的是它，用量表里的 agent_model 也是它。 */
 const PUBLISHED = "pub-usage";

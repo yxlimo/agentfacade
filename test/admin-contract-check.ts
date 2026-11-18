@@ -2,7 +2,7 @@
 //
 //   node --experimental-strip-types test/admin-contract-check.ts
 //
-// 起一个真的网关（上游全关，不花 token），把 proto/buddy/admin/v1/admin.proto
+// 起一个真的网关（上游全关，不花 token），把 proto/agentfacade/admin/v1/admin.proto
 // 当标准答案：逐个方法核对请求与答复的字段名、类型与语义，再走一遍错误路径、
 // 静态托管与 /health。
 //
@@ -16,14 +16,14 @@ import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fromJsonString, toJsonString } from "@bufbuild/protobuf";
-import { TokenPlanWindowSchema, UpstreamQuotaSchema, CheckinState } from "../lib/gen/buddy/admin/v1/admin_pb.ts";
+import { TokenPlanWindowSchema, UpstreamQuotaSchema, CheckinState } from "../lib/gen/agentfacade/admin/v1/admin_pb.ts";
 import { startGateway as startHarness, type Gateway } from "./harness.ts";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 // 临时目录走系统的 tmpdir：写死 /tmp 在 Windows 上落到当前盘的根上。
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "test-admin-contract-"));
-const SERVICE = "/buddy.admin.v1.AdminService";
-const PROTO = path.join(ROOT, "proto/buddy/admin/v1/admin.proto");
+const SERVICE = "/agentfacade.admin.v1.AdminService";
+const PROTO = path.join(ROOT, "proto/agentfacade/admin/v1/admin.proto");
 
 // This process runs the panel's own logic too (the check-in summary), so it
 // needs a data dir of its own. The gateway below runs in another process with

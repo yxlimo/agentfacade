@@ -65,7 +65,7 @@ const { createOpenPlatform } = await import("../lib/open-platforms.ts");
 const { insertVendorPlatform } = await import("./vendor-platform.ts");
 const { registerQuotaPlugin, allQuotaPlugins, quotaPluginOf } = await import("../lib/quota-plugins.ts");
 const { pluginFieldOf } = await import("../lib/quota-plugin-credentials.ts");
-const { CredentialState } = await import("../lib/gen/buddy/admin/v1/admin_pb.ts");
+const { CredentialState } = await import("../lib/gen/agentfacade/admin/v1/admin_pb.ts");
 
 /** 面板上的那一行，取出来比对的三样：label、形态、算不算推理凭据。 */
 function rowsOf(accountId: string): [string, string, boolean][] {

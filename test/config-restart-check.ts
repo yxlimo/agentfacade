@@ -25,7 +25,7 @@ import { DatabaseSync } from "node:sqlite";
 import { startGateway, type Gateway } from "./harness.ts";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const SERVICE = "/buddy.admin.v1.AdminService";
+const SERVICE = "/agentfacade.admin.v1.AdminService";
 const CLIENT_KEY = "oc-test-key-1234567890";
 
 let pass = 0;

@@ -6,7 +6,7 @@ import type { ReactNode } from 'react'
 import {
   ListCredentialsResponseSchema,
   CredentialSchema,
-} from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
 import { useCredentials } from '@/features/accounts/api'
 import { AdminClientProvider } from '@/features/auth/client-provider'
 import { mockAdminClient } from '@/test/mock-transport'

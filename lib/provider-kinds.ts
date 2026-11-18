@@ -12,7 +12,7 @@
 // belongs to (lib/router/upstreams/) — one dispatch, not one per question.
 
 import type Koa from "koa";
-import { CredentialState } from "./gen/buddy/admin/v1/admin_pb.ts";
+import { CredentialState } from "./gen/agentfacade/admin/v1/admin_pb.ts";
 import type { Json } from "./json.ts";
 import type { ProviderPolicy, ProviderRow } from "./providers.ts";
 import type { CatalogModel } from "./router/catalog.ts";

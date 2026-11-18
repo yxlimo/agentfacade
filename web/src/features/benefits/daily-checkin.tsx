@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/card'
 import { useBenefitStatus, useRunBenefitNow } from '@/features/upstreams/benefits'
 import { formatLocalMoment } from '@/lib/format'
-import { CheckinState } from '@/gen/buddy/admin/v1/admin_pb'
+import { CheckinState } from '@/gen/agentfacade/admin/v1/admin_pb'
 
 /**
  * 每日签到统一区。

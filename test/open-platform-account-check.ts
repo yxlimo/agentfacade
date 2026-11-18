@@ -56,7 +56,7 @@ const { platformAvailability } = await import("../lib/admin/platform-state.ts");
 const { openPlatformKeyId, openPlatformKeyOf } = await import("../lib/open-platform-credentials.ts");
 const { registerQuotaPlugin } = await import("../lib/quota-plugins.ts");
 const { pluginFieldOf } = await import("../lib/quota-plugin-credentials.ts");
-const { CredentialState } = await import("../lib/gen/buddy/admin/v1/admin_pb.ts");
+const { CredentialState } = await import("../lib/gen/agentfacade/admin/v1/admin_pb.ts");
 const { store } = await import("../lib/store.ts");
 
 section("平台与账号");

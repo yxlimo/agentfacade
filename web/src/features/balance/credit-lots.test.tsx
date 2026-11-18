@@ -1,7 +1,7 @@
 import { create } from '@bufbuild/protobuf'
 import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { CreditLotSchema } from '@/gen/buddy/admin/v1/admin_pb'
+import { CreditLotSchema } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { CreditLotsTable } from '@/features/balance/credit-lots'
 
 // 平台的「永不过期」标记：2099-12-31。

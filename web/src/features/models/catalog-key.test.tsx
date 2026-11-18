@@ -9,7 +9,7 @@ import {
   ListUpstreamsResponseSchema,
   UpstreamSchema,
   UpstreamState,
-} from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
 import { ModelPicker } from '@/features/models/model-picker'
 import { mockAdminClient } from '@/test/mock-transport'
 import { renderWithClient } from '@/test/render'

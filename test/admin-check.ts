@@ -25,7 +25,7 @@ type Gateway = import("./harness.ts").Gateway;
 const { tokenPlanView } = await import("../lib/admin/upstreams.ts");
 const { PLATFORMS, allPlatforms } = await import("../lib/platforms.ts");
 
-const SERVICE = "/buddy.admin.v1.AdminService";
+const SERVICE = "/agentfacade.admin.v1.AdminService";
 
 let pass = 0;
 let fail = 0;

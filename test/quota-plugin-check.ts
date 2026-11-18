@@ -482,7 +482,7 @@ section("插件凭据");
 const { setProviderKeys } = await import("../lib/admin/credentials.ts");
 const { credentialsOf } = await import("../lib/admin/accounts.ts");
 const { addAccount, provider } = await import("../lib/providers.ts");
-const { CredentialState } = await import("../lib/gen/buddy/admin/v1/admin_pb.ts");
+const { CredentialState } = await import("../lib/gen/agentfacade/admin/v1/admin_pb.ts");
 
 // 一段字段就是一行凭据：写了读得回，空串清掉，没写过就是空串。
 const FIELD_ACCOUNT = "quota-cred-no-account";

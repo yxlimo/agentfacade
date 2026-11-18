@@ -23,7 +23,7 @@ import type { ProviderKeyAccess } from '@/features/accounts/provider-key-fields'
 import { QuotaSummary } from '@/features/balance/quota'
 import { formatDateTime, formatLocalMoment } from '@/lib/format'
 import { credentialKindLabel } from '@/lib/credential-kind'
-import type { Account, Credential } from '@/gen/buddy/admin/v1/admin_pb'
+import type { Account, Credential } from '@/gen/agentfacade/admin/v1/admin_pb'
 
 /**
  * 账号状态的文案。

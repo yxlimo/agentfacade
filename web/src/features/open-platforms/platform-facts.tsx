@@ -1,4 +1,4 @@
-import type { Upstream } from '@/gen/buddy/admin/v1/admin_pb'
+import type { Upstream } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { hasQuota, quotaStateText, QuotaSummary } from '@/features/balance/quota'
 import { formatLocalMoment } from '@/lib/format'
 

@@ -14,8 +14,8 @@ import {
   SetProviderKeysResponseSchema,
   UpstreamSchema,
   UpstreamState,
-} from '@/gen/buddy/admin/v1/admin_pb'
-import type { Account, Upstream } from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
+import type { Account, Upstream } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { UpstreamsPage } from '@/features/upstreams/index'
 import { upstreamKeys } from '@/features/upstreams/api'
 import { mockAdminClient } from '@/test/mock-transport'

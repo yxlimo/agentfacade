@@ -211,7 +211,7 @@ check(
 section("TokenRhythm 的凭据");
 
 const { setSecret } = await import("../lib/store.ts");
-const { CredentialState } = await import("../lib/gen/buddy/admin/v1/admin_pb.ts");
+const { CredentialState } = await import("../lib/gen/agentfacade/admin/v1/admin_pb.ts");
 
 const trOne = addAccount({ platform: "tokenrhythm", alias: "中转站一号" });
 const trOneId = String(trOne.id ?? "");

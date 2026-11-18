@@ -1,4 +1,4 @@
-import { type TokenPlanWindow } from '@/gen/buddy/admin/v1/admin_pb'
+import { type TokenPlanWindow } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { Progress } from '@/components/ui/progress'
 import { formatDateTime } from '@/lib/format'
 

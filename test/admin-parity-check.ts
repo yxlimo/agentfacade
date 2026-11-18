@@ -94,7 +94,7 @@ const {
   CredentialState,
   UnpublishedReason,
   UpstreamState,
-} = await import("../lib/gen/buddy/admin/v1/admin_pb.ts");
+} = await import("../lib/gen/agentfacade/admin/v1/admin_pb.ts");
 
 /** 面板的平台行（面板那一层看到的那个平台）。 */
 async function platformRow(id: string): Promise<any> {

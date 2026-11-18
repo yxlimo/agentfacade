@@ -13,8 +13,8 @@ import {
   ProviderPolicy,
   UpstreamSchema,
   UpstreamState,
-} from '@/gen/buddy/admin/v1/admin_pb'
-import type { Upstream } from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
+import type { Upstream } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { UpstreamsPage } from '@/features/upstreams/index'
 import { PLATFORM_ORDER_KEY } from '@/lib/platform-order'
 import { mockAdminClient } from '@/test/mock-transport'

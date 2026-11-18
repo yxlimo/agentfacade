@@ -6,8 +6,8 @@ import {
   BenefitStatusSchema,
   GetBenefitStatusResponseSchema,
   RunBenefitNowResponseSchema,
-} from '@/gen/buddy/admin/v1/admin_pb'
-import { CheckinState, type BenefitStatus } from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
+import { CheckinState, type BenefitStatus } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { DailyCheckinPanel } from '@/features/benefits/daily-checkin'
 import { mockAdminClient } from '@/test/mock-transport'
 import { renderWithClient } from '@/test/render'

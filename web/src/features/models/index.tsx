@@ -4,7 +4,7 @@ import { Pause, Pencil, Plus, Rocket, Trash2 } from 'lucide-react'
 import {
   PublishedModelSchema,
   type PublishedModel,
-} from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
 import { PageShell } from '@/components/layout/page-shell'
 import {
   EmptyState,
@@ -42,7 +42,7 @@ import {
   useSavePublishedModel,
 } from '@/features/models/api'
 import { UNPUBLISHED_REASON_LABELS } from '@/features/upstreams/state'
-import { UnpublishedReason } from '@/gen/buddy/admin/v1/admin_pb'
+import { UnpublishedReason } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { ModelDialog } from '@/features/models/model-dialog'
 import { formatCount, formatDate, formatLocalMoment } from '@/lib/format'
 

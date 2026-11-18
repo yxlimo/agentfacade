@@ -27,7 +27,7 @@ import { DatabaseSync } from "node:sqlite";
 import { Worker } from "node:worker_threads";
 import { startGateway as startHarness } from "./harness.ts";
 
-const SERVICE = "/buddy.admin.v1.AdminService";
+const SERVICE = "/agentfacade.admin.v1.AdminService";
 const MODEL = "MiniMax-M3.1-Flash";
 
 /**

@@ -14,8 +14,8 @@ import {
   UpstreamQuotaSchema,
   UpstreamSchema,
   UpstreamState,
-} from '@/gen/buddy/admin/v1/admin_pb'
-import type { Account } from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
+import type { Account } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { UpstreamsPage } from '@/features/upstreams/index'
 import { mockAdminClient as makeClient } from '@/test/mock-transport'
 import { renderWithClient } from '@/test/render'

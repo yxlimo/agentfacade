@@ -12,7 +12,7 @@ import {
   PublishedModelSchema,
   UpstreamSchema,
   UpstreamState,
-} from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
 import { PublishedModelsPage } from '@/features/models/index'
 import { ModelDialog, fromDraft, toDraft } from '@/features/models/model-dialog'
 import { newUid } from '@/lib/uid'

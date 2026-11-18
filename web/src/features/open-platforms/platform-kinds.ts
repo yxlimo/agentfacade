@@ -1,4 +1,4 @@
-import type { PlatformKind } from '@/gen/buddy/admin/v1/admin_pb'
+import type { PlatformKind } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { describeError } from '@/lib/errors'
 
 /**

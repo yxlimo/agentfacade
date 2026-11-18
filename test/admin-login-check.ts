@@ -18,7 +18,7 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 // 临时目录走系统的 tmpdir：写死的 /tmp 在 Windows 上落到当前盘的根上，
 // 而且两次运行会撞在同一个目录上。
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "test-admin-login-"));
-const SERVICE = "/buddy.admin.v1.AdminService";
+const SERVICE = "/agentfacade.admin.v1.AdminService";
 
 /** 假上游给的东西：一眼就能在日志里找到。 */
 const FAKE_DEVICE_CODE = "DEVICE-CODE-MUST-NOT-LEAK";

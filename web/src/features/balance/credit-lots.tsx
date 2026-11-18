@@ -1,4 +1,4 @@
-import type { CreditLot } from '@/gen/buddy/admin/v1/admin_pb'
+import type { CreditLot } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { EmptyState } from '@/components/async-state'
 import { StatusBadge } from '@/components/status-badge'
 import {

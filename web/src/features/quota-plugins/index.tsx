@@ -37,7 +37,7 @@ import {
 import { useSetProviderKeys } from '@/features/accounts/api'
 import { useAccountLogin } from '@/features/login/use-account-login'
 import { LoginDialog } from '@/features/login/login-dialog'
-import type { Account, QuotaPluginPlatform, Upstream } from '@/gen/buddy/admin/v1/admin_pb'
+import type { Account, QuotaPluginPlatform, Upstream } from '@/gen/agentfacade/admin/v1/admin_pb'
 
 /**
  * 插件列表页：服务端登记的额度插件，一行一个。

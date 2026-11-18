@@ -28,7 +28,7 @@ import { DatabaseSync } from "node:sqlite";
 import { startGateway as startHarness } from "./harness.ts";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const SERVICE = "/buddy.admin.v1.AdminService";
+const SERVICE = "/agentfacade.admin.v1.AdminService";
 const MODEL = "deepseek-v4.1-flash-1017";
 
 let pass = 0;

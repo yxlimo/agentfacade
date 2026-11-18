@@ -43,7 +43,7 @@ export default defineConfig(({ mode }) => {
       fs: { allow: ['..'] },
       proxy: {
         // Connect 的标准路径。代理过去浏览器就不用管 CORS 了。
-        '/buddy.admin.v1.AdminService': {
+        '/agentfacade.admin.v1.AdminService': {
           target: gateway,
           changeOrigin: true,
         },

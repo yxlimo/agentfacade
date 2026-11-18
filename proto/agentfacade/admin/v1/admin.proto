@@ -8,7 +8,7 @@
 
 syntax = "proto3";
 
-package buddy.admin.v1;
+package agentfacade.admin.v1;
 
 // ── 公共形状 ──────────────────────────────────────────────────────────────
 

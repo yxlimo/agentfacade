@@ -56,7 +56,7 @@ import type {
 
 // The panel's own view of these shapes comes from here.
 export type { BalanceView, CreditView, CredentialView, HealthSnapshot, QuotaView, TokenPlanView };
-import { CredentialState, ProviderPolicy as ContractPolicy, UpstreamState } from "../gen/buddy/admin/v1/admin_pb.ts";
+import { CredentialState, ProviderPolicy as ContractPolicy, UpstreamState } from "../gen/agentfacade/admin/v1/admin_pb.ts";
 import { hasUsableCredential } from "./credentials.ts";
 import { loginActivity } from "./login.ts";
 import { coolingOf, platformCooling, type CoolingInfo, type PlatformCooling } from "./upstream-state.ts";

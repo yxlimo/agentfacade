@@ -11,7 +11,7 @@ import {
   ListUpstreamsResponseSchema,
   LoginWithPasswordResponseSchema,
   RunBenefitNowResponseSchema,
-} from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
 import { AdminClientProvider } from '@/features/auth/client-provider'
 import { useBalance } from '@/features/balance/api'
 import { useLoginWithPassword } from '@/features/login/api'

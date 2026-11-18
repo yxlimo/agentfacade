@@ -232,7 +232,7 @@ for (const base of ["", "/:platform"]) {
 /**
  * The panel's API: Connect over HTTP.
  *
- * The path is the Connect standard one — POST /buddy.admin.v1.AdminService/<方法>
+ * The path is the Connect standard one — POST /agentfacade.admin.v1.AdminService/<方法>
  * — and the token goes in the Authorization header. The JSON routes that used
  * to live here (/admin/reload, /admin/usage, /admin/models) are gone: those
  * are in the contract now.

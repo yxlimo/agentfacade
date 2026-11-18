@@ -25,7 +25,7 @@ import { startGateway as startHarness } from "./harness.ts";
 // 而且两次运行会撞在同一个目录上。
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "test-sensenova-intern-ai-"));
 const UNIT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "test-sensenova-intern-ai-unit-"));
-const SERVICE = "/buddy.admin.v1.AdminService";
+const SERVICE = "/agentfacade.admin.v1.AdminService";
 
 let pass = 0;
 let fail = 0;

@@ -43,7 +43,7 @@ const { addAccount } = await import("../lib/providers.ts");
 const { setCooldown, clearCooldown } = await import("../lib/cooldown.ts");
 const { putHealthSnapshot } = await import("../lib/health-cache.ts");
 const { adminService } = await import("../lib/admin/service.ts");
-const { UpstreamState } = await import("../lib/gen/buddy/admin/v1/admin_pb.ts");
+const { UpstreamState } = await import("../lib/gen/agentfacade/admin/v1/admin_pb.ts");
 
 const now = Date.now();
 const year = now + 365 * 24 * 3600 * 1000;

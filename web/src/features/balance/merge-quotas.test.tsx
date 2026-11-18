@@ -12,7 +12,7 @@ import {
   TokenPlanWindowSchema,
   UpstreamQuotaSchema,
   UpstreamSchema,
-} from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
 import { BalancePage } from '@/features/balance/index'
 import { mergeQuotas } from '@/features/balance/platform-quotas'
 import { CreditLotsTable } from '@/features/balance/credit-lots'

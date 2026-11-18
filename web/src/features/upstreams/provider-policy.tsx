@@ -8,8 +8,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useSetPlatformPolicy } from '@/features/upstreams/api'
-import { ProviderPolicy } from '@/gen/buddy/admin/v1/admin_pb'
-import type { Upstream } from '@/gen/buddy/admin/v1/admin_pb'
+import { ProviderPolicy } from '@/gen/agentfacade/admin/v1/admin_pb'
+import type { Upstream } from '@/gen/agentfacade/admin/v1/admin_pb'
 
 /**
  * 策略的中文标签。

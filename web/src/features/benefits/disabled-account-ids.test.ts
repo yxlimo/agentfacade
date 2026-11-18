@@ -1,6 +1,6 @@
 import { create } from '@bufbuild/protobuf'
 import { describe, expect, it } from 'vitest'
-import { AccountSchema, UpstreamSchema } from '@/gen/buddy/admin/v1/admin_pb'
+import { AccountSchema, UpstreamSchema } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { disabledAccountIds } from '@/features/benefits/checkin-page'
 
 function account(id: string, enabled: boolean) {

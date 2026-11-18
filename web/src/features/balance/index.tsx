@@ -24,7 +24,7 @@ import {
 } from '@/features/balance/platform-row'
 import { useUpstreams } from '@/features/upstreams/api'
 import { useOrderedPlatforms } from '@/lib/platform-order'
-import type { UpstreamQuota } from '@/gen/buddy/admin/v1/admin_pb'
+import type { UpstreamQuota } from '@/gen/agentfacade/admin/v1/admin_pb'
 
 /**
  * 收起时最多摆几个平台。

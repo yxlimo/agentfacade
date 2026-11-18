@@ -36,7 +36,7 @@ import {
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useConfig, useSetConfig } from '@/features/config/api'
-import type { ConfigItem } from '@/gen/buddy/admin/v1/admin_pb'
+import type { ConfigItem } from '@/gen/agentfacade/admin/v1/admin_pb'
 
 const SOURCE_LABELS: Record<string, string> = {
   database: '数据库覆盖',

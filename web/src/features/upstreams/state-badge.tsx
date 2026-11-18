@@ -1,7 +1,7 @@
 import {
   CredentialState,
   UpstreamState,
-} from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
 import { Badge } from '@/components/ui/badge'
 import {
   CREDENTIAL_STATE_LABELS,

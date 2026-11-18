@@ -1,4 +1,4 @@
-import type { PublishedModel } from '@/gen/buddy/admin/v1/admin_pb'
+import type { PublishedModel } from '@/gen/agentfacade/admin/v1/admin_pb'
 
 /**
  * 哪些主路由模型指向这个平台。

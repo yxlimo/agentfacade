@@ -30,7 +30,7 @@ import {
   legacyStatusErrorFrame,
 } from "./legacy-wire.ts";
 
-const SERVICE = "/buddy.admin.v1.AdminService";
+const SERVICE = "/agentfacade.admin.v1.AdminService";
 /** 假上游用的模型名（两个 Qoder 区域都serve它）。 */
 const MODEL = "glm-5.3";
 

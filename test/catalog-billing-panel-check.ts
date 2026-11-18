@@ -37,7 +37,7 @@ const { createOpenPlatform, openPlatformOf, syncPlatformModels } = await import(
 const { addAccount } = await import("../lib/providers.ts");
 const { parseModelList } = await import("../lib/open-platform-catalog.ts");
 const { create, toJson } = await import("@bufbuild/protobuf");
-const { ListModelsRequestSchema, CatalogModelSchema } = await import("../lib/gen/buddy/admin/v1/admin_pb.ts");
+const { ListModelsRequestSchema, CatalogModelSchema } = await import("../lib/gen/agentfacade/admin/v1/admin_pb.ts");
 const { adminService } = await import("../lib/admin/service.ts");
 
 let pass = 0;

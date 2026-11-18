@@ -4,7 +4,7 @@ import {
   ListProviderKindsResponseSchema,
   ProviderKindSchema,
   ProviderPolicy,
-} from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
 import { PROVIDER_KIND_ROWS } from '@/test/provider-kinds-data'
 
 /**

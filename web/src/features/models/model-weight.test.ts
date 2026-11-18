@@ -1,6 +1,6 @@
 import { create } from '@bufbuild/protobuf'
 import { describe, expect, it } from 'vitest'
-import { PublishedModelSchema } from '@/gen/buddy/admin/v1/admin_pb'
+import { PublishedModelSchema } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { fromDraft, targetWeight, toDraft } from '@/features/models/model-dialog'
 import { newUid } from '@/lib/uid'
 

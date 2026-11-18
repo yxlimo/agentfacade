@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Plus, X } from 'lucide-react'
-import type { Upstream } from '@/gen/buddy/admin/v1/admin_pb'
+import type { Upstream } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -22,7 +22,7 @@ import {
 } from '@/components/ui/select'
 import { useCatalogModels } from '@/features/models/catalog-api'
 import { describeError } from '@/lib/errors'
-import type { ModelBilling } from '@/gen/buddy/admin/v1/admin_pb'
+import type { ModelBilling } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { billingLine } from './model-billing'
 import {
   useDeleteModelOverride,

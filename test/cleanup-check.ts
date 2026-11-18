@@ -213,13 +213,13 @@ const BASE = gw.base;
 // 面板的令牌：启动不再插行，所以先用面板给 qoder-cn 加一个账号（新账号就是
 // 开着的），再让面板把它打开。
 const adminToken = fs.readFileSync(path.join(ROUTER_DIR, "admin-token"), "utf8").trim();
-const made = await fetch(`${BASE}/buddy.admin.v1.AdminService/AddAccount`, {
+const made = await fetch(`${BASE}/agentfacade.admin.v1.AdminService/AddAccount`, {
   method: "POST",
   headers: { "content-type": "application/json", authorization: `Bearer ${adminToken}` },
   body: JSON.stringify({ platform: "qoder-cn", alias: "测试 Qoder CN" }),
 }).then((r) => r.json().catch(() => null));
 check("qoder-cn 的账号加出来了", typeof made?.id === "string" && Boolean(made.id), JSON.stringify(made));
-const switched = await fetch(`${BASE}/buddy.admin.v1.AdminService/SetAccountEnabled`, {
+const switched = await fetch(`${BASE}/agentfacade.admin.v1.AdminService/SetAccountEnabled`, {
   method: "POST",
   headers: { "content-type": "application/json", authorization: `Bearer ${adminToken}` },
   body: JSON.stringify({ accountId: String(made?.id ?? ""), enabled: true }),

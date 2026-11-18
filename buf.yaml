@@ -13,7 +13,7 @@ lint:
   # UNSPECIFIED 只会多出第四种状态。这条只在那个文件上免检。
   ignore_only:
     ENUM_ZERO_VALUE_SUFFIX:
-      - proto/buddy/admin/v1/admin.proto
+      - proto/agentfacade/admin/v1/admin.proto
 breaking:
   use:
     - FILE

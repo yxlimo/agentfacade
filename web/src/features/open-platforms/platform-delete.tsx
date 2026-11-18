@@ -16,7 +16,7 @@ import {
   usePublishedModels,
 } from '@/features/models/api'
 import { describeError } from '@/lib/errors'
-import type { PublishedModel, Upstream } from '@/gen/buddy/admin/v1/admin_pb'
+import type { PublishedModel, Upstream } from '@/gen/agentfacade/admin/v1/admin_pb'
 
 /**
  * 删掉一个开放平台：先扫一遍主路由模型。

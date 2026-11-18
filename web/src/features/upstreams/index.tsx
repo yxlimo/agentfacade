@@ -80,7 +80,7 @@ import type {
   Account,
   RunBenefitNowResponse,
   Upstream,
-} from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
 
 const REGION_LABELS: Record<string, string> = {
   cn: '中国区',

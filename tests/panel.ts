@@ -29,7 +29,7 @@ function adminToken(): string {
   return readFileSync(`${dataDir()}/admin-token`, 'utf8').trim();
 }
 
-const SERVICE = '/buddy.admin.v1.AdminService';
+const SERVICE = '/agentfacade.admin.v1.AdminService';
 
 /** 打一个 admin RPC 方法（Connect 的 JSON 形态，跟面板发的一样）。 */
 export async function adminRpc<T = Record<string, unknown>>(

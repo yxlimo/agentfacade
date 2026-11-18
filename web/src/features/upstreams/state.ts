@@ -2,7 +2,7 @@ import {
   CredentialState,
   UnpublishedReason,
   UpstreamState,
-} from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
 
 /**
  * 上游状态的人话。

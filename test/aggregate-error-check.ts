@@ -20,7 +20,7 @@ import { DatabaseSync } from "node:sqlite";
 import { startGateway as startHarness, type Gateway as HarnessGateway } from "./harness.ts";
 import { legacyErrorFrame, legacyQueueMessage } from "./legacy-wire.ts";
 
-const SERVICE = "/buddy.admin.v1.AdminService";
+const SERVICE = "/agentfacade.admin.v1.AdminService";
 /** 假上游对它答 400（这个上游没有这个模型）。 */
 const MODEL_A = "MiniMax-M3.1-Flash";
 /** 假上游对它答 404。 */

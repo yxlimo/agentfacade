@@ -25,7 +25,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { startGateway as startHarness, type Gateway as HarnessGateway } from "./harness.ts";
 
-const SERVICE = "/buddy.admin.v1.AdminService";
+const SERVICE = "/agentfacade.admin.v1.AdminService";
 const MODEL = "MiniMax-M3.1-Flash";
 
 /** 上游正文里那句话：断言客户端拿到的是上游自己的话。 */

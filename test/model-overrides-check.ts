@@ -65,7 +65,7 @@ const {
   ListModelOverridesRequestSchema,
   ListModelsRequestSchema,
   CatalogModelSchema,
-} = await import("../lib/gen/buddy/admin/v1/admin_pb.ts");
+} = await import("../lib/gen/agentfacade/admin/v1/admin_pb.ts");
 const { adminService } = await import("../lib/admin/service.ts");
 
 let pass = 0;

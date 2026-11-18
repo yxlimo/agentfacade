@@ -26,7 +26,7 @@ import { DatabaseSync } from "node:sqlite";
 import { startGateway as startHarness, type Gateway as HarnessGateway } from "./harness.ts";
 import { legacyChunk, legacyEnd } from "./legacy-wire.ts";
 
-const SERVICE = "/buddy.admin.v1.AdminService";
+const SERVICE = "/agentfacade.admin.v1.AdminService";
 
 let pass = 0;
 let fail = 0;

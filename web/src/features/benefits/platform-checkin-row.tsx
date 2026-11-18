@@ -3,7 +3,7 @@ import { ChevronDown } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { formatLocalMoment } from '@/lib/format'
-import { CheckinState, type BenefitStatus } from '@/gen/buddy/admin/v1/admin_pb'
+import { CheckinState, type BenefitStatus } from '@/gen/agentfacade/admin/v1/admin_pb'
 
 /** 明细区的 id：展开时 `aria-controls` 指过来。 */
 function detailId(upstreamId: string): string {

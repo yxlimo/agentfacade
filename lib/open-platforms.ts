@@ -135,7 +135,7 @@ const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
  *
  *   v1       /v1/messages、/v1/chat/completions、/v1/models（根路由）
  *   admin    面板这一片的路径（旧的 JSON 路由在 /admin/…，现在是 Connect 的
- *            /buddy.admin.v1.AdminService/…，但这一段留给面板）
+ *            /agentfacade.admin.v1.AdminService/…，但这一段留给面板）
  *   health   /health（公开的健康检查）
  *   healthz  惯例上的健康检查名（现在没有这个端点，先占着）
  *   metrics  惯例上的指标端点名（现在没有这个端点，先占着）

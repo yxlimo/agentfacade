@@ -6,8 +6,8 @@ import {
   AccountSchema,
   PlatformKindSchema,
   UpstreamSchema,
-} from '@/gen/buddy/admin/v1/admin_pb'
-import type { Upstream } from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
+import type { Upstream } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { PlatformDialog } from '@/features/open-platforms/platform-dialog'
 import {
   platformKindValue,

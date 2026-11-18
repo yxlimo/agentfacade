@@ -4,7 +4,7 @@ import {
   GetSystemStatusRequestSchema,
   GetUsageSummaryRequestSchema,
   type GetUsageSummaryRequest,
-} from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
 import { useAdminClient } from '@/features/auth/client-provider'
 import { queryKeys } from '@/lib/query-keys'
 

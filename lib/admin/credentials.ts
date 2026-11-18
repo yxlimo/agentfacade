@@ -6,7 +6,7 @@
 // 词表只有这一处：字符串进来，枚举出去。反过来也有（契约里账号与凭据的
 // status 仍是字符串），那是给人看的词。
 
-import { CredentialState } from "../gen/buddy/admin/v1/admin_pb.ts";
+import { CredentialState } from "../gen/agentfacade/admin/v1/admin_pb.ts";
 import { openPlatformOf, type OpenPlatformRow } from "../open-platforms.ts";
 import { isSimulatedClientKind } from "../platform-catalog.ts";
 import { platformOfAny } from "../platforms.ts";

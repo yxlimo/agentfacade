@@ -27,7 +27,7 @@ import { openPlatformOf } from "../open-platforms.ts";
 import { fetchOpenPlatformModels } from "../open-platform-catalog.ts";
 import { forgetAccountSnapshot } from "./upstreams.ts";
 import { clearCooldown } from "../cooldown.ts";
-import { CredentialState } from "../gen/buddy/admin/v1/admin_pb.ts";
+import { CredentialState } from "../gen/agentfacade/admin/v1/admin_pb.ts";
 import { quotaPluginOfAccount } from "../quota-state.ts";
 import { credentialStateText, hasUsableCredential, openPlatformOfAccount, parseCredentialId } from "./credentials.ts";
 import type { ProviderRow } from "../providers.ts";

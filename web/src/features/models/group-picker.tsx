@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { formatCount } from '@/lib/format'
-import type { Upstream } from '@/gen/buddy/admin/v1/admin_pb'
+import type { Upstream } from '@/gen/agentfacade/admin/v1/admin_pb'
 
 type GroupPickerProps = {
   /** 存的是组名（上游 id），跟契约里 PublishedTarget.groupName 一个形状。 */

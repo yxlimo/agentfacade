@@ -1,4 +1,4 @@
-import type { ModelBilling } from '@/gen/buddy/admin/v1/admin_pb'
+import type { ModelBilling } from '@/gen/agentfacade/admin/v1/admin_pb'
 
 /**
  * 上游报的这份计费在面板上怎么写。

@@ -24,7 +24,7 @@ import { startGateway } from "./harness.ts";
 // 每一趟一个自己的目录（mkdtemp 建的，已经干净）：几个测试同时跑时
 // 不能共用一个 SQLite。
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "admin-state-"));
-const SERVICE = "/buddy.admin.v1.AdminService";
+const SERVICE = "/agentfacade.admin.v1.AdminService";
 
 let pass = 0;
 let fail = 0;
@@ -53,7 +53,7 @@ function section(title: string): void {
 section("凭据状态的枚举");
 
 const { credentialState, credentialStateText, hasUsableCredential } = await import("../lib/admin/credentials.ts");
-const { CredentialState } = await import("../lib/gen/buddy/admin/v1/admin_pb.ts");
+const { CredentialState } = await import("../lib/gen/agentfacade/admin/v1/admin_pb.ts");
 
 check(
   "authenticated → CREDENTIAL_STATE_AUTHENTICATED",

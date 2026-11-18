@@ -13,7 +13,7 @@ import {
   UpstreamSchema,
   UsageBucketSchema,
   UsageSummarySchema,
-} from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
 import { AdminClientProvider } from '@/features/auth/client-provider'
 import { createAppRouter } from '@/router'
 import { mockAdminClient } from '@/test/mock-transport'

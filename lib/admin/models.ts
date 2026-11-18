@@ -23,7 +23,7 @@ import type { ModelBilling } from "../catalog-billing.ts";
 import { platformAvailabilities, type PlatformAvailability } from "./platform-state.ts";
 import { aggregateCatalog, type AggregateEntry } from "../router/catalog.ts";
 import type { HealthSnapshot } from "../provider-kinds.ts";
-import { UnpublishedReason } from "../gen/buddy/admin/v1/admin_pb.ts";
+import { UnpublishedReason } from "../gen/agentfacade/admin/v1/admin_pb.ts";
 // 失败的机器码与排查用的事实。文案在面板那一侧。
 import type { AdminResult } from "./error-codes.ts";
 

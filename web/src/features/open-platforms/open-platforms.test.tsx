@@ -22,8 +22,8 @@ import {
   UpstreamQuotaSchema,
   UpstreamSchema,
   UpstreamState,
-} from '@/gen/buddy/admin/v1/admin_pb'
-import type { Upstream } from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
+import type { Upstream } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { UpstreamsPage } from '@/features/upstreams/index'
 import { PLATFORM_TEMPLATES } from '@/features/open-platforms/templates'
 import { formatLocalMoment } from '@/lib/format'

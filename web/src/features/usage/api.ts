@@ -1,6 +1,6 @@
 import { create } from '@bufbuild/protobuf'
 import { useQuery } from '@tanstack/react-query'
-import { ListUsageEventsRequestSchema } from '@/gen/buddy/admin/v1/admin_pb'
+import { ListUsageEventsRequestSchema } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { useAdminClient } from '@/features/auth/client-provider'
 
 const usageKeys = {

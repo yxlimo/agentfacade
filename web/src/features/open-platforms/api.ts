@@ -12,7 +12,7 @@ import {
   RefreshPlatformModelsRequestSchema,
   SetModelOverridesRequestSchema,
   UpdatePlatformRequestSchema,
-} from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
 import type { OverrideInput } from '@/features/open-platforms/model-overrides'
 import { useAdminClient } from '@/features/auth/client-provider'
 import { assertOk, describeError } from '@/lib/errors'

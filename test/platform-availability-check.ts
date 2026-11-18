@@ -487,7 +487,7 @@ section("排队：最近每次请求都排不上去时，绿的就绪是假的")
 const { noteUpstreamFailure, recentUpstreamFailures } = await import("../lib/upstream-failures.ts");
 const { listCooldowns } = await import("../lib/cooldown.ts");
 const { upstreamStateOf } = await import("../lib/admin/upstreams.ts");
-const { UpstreamState } = await import("../lib/gen/buddy/admin/v1/admin_pb.ts");
+const { UpstreamState } = await import("../lib/gen/agentfacade/admin/v1/admin_pb.ts");
 
 // 库里那一次就是这四条：把「排队中」与冷却分开，它必须本来就是一个就绪的平台。
 const queueAt = Date.now();
@@ -560,7 +560,7 @@ const token = fs.readFileSync(path.join(gw.dataDir, "admin-token"), "utf8").trim
 
 /** 一次 Connect 调用（面板的口径）。 */
 async function admin(method: string, body: unknown = {}): Promise<any> {
-  const res = await fetch(`${gw.base}/buddy.admin.v1.AdminService/${method}`, {
+  const res = await fetch(`${gw.base}/agentfacade.admin.v1.AdminService/${method}`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify(body),

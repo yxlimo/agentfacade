@@ -40,7 +40,7 @@ const {
   ProviderPolicy: ContractPolicy,
   SetPlatformPolicyRequestSchema,
   UpdateProviderRequestSchema,
-} = await import("../lib/gen/buddy/admin/v1/admin_pb.ts");
+} = await import("../lib/gen/agentfacade/admin/v1/admin_pb.ts");
 
 let pass = 0;
 let fail = 0;

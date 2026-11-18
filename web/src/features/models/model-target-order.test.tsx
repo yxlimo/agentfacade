@@ -13,7 +13,7 @@ import {
   UpstreamSchema,
   UpstreamState,
   type PublishedModel,
-} from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
 import { ModelDialog } from '@/features/models/model-dialog'
 import { mockAdminClient } from '@/test/mock-transport'
 import { renderWithClient } from '@/test/render'

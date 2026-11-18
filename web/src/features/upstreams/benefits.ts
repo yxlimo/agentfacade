@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import {
   GetBenefitStatusRequestSchema,
   RunBenefitNowRequestSchema,
-} from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
 import { useAdminClient } from '@/features/auth/client-provider'
 import { describeError } from '@/lib/errors'
 import { queryKeys } from '@/lib/query-keys'

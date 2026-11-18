@@ -16,8 +16,8 @@ import {
   SetProviderKeysResponseSchema,
   UpstreamSchema,
   UpstreamState,
-} from '@/gen/buddy/admin/v1/admin_pb'
-import type { QuotaPlugin, Upstream } from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
+import type { QuotaPlugin, Upstream } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { QuotaPluginsPage } from '@/features/quota-plugins/index'
 import { mockAdminClient } from '@/test/mock-transport'
 import { listProviderKinds } from '@/test/provider-kinds-fixture'

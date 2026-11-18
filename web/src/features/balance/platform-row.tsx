@@ -13,7 +13,7 @@ import {
 } from '@/features/balance/platform-quotas'
 import { describeError } from '@/lib/errors'
 import { cn } from '@/lib/utils'
-import type { UpstreamQuota } from '@/gen/buddy/admin/v1/admin_pb'
+import type { UpstreamQuota } from '@/gen/agentfacade/admin/v1/admin_pb'
 
 /** 明细区的 id：展开时 `aria-controls` 指过来，e2e 也照它定位。 */
 function detailId(upstreamId: string): string {

@@ -5,7 +5,7 @@ import {
   CreditSummarySchema,
   UpstreamQuotaSchema,
   UpstreamSchema,
-} from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
 import type { MessageInitShape } from '@bufbuild/protobuf'
 import { OpenPlatformFacts } from '@/features/open-platforms/platform-facts'
 import { formatLocalMoment } from '@/lib/format'

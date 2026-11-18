@@ -6,7 +6,7 @@ import {
   ConfigItemSchema,
   ListConfigResponseSchema,
   SetConfigResponseSchema,
-} from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
 import { ConfigPage } from '@/features/config/index'
 import { mockAdminClient } from '@/test/mock-transport'
 import { renderWithClient } from '@/test/render'

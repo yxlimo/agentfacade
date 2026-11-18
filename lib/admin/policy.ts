@@ -6,7 +6,7 @@
 // 「哪一类上游支持哪几个策略」不在这里：那是种类的属性，登记在
 // lib/provider-kinds.ts 里（面板的选项从那里来，服务端也用它校验）。
 
-import { ProviderPolicy as ContractPolicy } from "../gen/buddy/admin/v1/admin_pb.ts";
+import { ProviderPolicy as ContractPolicy } from "../gen/agentfacade/admin/v1/admin_pb.ts";
 import type { ProviderPolicy } from "../providers.ts";
 
 /**

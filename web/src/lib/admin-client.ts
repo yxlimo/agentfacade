@@ -1,6 +1,6 @@
 import { type Interceptor, Code, ConnectError, createClient } from '@connectrpc/connect'
 import { createConnectTransport } from '@connectrpc/connect-web'
-import { AdminService } from '@/gen/buddy/admin/v1/admin_pb'
+import { AdminService } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { getEffectiveToken } from '@/features/auth/token-store'
 
 // 面板是网关自己托管的静态文件，接口也在同一个源上，所以 baseUrl 用相对

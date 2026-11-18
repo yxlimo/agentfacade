@@ -7,7 +7,7 @@ import type {
   Account,
   BenefitStatus,
   RunBenefitNowResponse,
-} from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
 
 /**
  * 一个平台的每日签到。

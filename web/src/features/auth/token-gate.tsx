@@ -17,7 +17,7 @@ import {
   setToken,
   useAdminToken,
 } from '@/features/auth/use-admin-token'
-import { GetSystemStatusRequestSchema } from '@/gen/buddy/admin/v1/admin_pb'
+import { GetSystemStatusRequestSchema } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { describeError } from '@/lib/errors'
 
 /**

@@ -7,7 +7,7 @@ import { useBenefitStatus, useRunBenefitNow } from '@/features/upstreams/benefit
 import { describeError } from '@/lib/errors'
 import { useOrderedPlatforms } from '@/lib/platform-order'
 import { PlatformCheckinRow } from '@/features/benefits/platform-checkin-row'
-import type { BenefitStatus, Upstream } from '@/gen/buddy/admin/v1/admin_pb'
+import type { BenefitStatus, Upstream } from '@/gen/agentfacade/admin/v1/admin_pb'
 
 /** 停用账号的 id：签到页只列启用的账号（停用的签不了，占一行说「未知」是噪声）。 */
 export function disabledAccountIds(upstreams: Upstream[]): Set<string> {

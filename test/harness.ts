@@ -53,7 +53,7 @@ const LOG_TAIL = 2000;
  * 的方法：令牌被认了才走得到路由里，答 404（unimplemented）；令牌不对就是
  * 401。别的网关有它自己的令牌 —— 所以这个 404 就是「这个端口上是我们」。
  */
-const CONNECT_PROBE_PATH = "/buddy.admin.v1.AdminService/__harness_probe__";
+const CONNECT_PROBE_PATH = "/agentfacade.admin.v1.AdminService/__harness_probe__";
 
 export interface GatewayOptions {
   /** 不给就 mkdtemp 一个临时目录。 */

@@ -18,7 +18,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { useCatalogModels } from '@/features/models/catalog-api'
 import { useUpstreams } from '@/features/upstreams/api'
-import { UpstreamState } from '@/gen/buddy/admin/v1/admin_pb'
+import { UpstreamState } from '@/gen/agentfacade/admin/v1/admin_pb'
 
 type ModelPickerProps = {
   /** 上游组名。选了它才去拉那个组的模型目录。 */

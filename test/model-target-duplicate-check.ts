@@ -155,10 +155,10 @@ function logFor(url: string, err: unknown): Promise<string[]> {
   );
 }
 
-const logged = await logFor("/buddy.admin.v1.AdminService/SavePublishedModel", new Error("boom from the implementation"));
+const logged = await logFor("/agentfacade.admin.v1.AdminService/SavePublishedModel", new Error("boom from the implementation"));
 check(
   "未预期的错打了方法路径",
-  logged.some((line) => line.includes("/buddy.admin.v1.AdminService/SavePublishedModel")),
+  logged.some((line) => line.includes("/agentfacade.admin.v1.AdminService/SavePublishedModel")),
   logged.join(" | ").slice(0, 200),
 );
 check(
@@ -172,12 +172,12 @@ check(
 // （query 也不留：那里面只有 connect 的协议参数）。
 const HOST = "admin-host.invalid:6450";
 const withHost = await logFor(
-  `http://${HOST}/buddy.admin.v1.AdminService/SavePublishedModel?connect=v1&encoding=json`,
+  `http://${HOST}/agentfacade.admin.v1.AdminService/SavePublishedModel?connect=v1&encoding=json`,
   new Error("boom behind a Host header"),
 );
 check(
   "带 Host 的请求打了方法路径",
-  withHost.some((line) => line.includes("/buddy.admin.v1.AdminService/SavePublishedModel")),
+  withHost.some((line) => line.includes("/agentfacade.admin.v1.AdminService/SavePublishedModel")),
   withHost.join(" | ").slice(0, 200),
 );
 check(
@@ -191,7 +191,7 @@ check(
 // 进日志之前得抹一遍。
 const TOKEN = "sk-TESTONLY0000000000"; // privacy:allow — 编造的样例
 const scrubbed = await logFor(
-  "/buddy.admin.v1.AdminService/SavePublishedModel",
+  "/agentfacade.admin.v1.AdminService/SavePublishedModel",
   new Error(`upstream rejected key ${TOKEN}`),
 );
 check(
@@ -210,7 +210,7 @@ check(
 // 看了。判据就在拦截器里（且只在拦截器里）：handleConnect 那一层的 catch 早
 // 就删了，实现异常走不到那儿 —— handler-factory 自己吃成 500。
 const askedLogged = await logFor(
-  "/buddy.admin.v1.AdminService/SavePublishedModel",
+  "/agentfacade.admin.v1.AdminService/SavePublishedModel",
   new ConnectError("model id is empty", Code.InvalidArgument, {
     [ADMIN_ERROR_HEADER]: "MODEL_ID_MISSING",
   }),

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { Upstream } from '@/gen/buddy/admin/v1/admin_pb'
+import type { Upstream } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -22,7 +22,7 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { describeError } from '@/lib/errors'
-import type { PlatformKind } from '@/gen/buddy/admin/v1/admin_pb'
+import type { PlatformKind } from '@/gen/agentfacade/admin/v1/admin_pb'
 import {
   isSimulatedKind,
   platformKindHint,

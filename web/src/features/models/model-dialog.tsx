@@ -6,7 +6,7 @@ import {
   PublishedTargetSchema,
   type PublishedModel,
   type PublishedTarget,
-} from '@/gen/buddy/admin/v1/admin_pb'
+} from '@/gen/agentfacade/admin/v1/admin_pb'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,

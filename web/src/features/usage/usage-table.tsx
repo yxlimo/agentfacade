@@ -10,7 +10,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table'
-import type { UsageEvent } from '@/gen/buddy/admin/v1/admin_pb'
+import type { UsageEvent } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { type NavigateFn, useTableUrlState } from '@/hooks/use-table-url-state'
 import {
   DataTableColumnHeader,

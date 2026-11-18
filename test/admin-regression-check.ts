@@ -16,7 +16,7 @@ import { freePort, startGateway } from "./harness.ts";
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 // 每一趟一个自己的目录：几个测试同时跑时不能共用一个 SQLite。
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "admin-regression-"));
-const SERVICE = "/buddy.admin.v1.AdminService";
+const SERVICE = "/agentfacade.admin.v1.AdminService";
 
 let pass = 0;
 let fail = 0;

@@ -90,7 +90,7 @@ const TARGET = CATALOG[CATALOG.length - 1];
 const NEW_NAME = "面板改过的名字";
 
 async function rpc(method: string, body: unknown = {}): Promise<any> {
-  const res = await fetch(`${gw.base}/buddy.admin.v1.AdminService/${method}`, {
+  const res = await fetch(`${gw.base}/agentfacade.admin.v1.AdminService/${method}`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
