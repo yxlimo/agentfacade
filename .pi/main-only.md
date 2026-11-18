@@ -148,3 +148,22 @@ bash: {
 ## 提交前的门禁顺序
 
 `mise run privacy` 先过（便宜，撞上就是有真东西进来了），再跑全量 `mise run check`。隐私扫描的结论要能写成可核对的事实，不是「看起来是假的」。
+
+### 让 diff 决定跑什么
+
+全量 `check` 是六分钟，多数提交只该跑一两组。`mise run verify` 从 diff 算出来该跑哪几组（`--plan` 只打印计划），规则表在 `tools/verify-changes.ts`，基线默认取与 `main` 的 merge-base，含未提交改动。
+
+```sh
+mise run verify --plan --base HEAD~5   # 看会跑什么、为什么
+mise run verify                        # 真跑
+```
+
+判据容易漏的三处，都踩过：面板 e2e 用例在仓库根的 `tests/`（不是 `web/e2e/`）；`test/**`（单数）与 `tests/**` 是两个目录，归属不同；不认识的路径一律拉全量 `check`，所以新增目录时要顺手补规则。
+
+`mise run hooks:install` 把它挂成 pre-commit（`core.hooksPath=.githooks`）。hook 在环境不可用时放行并说明原因 —— 环境坏不该拦住提交，真正的漏洞在 CI 或全量 check 暴露。绕过用 `git commit --no-verify`，只在**明知**门禁环境坏掉时用。
+
+### 子代理说「提交不了」时先看仓库本身
+
+已经发生过一次：沙箱把 `GIT_DIR` / `GIT_WORK_TREE` 传给子进程，测试里在临时目录跑 `git init` + `commit` + `config user.email` 时，git 认的是继承来的仓库 —— 一次性提交串进了子代理的分支，主仓库的 `.git/config` 被写成 `core.bare = true` 并带上 `user.email = ci@example.com`，`git status` 报「must be run in a work tree」。
+
+排查顺序：`git config --get core.bare`（必须是 `false` 或空）、`git config --get user.email`（不能是测试里的假身份）、`git status` 能不能跑。修完再核对提交作者是否被带歪（`git log --format='%an <%ae>'`），必要时用 `filter-branch` 改回。测试侧的防法写在 `CONVENTIONS.md` 的「在测试里跑 git 前先清环境」。
