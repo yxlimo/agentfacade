@@ -1,5 +1,4 @@
 import type {
-  CreditSummary,
   TokenPlanWindow,
   UpstreamQuota,
 } from '@/gen/agentfacade/admin/v1/admin_pb'
@@ -108,10 +107,9 @@ function quotaLines(quota?: UpstreamQuota): QuotaLine[] {
         value: tokenPlanLine(window),
       })
     })
-  } else if (quota.credits && hasCreditNumber(quota.credits)) {
-    // 平台可能只报剩余、不报总额（total 为 0）：这时候余量是唯一有信息量的
-    // 数字，照旧显示。只有一个数字都没有（总额和余量都是 0）的时候才闭嘴，
-    // 让 note 说话 —— 「剩 0 点」会被读成「额度用完了」。
+  } else if (quota.credits) {
+    // 服务端给了这一份额度，余量是多少就摆多少。问过了就是问过了：
+    // 「问不到」是压根不返回这一份额度，不是一份余量为 0 的额度。
     lines.push({
       label: QUOTA_LABELS.credits,
       value: `剩 ${formatPoints(quota.credits.remaining)} 点`,
@@ -130,20 +128,6 @@ function quotaLines(quota?: UpstreamQuota): QuotaLine[] {
   }
 
   return lines
-}
-
-/**
- * 这一份积分里有没有一个有意义的数字。
- *
- * `total` 为 0 有两种意思，含义完全不同：
- *
- *   平台只报剩余、不报总额（total 0，remaining 有数）—— 余量是唯一的信息
- *   什么都不知道（total 0，remaining 0）—— 一个数字都没有
- *
- * 所以判据不是「总额 > 0」，而是「有没有数」。
- */
-function hasCreditNumber(credits: CreditSummary): boolean {
-  return credits.total > 0 || credits.remaining > 0
 }
 
 /** 套餐额度的一个窗口：5 小时窗口和每周窗口各剩多少。 */
@@ -256,18 +240,15 @@ export function QuotaDetail({ quota }: { quota: UpstreamQuota }) {
         <section className='grid gap-3'>
           <p className='text-sm font-medium'>{QUOTA_LABELS.credits}</p>
           <div className='flex flex-wrap gap-x-6 gap-y-1 text-sm'>
-            {/* 平台只报剩余、不报总额的时候，剩余是唯一有信息量的数字，照旧显示；
-                总额和已用是平台没给的说法，不硬凑。
-                一个数字都没有的时候什么都不写，让 note 说话 —— 「剩 0 点」会被
-                读成「额度用完了」。 */}
+            <span>
+              剩余{' '}
+              <span className='font-mono'>
+                {formatPoints(credits.remaining)} 点
+              </span>
+            </span>
+            {/* 平台没报总额的时候不硬凑：总额和已用都是平台给的说法。 */}
             {credits.total > 0 ? (
               <>
-                <span>
-                  剩余{' '}
-                  <span className='font-mono'>
-                    {formatPoints(credits.remaining)} 点
-                  </span>
-                </span>
                 <span>
                   总额{' '}
                   <span className='font-mono'>
@@ -279,13 +260,6 @@ export function QuotaDetail({ quota }: { quota: UpstreamQuota }) {
                   <span className='font-mono'>{formatPoints(credits.used)} 点</span>
                 </span>
               </>
-            ) : credits.remaining > 0 ? (
-              <span>
-                剩余{' '}
-                <span className='font-mono'>
-                  {formatPoints(credits.remaining)} 点
-                </span>
-              </span>
             ) : null}
           </div>
           {credits.note ? (

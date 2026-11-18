@@ -112,7 +112,7 @@ describe('额度按种类渲染', () => {
     expect(within(detail).queryByText('已用')).not.toBeInTheDocument()
   })
 
-  it('一个数字都没有的时候不写数字，让 note 说话', async () => {
+  it('余量是 0：摆出「剩余 0 点」，note 也在', async () => {
     const client = clientWith('workbuddy-cn', [
       create(UpstreamQuotaSchema, {
         upstreamId: 'workbuddy-cn',
@@ -121,21 +121,23 @@ describe('额度按种类渲染', () => {
           total: 0,
           used: 0,
           remaining: 0,
-          note: '额度用尽',
+          note: '已领到「X」，23:00 生效',
         }),
       }),
     ])
 
     const detail = await openPlatform(client, 'workbuddy-cn')
 
-    // 「剩 0 点」会被读成「额度用完了」，而平台其实什么都没报。
-    expect(within(detail).queryByText('剩 0 点')).not.toBeInTheDocument()
-    expect(within(detail).queryByText('剩余 0 点')).not.toBeInTheDocument()
-    expect(within(detail).queryByText('0 点')).not.toBeInTheDocument()
+    // 服务端给了这一份额度，问过了，余量就是 0：摆在面上是诚实的。
+    // 藏掉它等于把「知道是 0」又打回「不知道」。
+    expect(detail).toHaveTextContent('剩余 0 点')
+    // 总额和已用是平台没给的说法，不硬凑。
     expect(within(detail).queryByText('总额')).not.toBeInTheDocument()
     expect(within(detail).queryByText('已用')).not.toBeInTheDocument()
-    // 原因由 note 说。
-    expect(within(detail).getByText('额度用尽')).toBeInTheDocument()
+    // 两句并存不矛盾：现在可用额度就是 0，且 23:00 回来。
+    expect(
+      within(detail).getByText('已领到「X」，23:00 生效'),
+    ).toBeInTheDocument()
   })
 
   it('余额账号显示钱、明细、最早到期和会过期的那部分', async () => {

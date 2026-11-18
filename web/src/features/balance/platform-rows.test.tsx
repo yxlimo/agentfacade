@@ -341,11 +341,12 @@ describe('收起时只摆前 5 个平台', () => {
 })
 
 /**
- * 平台没报总额（`total` 是 0）的时候，「剩 0 点」会被读成「额度用完了」。
- * 面板这时候不写数字，让 note 说话。
+ * 服务端给了这一份额度，余量是 0 也摆在面上。
+ *
+ * 问过了就是问过了：藏掉那个 0 等于把「知道是 0」又打回「不知道」。
  */
-describe('平台没报总额', () => {
-  it('总额是 0：不写「剩 0 点」，note 说话', async () => {
+describe('余量是 0', () => {
+  it('总额是 0、余量是 0：摆出「剩 0 点」，note 也在', async () => {
     const client = mockAdminClient({
       ListUpstreams: () => platformList([platform('zcode')]),
       GetBalance: () =>
@@ -369,14 +370,13 @@ describe('平台没报总额', () => {
 
     const toggle = await screen.findByRole('button', { name: /^zcode/ })
     await waitFor(() => {
-      expect(toggle).not.toHaveTextContent('0 点')
+      expect(toggle).toHaveTextContent('剩 0 点')
     })
-    expect(toggle).not.toHaveTextContent('剩 0 点')
 
     await userEvent.setup({ delay: null }).click(toggle)
     const detail = screen.getByRole('region', { name: 'zcode 额度明细' })
-    expect(detail).not.toHaveTextContent('剩余 0 点')
-    expect(within(detail).queryByText('0 点')).toBeNull()
+    expect(detail).toHaveTextContent('剩余 0 点')
+    // 两句并存不矛盾：现在可用额度就是 0，且 23:00 回来。
     expect(
       within(detail).getByText('已领到「X」，23:00 生效'),
     ).toBeInTheDocument()
