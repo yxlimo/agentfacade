@@ -107,7 +107,9 @@ function quotaLines(quota?: UpstreamQuota): QuotaLine[] {
         value: tokenPlanLine(window),
       })
     })
-  } else if (quota.credits) {
+  } else if (quota.credits && quota.credits.total > 0) {
+    // 总额是 0 表示平台没报总额：这时候「剩 0 点」会被读成「额度用完了」。
+    // 不写这行，让 note 说话。
     lines.push({
       label: QUOTA_LABELS.credits,
       value: `剩 ${formatPoints(quota.credits.remaining)} 点`,
@@ -186,18 +188,19 @@ export function QuotaSummary({
 }
 
 /**
- * 「没有额度」这一行。
+ * 「暂无额度数据」这一行。
  *
- * 空额度不隐掉：它占着位置，说清是「没有额度」，不写成 0、也不留白。
+ * 空额度不隐掉：它占着位置。说了什么就是不知道，不是「这个平台没有额度」：
+ * 凭据被拒、没问到、没登录、还没数据，四种都到这里来。所以只说「暂无数据」。
  */
 export function NoQuotaNotice() {
   return (
     <p
       role='note'
-      aria-label='没有额度'
+      aria-label='暂无额度数据'
       className='text-xs text-muted-foreground'
     >
-      没有额度
+      暂无额度数据
     </p>
   )
 }
@@ -216,7 +219,7 @@ export function QuotaDetail({ quota }: { quota: UpstreamQuota }) {
   const balance = quota.balance
   // 没有数字的那一份（用尽 / 不能用 / 问不到）在这里也说得清，不留一个空面板。
   const state = quotaStateText(quota)
-  // 连一句话都没有：说「没有额度」，不留白。
+  // 连一句话都没有：说「暂无额度数据」，不留白。
   const blank = !hasQuota(quota) && !state && !quota.message
 
   return (
@@ -237,15 +240,16 @@ export function QuotaDetail({ quota }: { quota: UpstreamQuota }) {
         <section className='grid gap-3'>
           <p className='text-sm font-medium'>{QUOTA_LABELS.credits}</p>
           <div className='flex flex-wrap gap-x-6 gap-y-1 text-sm'>
-            <span>
-              剩余{' '}
-              <span className='font-mono'>
-                {formatPoints(credits.remaining)} 点
-              </span>
-            </span>
-            {/* 平台没报总额的时候不硬凑：总额和已用都是平台给的说法。 */}
+            {/* 平台没报总额（0）的时候，「剩 0 点」会被读成「额度用完了」。
+                总额和已用都是平台给的说法，一并不硬凑，让 note 说话。 */}
             {credits.total > 0 ? (
               <>
+                <span>
+                  剩余{' '}
+                  <span className='font-mono'>
+                    {formatPoints(credits.remaining)} 点
+                  </span>
+                </span>
                 <span>
                   总额{' '}
                   <span className='font-mono'>

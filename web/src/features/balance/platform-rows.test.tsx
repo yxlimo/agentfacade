@@ -26,7 +26,7 @@ function platformList(upstreams: ReturnType<typeof platform>[]) {
   return create(ListUpstreamsResponseSchema, { upstreams })
 }
 
-/** 一条积分额度。 */
+/** 一条积分额度。总额大于 0：0 是「平台没报总额」，不是「额度是 0」。 */
 function creditsQuota(
   upstreamId: string,
   accountId: string,
@@ -38,8 +38,8 @@ function creditsQuota(
     accountId,
     accountName,
     credits: create(CreditSummarySchema, {
-      total: 0,
-      used: 0,
+      total: remaining + 800,
+      used: 800,
       remaining,
     }),
   })
@@ -155,7 +155,7 @@ describe('一个平台一行', () => {
  * 左连接：额度答复里没有它、它名下也没有账号的平台，照样有一行。
  */
 describe('行集合来自平台清单', () => {
-  it('额度答复里只有别家：这一家还是有行，写没有额度', async () => {
+  it('额度答复里只有别家：这一家还是有行，写暂无额度数据', async () => {
     const client = mockAdminClient({
       ListUpstreams: () =>
         platformList([platform('minimax'), platform('sense-nova')]),
@@ -174,11 +174,11 @@ describe('行集合来自平台清单', () => {
     await screen.findByRole('button', { name: /^minimax/ })
     const row = screen.getByRole('listitem', { name: 'sense-nova 额度行' })
     await waitFor(() => {
-      expect(row).toHaveTextContent('没有额度')
+      expect(row).toHaveTextContent('暂无额度数据')
     })
   })
 
-  it('额度还在读：写正在读取，不是没有额度', async () => {
+  it('额度还在读：写正在读取，不是暂无额度数据', async () => {
     const client = mockAdminClient({
       ListUpstreams: () => platformList([platform('minimax')]),
       // 平台清单到了，这一家的额度还没回来。
@@ -191,7 +191,7 @@ describe('行集合来自平台清单', () => {
       name: 'minimax 额度行 正在读取',
     })
     expect(row).toHaveTextContent('正在读取')
-    expect(row).not.toHaveTextContent('没有额度')
+    expect(row).not.toHaveTextContent('暂无额度数据')
   })
 
   it('标题用平台的显示名，行容器仍按 id 定位', async () => {
@@ -231,10 +231,10 @@ describe('行集合来自平台清单', () => {
 })
 
 /**
- * 空额度不隐掉：没有数字的平台也占一行，说「没有额度」，不写成 0。
+ * 空额度不隐掉：没有数字的平台也占一行，说「暂无额度数据」，不写成 0。
  */
 describe('空额度占一行', () => {
-  it('平台没有报额度：这一行还在，写着没有额度', async () => {
+  it('平台没有报额度：这一行还在，写着暂无额度数据', async () => {
     const client = mockAdminClient({
       ListUpstreams: () => platformList([platform('zcode')]),
       GetBalance: () => create(GetBalanceResponseSchema, { quotas: [] }),
@@ -244,7 +244,7 @@ describe('空额度占一行', () => {
 
     const toggle = await screen.findByRole('button', { name: /^zcode/ })
     await waitFor(() => {
-      expect(toggle).toHaveTextContent('没有额度')
+      expect(toggle).toHaveTextContent('暂无额度数据')
     })
     // 不是 0。
     expect(toggle).not.toHaveTextContent('0 点')
@@ -252,7 +252,7 @@ describe('空额度占一行', () => {
     await userEvent.setup({ delay: null }).click(toggle)
     const detail = screen.getByRole('region', { name: 'zcode 额度明细' })
     expect(
-      within(detail).getByRole('note', { name: '没有额度' }),
+      within(detail).getByRole('note', { name: '暂无额度数据' }),
     ).toBeInTheDocument()
   })
 
@@ -337,5 +337,68 @@ describe('收起时只摆前 5 个平台', () => {
     await screen.findByRole('listitem', { name: 'p3 额度行' })
     expect(screen.getAllByRole('listitem')).toHaveLength(3)
     expect(screen.queryByRole('button', { name: /展开全部/ })).toBeNull()
+  })
+})
+
+/**
+ * 平台没报总额（`total` 是 0）的时候，「剩 0 点」会被读成「额度用完了」。
+ * 面板这时候不写数字，让 note 说话。
+ */
+describe('平台没报总额', () => {
+  it('总额是 0：不写「剩 0 点」，note 说话', async () => {
+    const client = mockAdminClient({
+      ListUpstreams: () => platformList([platform('zcode')]),
+      GetBalance: () =>
+        create(GetBalanceResponseSchema, {
+          quotas: [
+            create(UpstreamQuotaSchema, {
+              upstreamId: 'zcode',
+              accountId: 'acc-1',
+              credits: create(CreditSummarySchema, {
+                total: 0,
+                used: 0,
+                remaining: 0,
+                note: '已领到「X」，23:00 生效',
+              }),
+            }),
+          ],
+        }),
+    })
+
+    renderWithClient({ client, children: <BalancePage /> })
+
+    const toggle = await screen.findByRole('button', { name: /^zcode/ })
+    await waitFor(() => {
+      expect(toggle).not.toHaveTextContent('0 点')
+    })
+    expect(toggle).not.toHaveTextContent('剩 0 点')
+
+    await userEvent.setup({ delay: null }).click(toggle)
+    const detail = screen.getByRole('region', { name: 'zcode 额度明细' })
+    expect(detail).not.toHaveTextContent('剩余 0 点')
+    expect(within(detail).queryByText('0 点')).toBeNull()
+    expect(
+      within(detail).getByText('已领到「X」，23:00 生效'),
+    ).toBeInTheDocument()
+  })
+
+  it('平台没有额度数据：写中性的话，不说「没有额度」', async () => {
+    const client = mockAdminClient({
+      ListUpstreams: () => platformList([platform('zcode')]),
+      GetBalance: () => create(GetBalanceResponseSchema, { quotas: [] }),
+    })
+
+    renderWithClient({ client, children: <BalancePage /> })
+
+    const toggle = await screen.findByRole('button', { name: /^zcode/ })
+    await waitFor(() => {
+      expect(toggle).toHaveTextContent('暂无额度数据')
+    })
+    expect(toggle).not.toHaveTextContent('没有额度')
+
+    await userEvent.setup({ delay: null }).click(toggle)
+    const detail = screen.getByRole('region', { name: 'zcode 额度明细' })
+    expect(detail).toHaveTextContent('暂无额度数据')
+    expect(detail).not.toHaveTextContent('没有额度')
   })
 })

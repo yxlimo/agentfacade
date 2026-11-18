@@ -43,7 +43,7 @@ function accountSubtitle(
  * 行上写平台名、账号数与服务端给的结论，右侧是最有信息量的那一档额度；
  * 点这一行才展开看各账号的明细。默认是收起的：平台多的时候一屏能看全。
  *
- * 空额度不隐掉：没有数字的平台也占一行，写「没有额度」，不写成 0。
+ * 空额度不隐掉：没有数字的平台也占一行，写「暂无额度数据」，不写成 0。
  */
 export function PlatformQuotaRow({
   platform,
@@ -94,7 +94,7 @@ export function PlatformQuotaRow({
             {primary ? (
               <QuotaSummary quota={primary} align='start' />
             ) : (
-              <span className='text-xs text-muted-foreground'>没有额度</span>
+              <span className='text-xs text-muted-foreground'>暂无额度数据</span>
             )}
           </span>
           <ChevronDown

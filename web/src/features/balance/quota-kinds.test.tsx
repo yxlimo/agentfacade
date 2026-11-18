@@ -88,7 +88,7 @@ describe('额度按种类渲染', () => {
     expect(within(detail).queryByText(/¥/)).not.toBeInTheDocument()
   })
 
-  it('平台没报总额的时候不硬凑总额和已用', async () => {
+  it('平台没报总额的时候不写数字，也不硬凑总额和已用', async () => {
     const client = clientWith('workbuddy-cn', [
       create(UpstreamQuotaSchema, {
         upstreamId: 'workbuddy-cn',
@@ -104,7 +104,8 @@ describe('额度按种类渲染', () => {
     const detail = await openPlatform(client, 'workbuddy-cn')
 
     expect(within(detail).getByText('积分')).toBeInTheDocument()
-    expect(within(detail).getByText('42 点')).toBeInTheDocument()
+    // 总额是 0 = 平台没报总额：这时候写「剩 42 点」会把「不知道」说成「有 42 点」。
+    expect(within(detail).queryByText('42 点')).not.toBeInTheDocument()
     expect(within(detail).queryByText('总额')).not.toBeInTheDocument()
     expect(within(detail).queryByText('已用')).not.toBeInTheDocument()
   })
