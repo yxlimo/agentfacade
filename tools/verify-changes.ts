@@ -1,0 +1,420 @@
+// tools/verify-changes.ts — 按 diff 决定要跑哪些门禁。
+//
+//   node --experimental-strip-types tools/verify-changes.ts [--plan] [--base <rev>]
+//   node --experimental-strip-types tools/verify-changes.ts --files a,b,c
+//
+// 为什么有这个东西：门禁分组写在 CONVENTIONS.md 的表里，靠人记。今天真的出过
+// 事：改了面板文案，只跑了单测（check:web），面板 e2e 里断言旧文案的用例红着
+// 没人知道 —— check:web 不启浏览器，e2e 三分钟又不该每次都跑。于是「改了什么
+// 就跑什么」得由机器判，不能靠记性。
+//
+// 判据只有一条：路径落在哪张表里，就跑那一组；不认识就从严（跑全量）。
+//
+// 几件事是这个脚本的取舍：
+//   - 基线：--base 显式给；否则 HEAD 不在 main 上就用 merge-base HEAD main
+//     （worktree 与分支上的活都算）；在 main 上就用 origin/main；再没有就
+//     HEAD~1。改动集合用 `git diff --name-only <base>`，它比的是基线与工作
+//     区，所以未提交的改动也在里面 —— 子代理最常见的状态就是没提交。
+//   - 注入：规则表是纯函数，测试直接 import 它算任务清单；CLI 另开 --files
+//     给一组假路径，用来验「计划打印」这件事，不往生产路径里塞复位口。
+//
+// 边界：只用 node 内置模块，不装新依赖；不改任何业务代码；任务名一律用
+// check:kinds 这种形式打印；不出现本机绝对路径。
+
+import { spawnSync, execFileSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+/** 仓库根目录：这个脚本在 tools/ 下面。 */
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+/** 一条规则：路径落在这些模式里，就贡献这些门禁。 */
+interface Rule {
+  /** 规则的名字（打印用）。 */
+  id: string;
+  /** 这条规则贡献的门禁。 */
+  tasks: string[];
+  /** 命中的路径模式。 */
+  patterns: string[];
+  /** 为什么它要跑这些门禁。 */
+  why: string;
+}
+
+/**
+ * 规则表。全量门禁 `check` 出现时其余都不用列 —— check 已经包含它们。
+ *
+ * 顺序即打印顺序（先命中先说），不是执行顺序；执行顺序另有 ORDER。
+ */
+const RULES: Rule[] = [
+  {
+    id: "admin",
+    tasks: ["check:admin"],
+    patterns: [
+      "lib/admin/**",
+      "lib/provider-kinds.ts",
+      "lib/platforms*",
+      "lib/platforms/**",
+      "lib/model-catalog*",
+      "lib/model-catalog/**",
+    ],
+    why: "面板后端、账号与模型目录变了 → 跑 check:admin",
+  },
+  {
+    id: "routing",
+    tasks: ["check:routing"],
+    patterns: [
+      "lib/router/**",
+      "lib/cooldown*",
+      "lib/cooldown/**",
+      "lib/session*",
+      "lib/session/**",
+      "lib/periodic*",
+      "lib/periodic/**",
+    ],
+    why: "选号、降级、冷却、用量、定时任务变了 → 跑 check:routing",
+  },
+  {
+    id: "deliver",
+    tasks: ["check:deliver"],
+    patterns: ["lib/router/handle.ts", "lib/dialect*", "lib/dialect/**", "lib/log-scrub*", "lib/log-scrub/**"],
+    why: "响应的投递、方言与脱敏变了 → 跑 check:deliver",
+  },
+  {
+    id: "kinds",
+    tasks: ["check:kinds"],
+    patterns: [
+      "lib/kinds/**",
+      "lib/minimax/**",
+      "lib/qoder/**",
+      "lib/workbuddy/**",
+      "lib/zcode/**",
+      "lib/tokenrhythm/**",
+      "lib/intern-ai/**",
+      "lib/qiniu/**",
+      "lib/xinghuo/**",
+      "lib/sensenova/**",
+    ],
+    why: "上游 kind 与模拟端变了 → 跑 check:kinds",
+  },
+  {
+    id: "web-src",
+    tasks: ["check:web", "check:panel"],
+    patterns: ["web/src/**"],
+    why: "`web/src/**` 变了 → 面板 e2e 断言的是用户可见文案",
+  },
+  {
+    id: "web-other",
+    tasks: ["check:web", "check:panel"],
+    patterns: ["web/**"],
+    why: "web/** 变了（构建、e2e、依赖）→ 面板单测与 e2e 都要跑",
+  },
+  {
+    id: "proto",
+    tasks: ["proto", "check:admin", "check:web"],
+    patterns: ["proto/**"],
+    why: "契约变了 → 先生成两份产物，再验面板后端与前端",
+  },
+  {
+    id: "misc",
+    tasks: ["check:misc"],
+    patterns: [
+      "mise.toml",
+      "test/**",
+      "tools/**",
+      "check-privacy.ts",
+      "tsconfig*.json",
+      "tsconfig/**",
+      ".github/**",
+    ],
+    why: "门禁、测试与工具本身变了 → 跑 check:misc",
+  },
+  {
+    id: "deps",
+    tasks: ["check"],
+    patterns: [
+      "package.json",
+      "pnpm-lock.yaml",
+      "web/pnpm-lock.yaml",
+      "web/pnpm-workspace.yaml",
+      "pnpm-workspace.yaml",
+    ],
+    why: "依赖变了 → 谁也别猜，跑全量 check",
+  },
+  {
+    id: "docs",
+    tasks: ["privacy"],
+    patterns: ["**/*.md", "docs/**", ".pi/**"],
+    why: "只有文档与工作日志变了 → 只扫隐私",
+  },
+];
+
+/** 命中不了的路径：从严，跑全量。 */
+const UNKNOWN_RULE: Rule = {
+  id: "unknown",
+  tasks: ["check"],
+  patterns: [],
+  why: "有不认识的路径 → 从严，跑全量 check",
+};
+
+/** 执行顺序。proto 先生成，privacy 最后扫。 */
+const ORDER = [
+  "proto",
+  "check:admin",
+  "check:routing",
+  "check:deliver",
+  "check:kinds",
+  "check:web",
+  "check:panel",
+  "check:misc",
+  "privacy",
+];
+
+/** glob 变成正则。`**` 跨目录，`*` 不跨目录。 */
+function globToRegExp(pattern: string): RegExp {
+  let out = "";
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === "*") {
+      if (pattern[i + 1] === "*") {
+        if (pattern[i + 2] === "/") {
+          out += "(?:.*/)?";
+          i += 2;
+        } else {
+          out += ".*";
+          i += 1;
+        }
+      } else {
+        out += "[^/]*";
+      }
+    } else if ("\\^$.|+()[]{}".includes(ch)) {
+      out += "\\" + ch;
+    } else {
+      out += ch;
+    }
+  }
+  return new RegExp("^" + out + "$");
+}
+
+/** 预编译好的规则，省得每个文件重编。 */
+const COMPILED = RULES.map((rule) => ({
+  rule,
+  matchers: rule.patterns.map(globToRegExp),
+}));
+
+/** 一条规则命中了哪些文件。 */
+export interface RuleHit {
+  rule: Rule;
+  files: string[];
+}
+
+/**
+ * 路径 → 命中的规则。
+ *
+ * 一个文件可以命中多条规则（lib/router/handle.ts 既在 routing 里也在 deliver
+ * 里），所以这里是「多条」，不是「一条」。
+ */
+export function matchRules(files: string[]): RuleHit[] {
+  const hits: RuleHit[] = [];
+  for (const { rule, matchers } of COMPILED) {
+    const hit = files.filter((file) => matchers.some((m) => m.test(file)));
+    if (hit.length > 0) hits.push({ rule, files: hit });
+  }
+  // 有文件一条规则都没命中，就是有不认识的路径 → 从严。
+  const known = new Set(hits.flatMap((hit) => hit.files));
+  const unknown = files.filter((file) => !known.has(file));
+  if (unknown.length > 0) {
+    hits.push({ rule: UNKNOWN_RULE, files: unknown });
+  }
+  return hits;
+}
+
+/**
+ * 改动文件 → 要跑的门禁（有序）。
+ *
+ * 命中「全量 check」时只留它：check 已经包含其余各组。
+ */
+export function planTasks(files: string[]): string[] {
+  const hits = matchRules(files);
+  const tasks = new Set<string>();
+  for (const hit of hits) for (const task of hit.rule.tasks) tasks.add(task);
+  if (tasks.has("check")) return ["check"];
+  return ORDER.filter((task) => tasks.has(task));
+}
+
+/** 跑一条 git 命令，拿 stdout。失败就抛。 */
+function git(args: string[]): string {
+  return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" });
+}
+
+/** 这个 ref 存不存在。 */
+function hasRef(ref: string): boolean {
+  try {
+    git(["rev-parse", "--verify", "--quiet", ref]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 取基线。
+ *
+ * --base 优先；否则 HEAD 不在 main 上就用 merge-base HEAD main（worktree 与
+ * 分支上的活都算）；在 main 上就用 origin/main；再没有就 HEAD~1。
+ */
+export function resolveBase(explicit?: string): string {
+  if (explicit && explicit.trim() !== "") {
+    const rev = explicit.trim();
+    if (!hasRef(rev)) throw new Error("基线 " + rev + " 不存在");
+    return rev;
+  }
+  let branch = "";
+  try {
+    branch = git(["rev-parse", "--abbrev-ref", "HEAD"]).trim();
+  } catch {
+    branch = "";
+  }
+  if (branch !== "main") {
+    try {
+      const base = git(["merge-base", "HEAD", "main"]).trim();
+      if (base !== "") return base;
+    } catch {
+      // 没有 main 分支：往下走。
+    }
+  }
+  if (hasRef("origin/main")) return "origin/main";
+  return "HEAD~1";
+}
+
+/** 改动集合：基线到工作区的差异，加上还没进版本库的新文件。 */
+export function changedFiles(base: string): string[] {
+  const tracked = git(["diff", "--name-only", base])
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  let untracked: string[] = [];
+  try {
+    untracked = git(["ls-files", "--others", "--exclude-standard"])
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== "");
+  } catch {
+    untracked = [];
+  }
+  return Array.from(new Set([...tracked, ...untracked])).sort();
+}
+
+/** 打印计划。返回打印出来的文本（测试要读它）。 */
+function printPlan(files: string[], tasks: string[], hits: RuleHit[]): string {
+  const lines: string[] = [];
+  lines.push("改动 " + files.length + " 个文件：");
+  for (const file of files.slice(0, 20)) lines.push("  " + file);
+  if (files.length > 20) lines.push("  …（还有 " + (files.length - 20) + " 个）");
+  lines.push("");
+  lines.push("命中的规则：");
+  for (const hit of hits) {
+    const shown = hit.files.slice(0, 3).join(", ");
+    const more = hit.files.length > 3 ? " …（共 " + hit.files.length + " 个）" : "";
+    lines.push("  " + hit.rule.id + " → " + hit.rule.tasks.join(" + ") + "  [" + shown + more + "]");
+    lines.push("      为什么：" + hit.rule.why);
+  }
+  lines.push("");
+  if (tasks.length === 0) {
+    lines.push("没有要跑的门禁。");
+  } else {
+    lines.push("按顺序跑这 " + tasks.length + " 组门禁：");
+    tasks.forEach((task, index) => lines.push("  " + (index + 1) + ". " + task));
+  }
+  const text = lines.join("\n");
+  console.log(text);
+  return text;
+}
+
+/** 跑一组门禁。第一个失败就停。 */
+function runTasks(tasks: string[]): number {
+  const done: { task: string; seconds: number }[] = [];
+  const startedAll = Date.now();
+  for (const task of tasks) {
+    console.log("");
+    console.log("── 跑 " + task + " ──");
+    const started = Date.now();
+    const result = spawnSync("mise", ["run", task], { cwd: ROOT, stdio: "inherit" });
+    const seconds = (Date.now() - started) / 1000;
+    done.push({ task, seconds });
+    if (result.status !== 0) {
+      console.log("");
+      console.log("✗ " + task + " 没过（" + seconds.toFixed(1) + " 秒）。后面的组不跑了。");
+      printSummary(done, (Date.now() - startedAll) / 1000);
+      return result.status === 0 ? 1 : result.status;
+    }
+  }
+  printSummary(done, (Date.now() - startedAll) / 1000);
+  return 0;
+}
+
+/** 末尾的汇总：跑了哪几组、各多少秒、总耗时。 */
+function printSummary(done: { task: string; seconds: number }[], total: number): void {
+  console.log("");
+  console.log("汇总：");
+  for (const item of done) {
+    console.log("  " + item.task + "  " + item.seconds.toFixed(1) + " 秒");
+  }
+  console.log("  共 " + done.length + " 组，总耗时 " + total.toFixed(1) + " 秒");
+}
+
+async function main(argv: string[]): Promise<number> {
+  let plan = false;
+  let baseArg: string | undefined;
+  let filesArg: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--plan") plan = true;
+    else if (arg === "--base") baseArg = argv[++i];
+    else if (arg.startsWith("--base=")) baseArg = arg.slice("--base=".length);
+    else if (arg === "--files") filesArg = argv[++i];
+    else if (arg.startsWith("--files=")) filesArg = arg.slice("--files=".length);
+    else {
+      console.error("不认识的参数：" + arg);
+      return 2;
+    }
+  }
+
+  let files: string[];
+  let base = "";
+  if (filesArg !== undefined) {
+    // 测试与实验用的注入点：假路径，不问 git。
+    files = filesArg.split(",").map((line) => line.trim()).filter((line) => line !== "");
+    base = baseArg !== undefined ? baseArg : "(注入的文件列表)";
+  } else {
+    try {
+      base = resolveBase(baseArg);
+    } catch (e) {
+      console.error("取基线失败：" + ((e as Error).message || String(e)));
+      return 2;
+    }
+    files = changedFiles(base);
+  }
+
+  if (files.length === 0) {
+    console.log("没有改动（基线 " + base + "）。");
+    return 0;
+  }
+
+  const hits = matchRules(files);
+  const tasks = planTasks(files);
+  printPlan(files, tasks, hits);
+
+  if (plan) return 0;
+  if (tasks.length === 0) {
+    console.log("");
+    console.log("没有要跑的门禁。");
+    return 0;
+  }
+  return runTasks(tasks);
+}
+
+const invokedDirectly =
+  process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedDirectly) {
+  process.exitCode = await main(process.argv.slice(2));
+}

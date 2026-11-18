@@ -38,6 +38,8 @@ reference/zcode-client-*/
 # to travel with the repo. tools/* ignores everything else in the directory.
 tools/*
 !tools/verify-image.ts
+# The diff-based gate chooser: same reason — every subagent runs it.
+!tools/verify-changes.ts
 
 # The panel's dependencies and build output
 web/node_modules/

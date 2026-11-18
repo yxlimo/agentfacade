@@ -630,7 +630,15 @@ depends = ["test:minimax:fallback", "test:minimax:credits", "test:minimax:credit
 
 [tasks."check:misc"]
 description = "Catalogue parity, cleanup rules, the helper scripts, the privacy scanner and the offline matrix (test/, helper/, check-privacy.ts)"
-depends = ["test:catalog-parity", "test:cleanup", "test:helper", "test:privacy", "test:e2e:matrix"]
+depends = ["test:catalog-parity", "test:cleanup", "test:helper", "test:privacy", "test:verify", "test:e2e:matrix"]
+
+[tasks."test:verify"]
+description = "Check the diff-based gate chooser (which gates each change needs)"
+run = "node --experimental-strip-types test/verify-changes-check.ts"
+
+[tasks.verify]
+description = "按 diff 决定要跑哪些门禁并顺序跑它们（--plan 只打印计划，--base <rev> 指定基线）"
+run = "node --experimental-strip-types tools/verify-changes.ts"
 
 [tasks."check:web"]
 description = "Panel frontend, no browser (web/src)"
