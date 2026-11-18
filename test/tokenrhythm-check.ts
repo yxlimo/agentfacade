@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tokenrhythm-check-"));
-process.env.BUDDY_DATA_DIR = tmp;
+process.env.FACADE_DATA_DIR = tmp;
 
 const {
   markAccountOutOfMoney,

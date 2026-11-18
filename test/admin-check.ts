@@ -18,7 +18,7 @@ const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "test-admin-check-"));
 // 可能早于这个文件里的第一行代码 —— 有些模块在求值期就读配置。所以数据目录
 // 必须在那些模块被加载之前定下来，而且要与网关那一份是同一个，否则数的是
 // 另一个库。
-process.env.BUDDY_DATA_DIR = DATA_DIR;
+process.env.FACADE_DATA_DIR = DATA_DIR;
 
 const { startGateway: startHarness } = await import("./harness.ts");
 type Gateway = import("./harness.ts").Gateway;
@@ -446,7 +446,7 @@ check(
 );
 
 // 给 qoder-cn 那个账号写一份会话：凭据列表要看得到指纹（掩码不算数）。
-const qoderDb = new DatabaseSync(path.join(DATA_DIR, "buddy.db"));
+const qoderDb = new DatabaseSync(path.join(DATA_DIR, "agentfacade.db"));
 qoderDb.exec("PRAGMA busy_timeout = 5000");
 qoderDb
   .prepare(
@@ -830,7 +830,7 @@ check("继承的字段读回来是没有", inheritModel && inheritModel.contextW
 check("继承的布尔读回来也是没有", inheritModel && inheritModel.reasoning === undefined, JSON.stringify(inheritModel));
 
 // 库里存的是空的（继承），不是 0 也不是 false。
-const db = new DatabaseSync(path.join(DATA_DIR, "buddy.db"));
+const db = new DatabaseSync(path.join(DATA_DIR, "agentfacade.db"));
 const row = db
   .prepare("SELECT context_window, max_output_tokens, reasoning, tool_call FROM aggregate_model WHERE id = ?")
   .get("inherit-test") as any;

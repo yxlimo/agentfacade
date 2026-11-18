@@ -26,7 +26,7 @@ import os from "node:os";
 import path from "node:path";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "admin-config-"));
-process.env.BUDDY_DATA_DIR = tmp;
+process.env.FACADE_DATA_DIR = tmp;
 // This round checks the defaults, so none of the three may be pinned by
 // whoever runs the test.
 for (const key of ["ROUTER_FIRST_FRAME_MS", "ROUTER_STREAM_IDLE_MS", "ROUTER_RETRY_BUDGET_MS"]) {

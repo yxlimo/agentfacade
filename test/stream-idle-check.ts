@@ -53,7 +53,7 @@ import os from "node:os";
 import path from "node:path";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "stream-idle-"));
-process.env.BUDDY_DATA_DIR = tmp;
+process.env.FACADE_DATA_DIR = tmp;
 // 自测不能真等几分钟。两个值不一样：首帧那个比中途那个长，这样「首帧与中途
 // 用的是哪一个」从错误自己报的 idleMs 就能看出来（两个值一样的话这条断言就
 // 失去判别力）。
@@ -1208,7 +1208,7 @@ process.exit(0);
           MODE: opts.mode,
           ROUTER_STREAM_IDLE_MS: String(opts.idleMs),
           ROUTER_FIRST_FRAME_MS: String(opts.firstFrameMs),
-          BUDDY_DATA_DIR: tmp,
+          FACADE_DATA_DIR: tmp,
         },
       });
       let out = "";

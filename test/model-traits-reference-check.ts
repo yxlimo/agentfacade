@@ -30,7 +30,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "model-traits-reference-"));
 // 数据目录要在库被打开之前定下来：库是第一次用的时候才开的。
-process.env.BUDDY_DATA_DIR = tmp;
+process.env.FACADE_DATA_DIR = tmp;
 
 // 引用即登记：kind 登记表在求值期填，不引这一行 kindOf() 全是 null。
 await import("../lib/kinds/index.ts");

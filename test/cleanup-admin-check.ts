@@ -21,7 +21,7 @@ import { spawnSync } from "node:child_process";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "cleanup-admin-"));
-process.env.BUDDY_DATA_DIR = DATA_DIR;
+process.env.FACADE_DATA_DIR = DATA_DIR;
 
 let pass = 0;
 let fail = 0;
@@ -485,7 +485,7 @@ function cli(args: string[]): { code: number; out: string } {
   const res = spawnSync(
     process.execPath,
     ["--experimental-strip-types", "config-cli.ts", ...args],
-    { cwd: ROOT, env: { ...process.env, BUDDY_DATA_DIR: DATA_DIR }, encoding: "utf8" },
+    { cwd: ROOT, env: { ...process.env, FACADE_DATA_DIR: DATA_DIR }, encoding: "utf8" },
   );
   return { code: res.status ?? 0, out: `${res.stdout ?? ""}${res.stderr ?? ""}` };
 }
@@ -536,7 +536,7 @@ const envRun = spawnSync(
   `],
   {
     cwd: ROOT,
-    env: { ...process.env, BUDDY_DATA_DIR: ENV_DIR, MINIMAX_CODE: "1", QODER_GLOBAL: "1" },
+    env: { ...process.env, FACADE_DATA_DIR: ENV_DIR, MINIMAX_CODE: "1", QODER_GLOBAL: "1" },
     encoding: "utf8",
   },
 );

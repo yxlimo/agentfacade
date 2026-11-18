@@ -122,7 +122,7 @@ function seedCredentials(shape: 'minimax', accountId: string): void {
   execFileSync(
     process.execPath,
     ['--experimental-strip-types', 'tests/seed-credentials.ts', shape, accountId],
-    { env: { ...process.env, BUDDY_DATA_DIR: dataDir() }, stdio: 'pipe' },
+    { env: { ...process.env, FACADE_DATA_DIR: dataDir() }, stdio: 'pipe' },
   );
 }
 

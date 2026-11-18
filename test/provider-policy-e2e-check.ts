@@ -281,7 +281,7 @@ async function startGateway(expiryFirst = false): Promise<Gateway> {
   };
   // 中转站的账号：一个账号一个钱包。三个账号，第三个没钱（测试里也不该有真
   // 凭据）。凭据挂在账号行上，直接写这个测试自己的库 —— 一个真请求都不发。
-  const seed = new DatabaseSync(path.join(dataDir, "buddy.db"));
+  const seed = new DatabaseSync(path.join(dataDir, "agentfacade.db"));
   seed.exec("PRAGMA busy_timeout = 5000");
   const insertSecret = seed.prepare(
     "INSERT INTO secrets (id, kind, data, updated_at) VALUES (?, ?, ?, ?) " +

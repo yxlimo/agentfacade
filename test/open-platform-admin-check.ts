@@ -48,7 +48,7 @@ import os from "node:os";
 import path from "node:path";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "open-platform-admin-"));
-process.env.BUDDY_DATA_DIR = tmp;
+process.env.FACADE_DATA_DIR = tmp;
 
 const { adminService } = await import("../lib/admin/service.ts");
 const { store, migrateSimulatedClients, platformPresetRemoved, forgetPlatformPresetRemoved } =

@@ -52,7 +52,7 @@ function section(title: string): void {
  * ------------------------------------------------------------------ */
 
 // 单元部分用自己的数据目录，免得跟网关抢一个库。
-process.env.BUDDY_DATA_DIR = UNIT_DIR;
+process.env.FACADE_DATA_DIR = UNIT_DIR;
 
 const { senseNovaCatalogModels, internAiCatalogModels } = await import("../lib/router/catalog.ts");
 const { mergeCatalogModels, hasCapability } = await import("../lib/intern-ai/models.ts");
@@ -570,7 +570,7 @@ async function admin(method: string, body: unknown = {}): Promise<any> {
 
 /** 直接写数据库：会话、账号、/health 的快照。 */
 function db(): DatabaseSync {
-  return new DatabaseSync(path.join(DATA_DIR, "buddy.db"));
+  return new DatabaseSync(path.join(DATA_DIR, "agentfacade.db"));
 }
 
 /**

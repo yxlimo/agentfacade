@@ -3,7 +3,7 @@
 //   mise run test:model-traits:tool
 //   node --experimental-strip-types test/model-traits-tool-check.ts
 //
-// 离线：一个假上游（本机 http），一个临时 BUDDY_DATA_DIR（库里只有三个假平台），
+// 离线：一个假上游（本机 http），一个临时 FACADE_DATA_DIR（库里只有三个假平台），
 // 不发真请求、不花额度、不碰仓库里那张表 —— 每一轮都写临时目录里的一份。
 //
 // 这个工具的风险不在「拉不到」，在「把人对的值改掉」与「同一份输入写出两份不同的
@@ -29,7 +29,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "model-traits-tool-"));
 
 // 库的位置在**第一次** store() 之前就得定下来：这个进程之后打开的每个模块都用它
 const dataDir = path.join(tmp, "data");
-process.env.BUDDY_DATA_DIR = dataDir;
+process.env.FACADE_DATA_DIR = dataDir;
 
 // 编造的样例：被测的就是「令牌不出现在输出里」，所以这一行必须存在
 const TOKEN = "sk-TESTONLY0000000000000000"; // privacy:allow — 编造的样例
@@ -117,7 +117,7 @@ function readTable(file: string): Record<string, Record<string, unknown>> {
 async function cli(args: string[]): Promise<{ code: number; out: string }> {
   const child = spawn(process.execPath, ["--experimental-strip-types", SCRIPT, ...args], {
     cwd: ROOT,
-    env: { ...process.env, BUDDY_DATA_DIR: dataDir },
+    env: { ...process.env, FACADE_DATA_DIR: dataDir },
   });
   let out = "";
   child.stdout.on("data", (chunk) => {

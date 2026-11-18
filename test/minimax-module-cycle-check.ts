@@ -51,7 +51,7 @@ function loadAs(entry: string): { ok: boolean; out: string } {
       {
         cwd: ROOT,
         encoding: "utf8",
-        env: { ...process.env, BUDDY_DATA_DIR: dataDir },
+        env: { ...process.env, FACADE_DATA_DIR: dataDir },
       },
     );
     const out = `${r.stdout ?? ""}${r.stderr ?? ""}`.trim();
@@ -77,7 +77,7 @@ function loadPair(first: string, second: string): { ok: boolean; out: string } {
       {
         cwd: ROOT,
         encoding: "utf8",
-        env: { ...process.env, BUDDY_DATA_DIR: dataDir },
+        env: { ...process.env, FACADE_DATA_DIR: dataDir },
       },
     );
     const out = `${r.stdout ?? ""}${r.stderr ?? ""}`.trim();

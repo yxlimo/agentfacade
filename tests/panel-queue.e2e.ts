@@ -112,7 +112,7 @@ test('排队中：第一次排队之后仍是「就绪」，两次之后才是�
     execFileSync(
       process.execPath,
       ['--experimental-strip-types', 'tests/seed-session.ts', PLATFORM, account],
-      { env: { ...process.env, BUDDY_DATA_DIR: dataDir() }, stdio: 'pipe' },
+      { env: { ...process.env, FACADE_DATA_DIR: dataDir() }, stdio: 'pipe' },
     );
 
     await app.open();

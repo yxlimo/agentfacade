@@ -274,7 +274,7 @@ const upstreamBase = `http://127.0.0.1:${(upstream.address() as { port: number }
 // both are set before anything under lib/ is loaded (same reason as
 // test/zcode-headers-check.ts).
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "zcode-rewrite-e2e-"));
-process.env.BUDDY_DATA_DIR = tmp;
+process.env.FACADE_DATA_DIR = tmp;
 process.env.ZCODE_BASE_URL = upstreamBase;
 process.env.BENEFITS_DISABLED = "1";
 process.env.PERIODIC_ENABLED = "false";

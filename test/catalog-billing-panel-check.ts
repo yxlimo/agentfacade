@@ -30,7 +30,7 @@ import path from "node:path";
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "catalog-billing-panel-"));
 // The data directory has to be set before the store is imported: the store opens
 // the file the first time it is asked for it.
-process.env.BUDDY_DATA_DIR = tmp;
+process.env.FACADE_DATA_DIR = tmp;
 
 const { closeStore } = await import("../lib/store.ts");
 const { createOpenPlatform, openPlatformOf, syncPlatformModels } = await import("../lib/open-platforms.ts");

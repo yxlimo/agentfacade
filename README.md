@@ -75,7 +75,7 @@ services:
       - ./data:/data
     environment:
       ROUTER_PORT: "6450"
-      BUDDY_DATA_DIR: /data
+      FACADE_DATA_DIR: /data
 ```
 
 ```bash

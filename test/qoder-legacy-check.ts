@@ -31,7 +31,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "qoder-legacy-"));
-process.env.BUDDY_DATA_DIR = tmp;
+process.env.FACADE_DATA_DIR = tmp;
 // 「默认」那几条断言测的是没设置时的行为：部署里钉了这个键的话，它们测的就不是
 // 默认值了
 delete process.env.QODER_SKIP_QUEUE_WAIT;

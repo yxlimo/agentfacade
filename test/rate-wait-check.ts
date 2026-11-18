@@ -41,7 +41,7 @@ import { startGateway as startHarness, type Gateway } from "./harness.ts";
 
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "rate-wait-"));
 // 本进程要用同一个库（写账号与凭据），所以给它自己的数据目录。
-process.env.BUDDY_DATA_DIR = DATA_DIR;
+process.env.FACADE_DATA_DIR = DATA_DIR;
 
 const MODEL = "sensenova-6.8-flash-lite";
 // 账号 id：建行的时候才知道（自增整数，与平台名无关）。
@@ -356,7 +356,7 @@ async function chat(): Promise<{ status: number; text: string; elapsed: number }
 
 /** 库里那一行冷却。 */
 function cooldownRow(providerId: string): { untilMs: number; reason: string } | null {
-  const conn = new DatabaseSync(path.join(DATA_DIR, "buddy.db"));
+  const conn = new DatabaseSync(path.join(DATA_DIR, "agentfacade.db"));
   try {
     const row = conn
       .prepare("SELECT until_ms, reason FROM cooldown WHERE provider_id = ?")
@@ -370,7 +370,7 @@ function cooldownRow(providerId: string): { untilMs: number; reason: string } | 
 
 /** 把冷却清掉：每个场景从干净的状态开始。 */
 function clearCooldowns(): void {
-  const conn = new DatabaseSync(path.join(DATA_DIR, "buddy.db"));
+  const conn = new DatabaseSync(path.join(DATA_DIR, "agentfacade.db"));
   try {
     conn.exec("DELETE FROM cooldown");
   } finally {

@@ -70,7 +70,7 @@ section("准备：额度刷新那一轮先跑完（那时还没有账号）");
 
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "admin-parity-"));
 // 数据目录要在导入库模块之前定下来：store 是进程里的单例。
-process.env.BUDDY_DATA_DIR = DATA_DIR;
+process.env.FACADE_DATA_DIR = DATA_DIR;
 
 const { addAccount, setProviderEnabled } = await import("../lib/providers.ts");
 const { writePluginField } = await import("../lib/quota-plugin-credentials.ts");

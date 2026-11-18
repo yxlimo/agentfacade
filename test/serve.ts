@@ -141,7 +141,7 @@ function seedDummySession(dataDir: string): void {
 function seedSessions(dataDir: string, env: Record<string, string>): void {
   execFileSync(process.execPath, ["--experimental-strip-types", "test/fake-sessions.ts"], {
     cwd: ROOT,
-    env: { ...process.env, ...env, BUDDY_DATA_DIR: dataDir },
+    env: { ...process.env, ...env, FACADE_DATA_DIR: dataDir },
     stdio: "ignore",
   });
 }

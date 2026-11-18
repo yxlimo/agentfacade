@@ -8,7 +8,7 @@
 import fs from "node:fs";
 
 const DATA_DIR = "/tmp/opencode/test-quota-plugin";
-process.env.BUDDY_DATA_DIR = DATA_DIR;
+process.env.FACADE_DATA_DIR = DATA_DIR;
 fs.rmSync(DATA_DIR, { recursive: true, force: true });
 fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
 

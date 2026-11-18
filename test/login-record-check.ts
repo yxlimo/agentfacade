@@ -68,7 +68,7 @@ async function call(method: string, body: unknown = {}): Promise<{ status: numbe
   return { status: res.status, body: parsed };
 }
 
-process.env.BUDDY_DATA_DIR = DATA_DIR;
+process.env.FACADE_DATA_DIR = DATA_DIR;
 const lib = (rel: string) => pathToFileURL(path.join(ROOT, rel)).href;
 // 这几个模块之间有循环引用，加载顺序得跟网关一样（router-proxy.ts 就是这个
 // 顺序），不然模块顶层会读到还没初始化的东西。
@@ -78,7 +78,7 @@ await import(lib("lib/platforms.ts"));
 await import(lib("lib/providers.ts"));
 const { loginActivity } = await import(lib("lib/admin/login.ts"));
 
-const db = new DatabaseSync(path.join(DATA_DIR, "buddy.db"));
+const db = new DatabaseSync(path.join(DATA_DIR, "agentfacade.db"));
 db.exec("PRAGMA journal_mode = WAL");
 db.exec("PRAGMA busy_timeout = 5000");
 

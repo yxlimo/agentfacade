@@ -25,7 +25,7 @@ import os from "node:os";
 import path from "node:path";
 
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "quota-state-"));
-process.env.BUDDY_DATA_DIR = DATA_DIR;
+process.env.FACADE_DATA_DIR = DATA_DIR;
 
 const { applyProbeEffect, outOfCreditsOf, probeOf, quotaConclusionOf, quotaProbe, quotaViewsOf, recoverAtOf } =
   await import("../lib/quota-state.ts");

@@ -164,7 +164,7 @@ async function admin(method: string, body: unknown = {}): Promise<any> {
 
 /** 直接写数据库：会话、登录会话、缓存。 */
 function db(): DatabaseSync {
-  return new DatabaseSync(path.join(DATA_DIR, "buddy.db"));
+  return new DatabaseSync(path.join(DATA_DIR, "agentfacade.db"));
 }
 
 function writeSecret(id: string, kind: string, data: unknown): void {

@@ -25,7 +25,7 @@ import path from "node:path";
 import { legacyStatusErrorFrame } from "./legacy-wire.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "upstream-status-"));
-process.env.BUDDY_DATA_DIR = tmp;
+process.env.FACADE_DATA_DIR = tmp;
 
 let pass = 0;
 let fail = 0;

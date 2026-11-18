@@ -15,7 +15,7 @@ import path from "node:path";
 import type { TokenRhythmAccountStatus } from "../lib/tokenrhythm/wallet.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "balance-account-"));
-process.env.BUDDY_DATA_DIR = tmp;
+process.env.FACADE_DATA_DIR = tmp;
 
 let pass = 0;
 let fail = 0;

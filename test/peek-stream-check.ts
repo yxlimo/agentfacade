@@ -21,7 +21,7 @@ import os from "node:os";
 import path from "node:path";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "peek-stream-"));
-process.env.BUDDY_DATA_DIR = tmp;
+process.env.FACADE_DATA_DIR = tmp;
 
 const { peekStream } = await import("../lib/router/deliver.ts");
 const { AuthError } = await import("../lib/credential.ts");

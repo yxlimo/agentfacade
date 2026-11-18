@@ -131,7 +131,7 @@ async function startGateway(): Promise<Gateway> {
   const token = fs.existsSync(tokenFile) ? fs.readFileSync(tokenFile, "utf8").trim() : "";
 
   // 两个账号：一个 MiniMax Code（答 400），一个 Qoder（上游说在排队）。
-  const seed = new DatabaseSync(path.join(gw.dataDir, "buddy.db"));
+  const seed = new DatabaseSync(path.join(gw.dataDir, "agentfacade.db"));
   seed.exec("PRAGMA busy_timeout = 5000");
   const insertSecret = seed.prepare(
     "INSERT INTO secrets (id, kind, data, updated_at) VALUES (?, ?, ?, ?) " +

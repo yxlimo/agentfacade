@@ -1,6 +1,6 @@
 // tests/seed-usage.ts — 给面板 e2e 铺用量事件（离线测试数据）。
 //
-//   BUDDY_DATA_DIR=<这次运行的数据目录> node --experimental-strip-types \
+//   FACADE_DATA_DIR=<这次运行的数据目录> node --experimental-strip-types \
 //     tests/seed-usage.ts <preset> <upstreamId>
 //
 // 为什么需要它：用量页的「按会话 / 按主会话 / 按子代理」三块卡片要从
@@ -14,15 +14,15 @@
 // `/admin/usage?upstream=<id>` 把页面筛到这一份上，别的用例（签到跑腿那种
 // 会记账的）留下的用量不会混进来。
 //
-// 不建平台、不改任何配置；只碰 BUDDY_DATA_DIR 那一份库，绝不落回
-// ~/.buddy-proxy 或 NAS 上的库。
+// 不建平台、不改任何配置；只碰 FACADE_DATA_DIR 那一份库，绝不落回
+// ~/.agentfacade 或 NAS 上的库。
 
 import { recordUsage } from '../lib/usage.ts';
 
 const [preset, upstreamId] = process.argv.slice(2);
 
-if (!process.env.BUDDY_DATA_DIR) {
-  throw new Error('需要 BUDDY_DATA_DIR（这次运行的数据目录）');
+if (!process.env.FACADE_DATA_DIR) {
+  throw new Error('需要 FACADE_DATA_DIR（这次运行的数据目录）');
 }
 if (!preset || !upstreamId) {
   throw new Error('用法：seed-usage.ts <sessions-12|sessions-3|sessions-10|subagents-12> <upstreamId>');

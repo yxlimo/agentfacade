@@ -21,9 +21,9 @@ import http from "node:http";
 // The module under test reaches the store while it loads, and the store wants
 // a data dir of its own. Give it a throwaway one so the check never touches a
 // real data dir, and never talks to a real upstream.
-const previousDataDir = process.env.BUDDY_DATA_DIR;
+const previousDataDir = process.env.FACADE_DATA_DIR;
 const scratchDir = mkdtempSync(join(tmpdir(), "buddy-qoder-benefits-"));
-process.env.BUDDY_DATA_DIR = scratchDir;
+process.env.FACADE_DATA_DIR = scratchDir;
 
 /* ------------------------------------------------------------------ *
  * 假平台
@@ -284,8 +284,8 @@ function daily(key: string, status: string, startAt = nowSec - 60, endAt = nowSe
 console.log("");
 console.log("结果");
 console.log(`pass=${pass} fail=${fail}`);
-if (previousDataDir === undefined) delete process.env.BUDDY_DATA_DIR;
-else process.env.BUDDY_DATA_DIR = previousDataDir;
+if (previousDataDir === undefined) delete process.env.FACADE_DATA_DIR;
+else process.env.FACADE_DATA_DIR = previousDataDir;
 // Close the database before removing its directory: on Windows an open
 // file cannot be deleted (EPERM), so the handle has to go first.
 const { closeStore } = await import("../lib/store.ts");

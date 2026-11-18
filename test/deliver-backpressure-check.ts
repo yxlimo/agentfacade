@@ -26,7 +26,7 @@ import os from "node:os";
 import path from "node:path";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "deliver-backpressure-"));
-process.env.BUDDY_DATA_DIR = tmp;
+process.env.FACADE_DATA_DIR = tmp;
 
 const { deliverOpenAIStream, deliverAnthropicStream } = await import("../lib/router/deliver.ts");
 
@@ -300,14 +300,14 @@ console.log("客户端连着但不读");
 // 帧要够大（256KB × 200 ≈ 50MB）：发送缓冲区吸不下这么多，写回调就迟迟
 // 不来，看门狗才上得了膛。800KB 在 Linux 上会被整个吸进去 —— 那时每一帧都
 // 「写成功了」，这条断言就变成在猜操作系统的缓冲区多大。
-process.env.BUDDY_DRAIN_TIMEOUT_MS = "300";
+process.env.FACADE_DRAIN_TIMEOUT_MS = "300";
 const stuck = await serve({
   frames: 200,
   stallMs: 0,
   neverRead: true,
   frameBytes: 256 * 1024,
 });
-delete process.env.BUDDY_DRAIN_TIMEOUT_MS;
+delete process.env.FACADE_DRAIN_TIMEOUT_MS;
 check("网关等了一会儿就断了", stuck.handlerMs < 10_000, `用了 ${stuck.handlerMs}ms`);
 check("网关没有抛错", stuck.handlerError === null, stuck.handlerError ?? "");
 // 客户端不读时它收不到任何东西 —— 这条断言说明的是「没收工就没有帧」，
@@ -323,9 +323,9 @@ console.log("上游在想的时候，客户端不该被踢掉");
 // 「一帧在发送缓冲区里等了多久」，不是「帧与帧之间隔了多久」。
 // 2026-11-02，作者复查发现：量错了的话，一个 thinking 的上游安静 45 秒就会
 // 把好好一个客户端踢掉，答复也断了。
-process.env.BUDDY_DRAIN_TIMEOUT_MS = "300";
+process.env.FACADE_DRAIN_TIMEOUT_MS = "300";
 const thinking = await serve({ frames: 6, stallMs: 0, intervalMs: 400 });
-delete process.env.BUDDY_DRAIN_TIMEOUT_MS;
+delete process.env.FACADE_DRAIN_TIMEOUT_MS;
 check("客户端一直在读", thinking.received.length >= 6, `${thinking.received.length} 帧`);
 check("答复完整", thinking.received.join("\n").includes('"message_stop"'), "");
 check("网关没有抛错", thinking.handlerError === null, thinking.handlerError ?? "");
@@ -337,7 +337,7 @@ console.log("ping 不该把看门狗顶掉");
 // 的，不等前面那帧发出去 —— 所以它不能把「最早那一帧等了多久」的期限往后推。
 // 2026-11-02，作者复查发现：推一次就永远推不到那个上限，看门狗等于没有，
 // 客户端不读了也没人管，上游一直算下去。
-process.env.BUDDY_DRAIN_TIMEOUT_MS = "300";
+process.env.FACADE_DRAIN_TIMEOUT_MS = "300";
 const pinged = await serve({
   frames: 100,
   stallMs: 0,
@@ -349,7 +349,7 @@ const pinged = await serve({
   intervalMs: 20,
   pingMs: 100,
 });
-delete process.env.BUDDY_DRAIN_TIMEOUT_MS;
+delete process.env.FACADE_DRAIN_TIMEOUT_MS;
 check("网关还是断了", pinged.handlerMs < 10_000, `用了 ${pinged.handlerMs}ms`);
 check("上游的流被取消了", pinged.upstreamCancelled, "上游还在算");
 check(
@@ -364,14 +364,14 @@ console.log("客户端在上游的第一帧之前就走了");
 // 推理模型的第一帧可能要等几十秒。客户端在这之前按了取消：网关得马上知道，
 // 把上游停掉 —— 不然上游接着算（还在计费），账号照付这几十秒，客户端一个字
 // 没拿到（2026-11-03，作者复查发现）。
-process.env.BUDDY_DRAIN_TIMEOUT_MS = "300";
+process.env.FACADE_DRAIN_TIMEOUT_MS = "300";
 const beforeFirst = await serve({
   frames: 5,
   stallMs: 0,
   leaveAfterMs: 100,
   intervalMs: 1500,
 });
-delete process.env.BUDDY_DRAIN_TIMEOUT_MS;
+delete process.env.FACADE_DRAIN_TIMEOUT_MS;
 check("网关很快就收工了", beforeFirst.handlerMs < 1_200, `用了 ${beforeFirst.handlerMs}ms`);
 check("上游的流被取消了", beforeFirst.upstreamCancelled, "上游还在算");
 check(

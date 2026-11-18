@@ -49,7 +49,7 @@ const UNRESOLVABLE_BASE = "http://unreachable.invalid/v1";
 const RETRY_BUDGET_MS = 1500;
 
 const UNIT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "unreachable-unit-"));
-process.env.BUDDY_DATA_DIR = UNIT_DIR;
+process.env.FACADE_DATA_DIR = UNIT_DIR;
 
 let pass = 0;
 let fail = 0;
@@ -208,7 +208,7 @@ async function startGateway(accountCount: number): Promise<Gateway> {
   const token = fs.existsSync(tokenFile) ? fs.readFileSync(tokenFile, "utf8").trim() : "";
   const local: Gateway = { ...gw, token, accounts: [] };
 
-  const seed = new DatabaseSync(path.join(gw.dataDir, "buddy.db"));
+  const seed = new DatabaseSync(path.join(gw.dataDir, "agentfacade.db"));
   seed.exec("PRAGMA busy_timeout = 5000");
   const insertSecret = seed.prepare(
     "INSERT INTO secrets (id, kind, data, updated_at) VALUES (?, ?, ?, ?) " +
@@ -280,7 +280,7 @@ async function chat(gw: Gateway): Promise<{ status: number; text: string }> {
 
 /** 冷却表里的行：这个账号有没有被记冷却。 */
 function cooldownRows(gw: Gateway, accountId: string): Array<{ until_ms: number; reason: string }> {
-  const db = new DatabaseSync(path.join(gw.dataDir, "buddy.db"), { readOnly: true });
+  const db = new DatabaseSync(path.join(gw.dataDir, "agentfacade.db"), { readOnly: true });
   try {
     db.exec("PRAGMA busy_timeout = 5000");
     return db

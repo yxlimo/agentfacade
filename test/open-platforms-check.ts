@@ -41,7 +41,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "open-platforms-"));
 // 数据目录要在库被打开之前定下来：库是第一次用的时候才开的。
-process.env.BUDDY_DATA_DIR = DATA_DIR;
+process.env.FACADE_DATA_DIR = DATA_DIR;
 
 const { allPlatforms, platformOfAny } = await import("../lib/platforms.ts");
 const {
@@ -835,7 +835,7 @@ const onlyRun = spawnSync(
   ],
   {
     cwd: ROOT,
-    env: { ...process.env, BUDDY_DATA_DIR: ONLY_DIR },
+    env: { ...process.env, FACADE_DATA_DIR: ONLY_DIR },
     encoding: "utf8",
   },
 );

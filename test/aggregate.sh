@@ -21,9 +21,9 @@ cd "$ROOT"
 LOG_DIR="test/.tmp/aggregate"
 mkdir -p "$LOG_DIR"
 # The database is always a fresh directory of the test's own, whatever the
-# shell exported: the run removes it, and a developer's BUDDY_DATA_DIR may point
+# shell exported: the run removes it, and a developer's FACADE_DATA_DIR may point
 # at the real one.
-export BUDDY_DATA_DIR="$(mktemp -d "$LOG_DIR/data.XXXXXX")"
+export FACADE_DATA_DIR="$(mktemp -d "$LOG_DIR/data.XXXXXX")"
 PASS=0
 FAIL=0
 
@@ -49,14 +49,14 @@ node --experimental-strip-types test/aggregate-setup.ts seed
 # 网关与假上游交给 test/serve.ts（端口由共享 helper 挑，撞了换号重来）。
 READY="$LOG_DIR/ready.json"
 rm -f "$READY"
-node --experimental-strip-types test/serve.ts --mock --data-dir "$BUDDY_DATA_DIR" \
+node --experimental-strip-types test/serve.ts --mock --data-dir "$FACADE_DATA_DIR" \
   --ready-file "$READY" > $LOG_DIR/aggregate-serve.log 2>&1 &
 ROUTER_PID=$!
 
 cleanup() {
   kill $ROUTER_PID 2>/dev/null
   wait $ROUTER_PID 2>/dev/null
-  rm -rf "$BUDDY_DATA_DIR"
+  rm -rf "$FACADE_DATA_DIR"
 }
 trap cleanup EXIT
 

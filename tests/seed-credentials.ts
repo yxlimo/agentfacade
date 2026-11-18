@@ -1,6 +1,6 @@
 // tests/seed-credentials.ts — 给面板 e2e 的账号写一份凭据（离线测试数据）。
 //
-//   BUDDY_DATA_DIR=<这次运行的数据目录> node --experimental-strip-types \
+//   FACADE_DATA_DIR=<这次运行的数据目录> node --experimental-strip-types \
 //     tests/seed-credentials.ts <形状> <accountId>
 //
 // 为什么需要它：凭据栏要验的是「一个账号名下摆哪几条」，而真正的凭据是登录换
@@ -17,15 +17,15 @@
 // 套验的是「面板把凭据栏画成什么」，不是「登录能不能成功」—— 后者有别的用例。
 //
 // 账号行由调用方（测试）用 admin RPC 建好，这里只写凭据：不建账号、不改开关。
-// 只碰 BUDDY_DATA_DIR 那一份库，绝不落回 ~/.buddy-proxy 或 NAS 上的库。
+// 只碰 FACADE_DATA_DIR 那一份库，绝不落回 ~/.agentfacade 或 NAS 上的库。
 
 import { setSecret } from '../lib/store.ts';
 import { providerSecretId } from '../lib/providers.ts';
 
 const [shape, accountId] = process.argv.slice(2);
 
-if (!process.env.BUDDY_DATA_DIR) {
-  throw new Error('需要 BUDDY_DATA_DIR（这次运行的数据目录）');
+if (!process.env.FACADE_DATA_DIR) {
+  throw new Error('需要 FACADE_DATA_DIR（这次运行的数据目录）');
 }
 if (!shape || !accountId) {
   throw new Error('用法：seed-credentials.ts <minimax> <accountId>');

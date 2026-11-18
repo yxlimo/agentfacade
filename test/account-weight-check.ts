@@ -16,7 +16,7 @@ import path from "node:path";
 // 临时目录走系统的 tmpdir：写死的 /tmp 在 Windows 上落到当前盘的根上，
 // 而且两次运行会撞在同一个目录上。
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "test-account-weight-"));
-process.env.BUDDY_DATA_DIR = DATA_DIR;
+process.env.FACADE_DATA_DIR = DATA_DIR;
 
 const { accountsOfPlatform, addAccount, updateProvider, provider } = await import("../lib/providers.ts");
 // 删账号走 admin 层：凭据、旧位置的记录、快照里的那段，都在那边一起删。

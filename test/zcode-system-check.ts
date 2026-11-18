@@ -20,7 +20,7 @@ import type { Json } from "../lib/json.ts";
 // import happens after the data directory is set (same reason as
 // test/zcode-headers-check.ts).
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "zcode-system-"));
-process.env.BUDDY_DATA_DIR = DATA_DIR;
+process.env.FACADE_DATA_DIR = DATA_DIR;
 
 const { zcodeBody } = await import("../lib/zcode/transport.ts");
 const { OFFICIAL_SEGMENT_1, OFFICIAL_SEGMENT_2, zcodeSystem, toolNamesOf } = await import(

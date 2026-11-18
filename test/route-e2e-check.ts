@@ -128,7 +128,7 @@ const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "buddy-route-e2e-"));
 
 execFileSync(process.execPath, ["--experimental-strip-types", "test/aggregate-setup.ts", "seed"], {
   cwd: ROOT,
-  env: { ...process.env, BUDDY_DATA_DIR: dataDir },
+  env: { ...process.env, FACADE_DATA_DIR: dataDir },
   stdio: "ignore",
 });
 
@@ -251,7 +251,7 @@ function inferCalls(): { model: string; stream: boolean; messages: unknown[] }[]
 
 /** 读数据库里的表。 */
 function query(sql: string): any[] {
-  const db = new DatabaseSync(path.join(dataDir, "buddy.db"), { readOnly: true });
+  const db = new DatabaseSync(path.join(dataDir, "agentfacade.db"), { readOnly: true });
   try {
     return db.prepare(sql).all() as any[];
   } finally {
@@ -261,7 +261,7 @@ function query(sql: string): any[] {
 
 /** 冷却表里那个账号那一行（没有就是 null）。 */
 function cooldownOf(accountId: string): { untilMs: number; reason: string } | null {
-  const db = new DatabaseSync(path.join(dataDir, "buddy.db"), { readOnly: true, timeout: 5000 });
+  const db = new DatabaseSync(path.join(dataDir, "agentfacade.db"), { readOnly: true, timeout: 5000 });
   try {
     const row = db.prepare("SELECT until_ms, reason FROM cooldown WHERE provider_id = ?").get(accountId) as any;
     if (!row) return null;
@@ -273,7 +273,7 @@ function cooldownOf(accountId: string): { untilMs: number; reason: string } | nu
 
 /** 把冷却行清掉：场景之间互不干扰（网关拿的是同一个库）。 */
 function clearCooldowns(): void {
-  const db = new DatabaseSync(path.join(dataDir, "buddy.db"), { timeout: 5000 });
+  const db = new DatabaseSync(path.join(dataDir, "agentfacade.db"), { timeout: 5000 });
   try {
     db.prepare("DELETE FROM cooldown").run();
   } finally {

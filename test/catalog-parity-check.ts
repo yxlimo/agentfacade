@@ -33,7 +33,7 @@ const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "test-catalog-parity-"));
 const fakeSessions = spawnSync(
   process.execPath,
   ["--experimental-strip-types", "test/fake-sessions.ts"],
-  { cwd: ROOT, env: { ...process.env, BUDDY_DATA_DIR: DATA_DIR }, stdio: "ignore" },
+  { cwd: ROOT, env: { ...process.env, FACADE_DATA_DIR: DATA_DIR }, stdio: "ignore" },
 );
 if (fakeSessions.status !== 0) {
   throw new Error("the dummy sessions could not be written");

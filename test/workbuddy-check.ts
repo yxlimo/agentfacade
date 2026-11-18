@@ -13,7 +13,7 @@ import path from "node:path";
 // The store opens its file the first time it is asked for it, so the data
 // directory has to point at a temporary one before anything imports it.
 // The test never wants the real database: it reads no credential.
-process.env.BUDDY_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "workbuddy-check-"));
+process.env.FACADE_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "workbuddy-check-"));
 
 const { buildChatBody, conversationIdFor } = await import("../lib/workbuddy/transport.ts");
 const { clampEffort } = await import("../lib/workbuddy/models.ts");

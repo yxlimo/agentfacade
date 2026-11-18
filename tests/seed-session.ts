@@ -1,6 +1,6 @@
 // tests/seed-session.ts — 给面板 e2e 的那个账号写一份会话（离线测试数据）。
 //
-//   BUDDY_DATA_DIR=<这次运行的数据目录> node --experimental-strip-types \
+//   FACADE_DATA_DIR=<这次运行的数据目录> node --experimental-strip-types \
 //     tests/seed-session.ts <platform> <accountId> [accessToken]
 //
 // 第三段是可选的会话令牌：额度页的用例要按 token 分清是哪个账号（假上游照
@@ -16,15 +16,15 @@
 // 「排队中」这个状态是被两次真请求推出来的，不是写进去的。
 //
 // 账号行由调用方（测试）用 admin RPC 建好，这里只写凭据：不建账号、不改开关。
-// 只碰 BUDDY_DATA_DIR 那一份库；令牌是编造的，假上游不看它们。
+// 只碰 FACADE_DATA_DIR 那一份库；令牌是编造的，假上游不看它们。
 
 import { saveSession as saveQoderSession } from '../lib/qoder/auth.ts';
 import { saveSession as saveWorkBuddySession } from '../lib/workbuddy/auth.ts';
 
 const [platform, accountId, accessToken] = process.argv.slice(2);
 
-if (!process.env.BUDDY_DATA_DIR) {
-  throw new Error('需要 BUDDY_DATA_DIR（这次运行的数据目录）');
+if (!process.env.FACADE_DATA_DIR) {
+  throw new Error('需要 FACADE_DATA_DIR（这次运行的数据目录）');
 }
 if (!platform || !accountId) {
   throw new Error('用法：seed-session.ts <platform> <accountId>');

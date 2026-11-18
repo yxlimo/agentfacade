@@ -117,7 +117,7 @@ async function startGateway(): Promise<Gateway> {
   };
 
   // 一个 MiniMax Code 账号：凭据写进这个测试自己的库，与真的那台机器无关。
-  const seed = new DatabaseSync(path.join(gw.dataDir, "buddy.db"));
+  const seed = new DatabaseSync(path.join(gw.dataDir, "agentfacade.db"));
   seed.exec("PRAGMA busy_timeout = 5000");
   const insertSecret = seed.prepare(
     "INSERT INTO secrets (id, kind, data, updated_at) VALUES (?, ?, ?, ?) " +
@@ -205,7 +205,7 @@ async function ask(gw: Gateway): Promise<{ status: number; text: string }> {
 
 /** 往库里写一行冷却（测试自己写的，跟网关写的是同一张表）。 */
 function writeCooldown(dataDir: string, providerId: string, untilMs: number, reason = "rate-limit"): void {
-  const db = new DatabaseSync(path.join(dataDir, "buddy.db"));
+  const db = new DatabaseSync(path.join(dataDir, "agentfacade.db"));
   try {
     db.prepare(
       "INSERT INTO cooldown (provider_id, until_ms, reason, updated_at) VALUES (?, ?, ?, ?) " +
@@ -234,7 +234,7 @@ interface UsageRow {
 }
 
 function usageRows(dataDir: string): UsageRow[] {
-  const db = new DatabaseSync(path.join(dataDir, "buddy.db"));
+  const db = new DatabaseSync(path.join(dataDir, "agentfacade.db"));
   try {
     const table = db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'usage_event'")

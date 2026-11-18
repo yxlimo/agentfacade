@@ -25,7 +25,7 @@ import path from "node:path";
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "account-id-migration-"));
 const SECOND_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "account-id-migration-2-"));
 // 数据目录要在库被打开之前定下来：库是第一次用的时候才开的。
-process.env.BUDDY_DATA_DIR = DATA_DIR;
+process.env.FACADE_DATA_DIR = DATA_DIR;
 
 const { store, closeStore, migrateAccountIds } = await import("../lib/store.ts");
 
@@ -186,7 +186,7 @@ section("冒号边界");
 
 // 另一个库：两个 id 互为前缀的账号同时存在，凭据不能串。
 closeStore();
-process.env.BUDDY_DATA_DIR = SECOND_DIR;
+process.env.FACADE_DATA_DIR = SECOND_DIR;
 store();
 
 addProvider("qoder", "", 1000);

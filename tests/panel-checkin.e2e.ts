@@ -65,7 +65,7 @@ async function seedWorkBuddyAccount(alias: string): Promise<string> {
   execFileSync(
     process.execPath,
     ['--experimental-strip-types', 'tests/seed-session.ts', 'workbuddy-cn', account],
-    { env: { ...process.env, BUDDY_DATA_DIR: dataDir() }, stdio: 'pipe' },
+    { env: { ...process.env, FACADE_DATA_DIR: dataDir() }, stdio: 'pipe' },
   );
   return account;
 }

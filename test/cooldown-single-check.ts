@@ -140,7 +140,7 @@ async function startGateway(accountCount: number): Promise<Gateway> {
   const token = fs.existsSync(tokenFile) ? fs.readFileSync(tokenFile, "utf8").trim() : "";
   const local: Gateway = { ...gw, token, accounts: [] };
 
-  const seed = new DatabaseSync(path.join(gw.dataDir, "buddy.db"));
+  const seed = new DatabaseSync(path.join(gw.dataDir, "agentfacade.db"));
   seed.exec("PRAGMA busy_timeout = 5000");
   const insertSecret = seed.prepare(
     "INSERT INTO secrets (id, kind, data, updated_at) VALUES (?, ?, ?, ?) " +
@@ -210,7 +210,7 @@ async function chat(gw: Gateway): Promise<{ status: number; text: string }> {
 
 /** 冷却表里的行：这个账号有没有被记冷却。 */
 function cooldownRows(gw: Gateway, accountId: string): Array<{ until_ms: number; reason: string }> {
-  const db = new DatabaseSync(path.join(gw.dataDir, "buddy.db"), { readOnly: true });
+  const db = new DatabaseSync(path.join(gw.dataDir, "agentfacade.db"), { readOnly: true });
   try {
     db.exec("PRAGMA busy_timeout = 5000");
     return db
@@ -333,7 +333,7 @@ section("两个 kind：上游的原话都到得了客户端（只修一家会露
 {
   // 这一段在进程里直接用路由层。路由层模块加载时就要一个库，所以先给它一个
   // 临时目录 —— 上面那些网关子进程各用自己的那一份，互不影响。
-  process.env.BUDDY_DATA_DIR ??= fs.mkdtempSync(path.join(os.tmpdir(), "upstream-answer-"));
+  process.env.FACADE_DATA_DIR ??= fs.mkdtempSync(path.join(os.tmpdir(), "upstream-answer-"));
   // 上游的地址要在 import 之前定下来：workbuddy 是每次调用时读的。
   process.env.WORKBUDDY_CHAT_BASE = upstreamBase;
   const { AuthError } = await import("../lib/credential.ts");

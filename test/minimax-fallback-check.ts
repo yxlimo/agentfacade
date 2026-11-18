@@ -126,7 +126,7 @@ async function startGateway(): Promise<Gateway> {
   const token = fs.existsSync(tokenFile) ? fs.readFileSync(tokenFile, "utf8").trim() : "";
   const local: Gateway = { ...gw, token, accounts: [] };
 
-  const seed = new DatabaseSync(path.join(gw.dataDir, "buddy.db"));
+  const seed = new DatabaseSync(path.join(gw.dataDir, "agentfacade.db"));
   seed.exec("PRAGMA busy_timeout = 5000");
   const insertSecret = seed.prepare(
     "INSERT INTO secrets (id, kind, data, updated_at) VALUES (?, ?, ?, ?) " +

@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 
 // 自己的一份数据目录：下面写的会话不能留在下一次运行里。
-process.env.BUDDY_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "zcode-session-"));
+process.env.FACADE_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "zcode-session-"));
 
 const { setSecret, deleteSecret, getSecret } = await import("../lib/store.ts");
 const { loadSession, forgetSession, zcodeStatus } = await import("../lib/zcode/auth.ts");

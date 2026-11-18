@@ -72,7 +72,7 @@ fs.writeFileSync(KEYS_FILE, JSON.stringify({ test: CLIENT_KEY }, null, 2));
 // 网关会走设备流去真的登录。
 execFileSync(process.execPath, ["--experimental-strip-types", "test/aggregate-setup.ts", "seed"], {
   cwd: ROOT,
-  env: { ...process.env, BUDDY_DATA_DIR: DATA_DIR },
+  env: { ...process.env, FACADE_DATA_DIR: DATA_DIR },
   stdio: "ignore",
 });
 
@@ -194,7 +194,7 @@ async function onlyAccountId(platform: string): Promise<string> {
 
 /** 数据库里的配置表。 */
 function configRows(): { key: string; value: string }[] {
-  const db = new DatabaseSync(path.join(DATA_DIR, "buddy.db"), { readOnly: true });
+  const db = new DatabaseSync(path.join(DATA_DIR, "agentfacade.db"), { readOnly: true });
   try {
     return db.prepare("SELECT key, value FROM config").all() as any[];
   } finally {
@@ -204,7 +204,7 @@ function configRows(): { key: string; value: string }[] {
 
 /** The provider table: one row per provider, with its switch. */
 function providerRows(): { id: string; enabled: number }[] {
-  const db = new DatabaseSync(path.join(DATA_DIR, "buddy.db"), { readOnly: true });
+  const db = new DatabaseSync(path.join(DATA_DIR, "agentfacade.db"), { readOnly: true });
   try {
     return db.prepare("SELECT id, enabled FROM provider").all() as any[];
   } finally {

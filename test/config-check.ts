@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 
 const dbFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "buddy-config-")), "data");
-process.env.BUDDY_DATA_DIR = dbFile;
+process.env.FACADE_DATA_DIR = dbFile;
 
 // The environment answers two of them, so the order can be seen.
 process.env.CHECK_FLAG = "true";

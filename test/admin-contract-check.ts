@@ -29,7 +29,7 @@ const PROTO = path.join(ROOT, "proto/buddy/admin/v1/admin.proto");
 // needs a data dir of its own. The gateway below runs in another process with
 // DATA_DIR -- the two must not share one database.
 const LOCAL_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "test-admin-contract-local-"));
-process.env.BUDDY_DATA_DIR = LOCAL_DATA_DIR;
+process.env.FACADE_DATA_DIR = LOCAL_DATA_DIR;
 
 let pass = 0;
 let fail = 0;
@@ -261,7 +261,7 @@ const seededId = String(seeded.body?.id ?? "");
 // 一个不存在的账号，而断言却照样通过。
 if (!seededId) throw new Error(`AddAccount 没有给出账号 id：${seeded.text.slice(0, 200)}`);
 {
-  const conn = new DatabaseSync(path.join(DATA_DIR, "buddy.db"));
+  const conn = new DatabaseSync(path.join(DATA_DIR, "agentfacade.db"));
   conn.exec("PRAGMA busy_timeout = 5000");
   conn
     .prepare(
@@ -290,7 +290,7 @@ if (!seededId) throw new Error(`AddAccount 没有给出账号 id：${seeded.text
 // 额度插件（额度 Cookie 那一段由它带进来，两段凭据的契约才有得验）。
 const { QINIU_INFER_BASE } = await import("../lib/qiniu/config.ts");
 {
-  const conn = new DatabaseSync(path.join(DATA_DIR, "buddy.db"));
+  const conn = new DatabaseSync(path.join(DATA_DIR, "agentfacade.db"));
   conn.exec("PRAGMA busy_timeout = 5000");
   conn
     .prepare(

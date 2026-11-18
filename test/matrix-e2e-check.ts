@@ -223,7 +223,7 @@ const gw = await startGateway({
   },
 });
 // 本进程里读库的那几个 helper 必须指向同一个数据目录（网关自己的那个临时目录）。
-process.env.BUDDY_DATA_DIR = gw.dataDir;
+process.env.FACADE_DATA_DIR = gw.dataDir;
 const token = fs.readFileSync(path.join(gw.dataDir, "admin-token"), "utf8").trim();
 
 async function rpc(method: string, body: unknown = {}): Promise<any> {
@@ -696,7 +696,7 @@ const beforeDeleteMinimax = listOpenPlatforms().length;
 const delMin = await rpc("DeletePlatform", { id: "minimax" });
 check("D17 删 minimax 成功", !errorCodeOf(delMin), JSON.stringify(delMin).slice(0, 200));
 check("D17 列表少一行", listOpenPlatforms().length === beforeDeleteMinimax - 1, `${beforeDeleteMinimax} → ${listOpenPlatforms().length}`);
-// D17 的真重启在收尾那一节（同一份 BUDDY_DATA_DIR 再起一次网关）。
+// D17 的真重启在收尾那一节（同一份 FACADE_DATA_DIR 再起一次网关）。
 
 const kinds = await rpc("ListPlatformKinds", {});
 // D18：zcode 是预置的模拟客户端（hidden 改成 false 之后），所以两处都该看得见它 ——
@@ -1094,7 +1094,7 @@ check(
  * D17′ 真重启
  * ------------------------------------------------------------------ */
 
-section("D17 真重启（同一份 BUDDY_DATA_DIR）");
+section("D17 真重启（同一份 FACADE_DATA_DIR）");
 
 // 第一次重启：刚删掉 minimax 就重启，它不该被播种复活。
 // （F 那一节为了验目录把它建回来过，所以这里再删一次。）

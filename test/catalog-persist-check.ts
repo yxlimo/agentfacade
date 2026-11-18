@@ -24,7 +24,7 @@ import path from "node:path";
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "catalog-persist-"));
 // The data directory has to be set before the store is imported: the store
 // opens the file the first time it is asked for it.
-process.env.BUDDY_DATA_DIR = tmp;
+process.env.FACADE_DATA_DIR = tmp;
 
 const { CatalogCache } = await import("../lib/router/catalog-cache.ts");
 const { store, listCached } = await import("../lib/store.ts");

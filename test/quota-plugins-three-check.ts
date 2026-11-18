@@ -22,7 +22,7 @@ import os from "node:os";
 import path from "node:path";
 
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "test-quota-plugins-three-"));
-process.env.BUDDY_DATA_DIR = DATA_DIR;
+process.env.FACADE_DATA_DIR = DATA_DIR;
 
 const { addAccount } = await import("../lib/providers.ts");
 // 种类与插件都是导入时登记的：导入它，它们才都在。

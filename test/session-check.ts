@@ -22,7 +22,7 @@ import path from "node:path";
 
 // A data directory of its own: the tests below write sessions, and what they
 // write must not be there when the next run starts.
-process.env.BUDDY_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "session-check-"));
+process.env.FACADE_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "session-check-"));
 
 import { detectSession, clientForwardHeaders } from "../lib/agent.ts";
 

@@ -33,7 +33,7 @@ import type {
 // data directory has to be set before the import (same as
 // test/zcode-system-check.ts).
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "zcode-quota-"));
-process.env.BUDDY_DATA_DIR = DATA_DIR;
+process.env.FACADE_DATA_DIR = DATA_DIR;
 
 await import("../lib/kinds/zcode.ts");
 const { kindOf } = await import("../lib/provider-kinds.ts");

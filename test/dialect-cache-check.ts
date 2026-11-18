@@ -17,7 +17,7 @@ import os from "node:os";
 import path from "node:path";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "dialect-cache-"));
-process.env.BUDDY_DATA_DIR = tmp;
+process.env.FACADE_DATA_DIR = tmp;
 
 const { openaiToAnthropicResponse, anthropicToOpenAIResponse } = await import("../lib/dialect/response.ts");
 const { openaiStreamToAnthropic, anthropicStreamToOpenAI } = await import("../lib/dialect/stream.ts");

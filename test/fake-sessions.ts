@@ -5,7 +5,7 @@
 // the device flow (which would open a browser) and answers 503.
 //
 // So the test writes dummy sessions into its own database — the one under
-// BUDDY_DATA_DIR, never the real one. The tokens are not real; the mock
+// FACADE_DATA_DIR, never the real one. The tokens are not real; the mock
 // upstream does not look at them.
 //
 // The upstream switches live in the same database (provider.enabled), and a

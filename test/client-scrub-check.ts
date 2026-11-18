@@ -20,7 +20,7 @@ import os from "node:os";
 import path from "node:path";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "client-scrub-check-"));
-process.env.BUDDY_DATA_DIR = tmp;
+process.env.FACADE_DATA_DIR = tmp;
 
 const { AuthError } = await import("../lib/credential.ts");
 const { withUpstreamAnswer } = await import("../lib/upstream-status.ts");

@@ -5,7 +5,7 @@
 # 起和停。做三件事：
 #
 #   1. 每次运行新建一个数据目录（`mktemp -d`），把路径写进 marker 文件，
-#      测试与凭据那一侧靠它找 `admin-token`。**绝不**落回 `~/.buddy-proxy`
+#      测试与凭据那一侧靠它找 `admin-token`。**绝不**落回 `~/.agentfacade`
 #      或 NAS 上的库：那里的会话两边轮流用会废掉。
 #   2. 网关起成后台子进程，面板由它从 `$PANEL_DIST` 托管在 /admin/ 下。
 #   3. 退出时（正常结束、Ctrl-C、被 TERM）把子进程停掉、把数据目录和 marker
@@ -33,7 +33,7 @@ printf '%s\n' "$DATA_DIR" > "$DATA_DIR_MARKER"
 
 echo "  面板 e2e 的数据目录：$DATA_DIR"
 
-export BUDDY_DATA_DIR="$DATA_DIR"
+export FACADE_DATA_DIR="$DATA_DIR"
 export ROUTER_PORT
 
 # ── 上游地址：**这一批用例走到的**上游指到本机的假上游 ────────────────────

@@ -72,7 +72,7 @@ function seedUsage(preset: string, upstreamId: string): void {
   execFileSync(
     process.execPath,
     ['--experimental-strip-types', 'tests/seed-usage.ts', preset, upstreamId],
-    { env: { ...process.env, BUDDY_DATA_DIR: dataDir() }, stdio: 'pipe' },
+    { env: { ...process.env, FACADE_DATA_DIR: dataDir() }, stdio: 'pipe' },
   );
 }
 

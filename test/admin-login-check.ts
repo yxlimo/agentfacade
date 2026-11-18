@@ -221,7 +221,7 @@ const VENDOR_PLATFORMS: [string, string, string][] = [
   ["intern-ai", "intern-ai", "https://discovery-api.intern-ai.org.cn/v1"],
 ];
 {
-  const db = new DatabaseSync(path.join(DATA_DIR, "buddy.db"));
+  const db = new DatabaseSync(path.join(DATA_DIR, "agentfacade.db"));
   db.exec("PRAGMA journal_mode = WAL");
   const now = Date.now();
   for (const [id, kind, baseUrl] of VENDOR_PLATFORMS) {
@@ -376,7 +376,7 @@ check(
 console.log("");
 console.log("cache 表与会话");
 
-const db = new DatabaseSync(path.join(DATA_DIR, "buddy.db"));
+const db = new DatabaseSync(path.join(DATA_DIR, "agentfacade.db"));
 // The gateway writes in WAL mode; a reader that does not speak WAL sees the
 // main file only, which is what a checkpoint has written so far.
 db.exec("PRAGMA journal_mode = WAL");

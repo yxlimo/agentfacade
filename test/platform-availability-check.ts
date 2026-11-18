@@ -56,7 +56,7 @@ section("一、判定：状态与最早能试的时刻");
 
 const UNIT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "availability-unit-"));
 // 数据目录要在导入库模块之前定下来：store 是进程里的单例。
-process.env.BUDDY_DATA_DIR = UNIT_DIR;
+process.env.FACADE_DATA_DIR = UNIT_DIR;
 
 const { addAccount, listProviders, setProviderEnabled, updateProvider } = await import("../lib/providers.ts");
 const { quotaConclusionOf, quotaPluginIdOf } = await import("../lib/quota-state.ts");
@@ -616,7 +616,7 @@ async function rootChat(model: string): Promise<{ status: number; json: any; tex
 
 /** 网关自己的库：直接读写（与网关写的是同一张表）。 */
 function withDb<T>(run: (db: DatabaseSync) => T): T {
-  const db = new DatabaseSync(path.join(gw.dataDir, "buddy.db"));
+  const db = new DatabaseSync(path.join(gw.dataDir, "agentfacade.db"));
   db.exec("PRAGMA busy_timeout = 5000");
   try {
     return run(db);

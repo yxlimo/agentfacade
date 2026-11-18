@@ -15,7 +15,7 @@ import path from "node:path";
 // 临时目录走系统的 tmpdir：写死的 /tmp 在 Windows 上落到当前盘的根上，
 // 而且两次运行会撞在同一个目录上。
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "test-health-cooldown-"));
-process.env.BUDDY_DATA_DIR = DATA_DIR;
+process.env.FACADE_DATA_DIR = DATA_DIR;
 
 const { app } = await import("../lib/router/app.ts");
 const { addAccount } = await import("../lib/providers.ts");

@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 
 // 网关的模块加载时就会开库，所以先给它一个自己的数据目录。
-process.env.BUDDY_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "buddy-empty-answer-"));
+process.env.FACADE_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "buddy-empty-answer-"));
 
 const { isAllThinking, effectiveMaxTokens, budgetUsed } = await import("../lib/router/handle.ts");
 

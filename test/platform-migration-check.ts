@@ -55,7 +55,7 @@ function section(title: string): void {
 
 // 数据目录要在库被打开之前定下来：库是第一次用的时候才开的。
 const FRESH_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "platform-migration-fresh-"));
-process.env.BUDDY_DATA_DIR = FRESH_DIR;
+process.env.FACADE_DATA_DIR = FRESH_DIR;
 
 const { PLATFORMS, allPlatforms } = await import("../lib/platforms.ts");
 const { openPlatformOf, listOpenPlatforms, createOpenPlatform, deleteOpenPlatform } = await import(
@@ -207,7 +207,7 @@ section("老库升级");
 // 里面已经有一行 minimax（用户改过名字），还有一行叫 qoder 的开放平台 ——
 // id 跟模拟客户端撞了，这种库不该有，但播种得容得下它。
 const OLD_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "platform-migration-old-"));
-const OLD_FILE = path.join(OLD_DIR, "buddy.db");
+const OLD_FILE = path.join(OLD_DIR, "agentfacade.db");
 {
   const old = new DatabaseSync(OLD_FILE);
   old.exec(
@@ -231,7 +231,7 @@ const OLD_FILE = path.join(OLD_DIR, "buddy.db");
   insert.run("qoder", "我的中转站", "https://relay.test/v1", '["relay-1"]', 0, "", now, now);
   old.close();
 }
-process.env.BUDDY_DATA_DIR = OLD_DIR;
+process.env.FACADE_DATA_DIR = OLD_DIR;
 
 // 打开库就是跑迁移（openDatabase 里有播种）。
 const upgraded = allPlatforms();
@@ -306,7 +306,7 @@ const VENDOR_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "platform-migration-ven
   // 一台从未生效过的旧机器）、推理 key 还在 `:account` 的 apiKey 里（门户
   // cookie 与它同住一段）、user_version 归零 —— 重开库时 migrateLegacyVendorKinds
   // 就会跑。
-  process.env.BUDDY_DATA_DIR = VENDOR_DIR;
+  process.env.FACADE_DATA_DIR = VENDOR_DIR;
   const fresh = store();
   fresh
     .prepare(
@@ -396,7 +396,7 @@ section("版本 4：quota_plugin 列退场");
 // 地址改回厂商地址轻得多 —— 后者等于把请求搬到真上游。
 const QP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "platform-migration-quota-plugin-"));
 {
-  process.env.BUDDY_DATA_DIR = QP_DIR;
+  process.env.FACADE_DATA_DIR = QP_DIR;
   const fresh = store();
   fresh
     .prepare(
@@ -492,7 +492,7 @@ section("版本 4：自建部署填自己的地址");
 // 填厂商地址等于把自建部署的流量指回真上游。
 const ENV_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "platform-migration-env-"));
 {
-  process.env.BUDDY_DATA_DIR = ENV_DIR;
+  process.env.FACADE_DATA_DIR = ENV_DIR;
   process.env.TOKENRHYTHM_INFER_BASE = "https://self-hosted-tokenrhythm.example/v1";
   const fresh = store();
   fresh
@@ -526,7 +526,7 @@ fs.rmSync(ENV_DIR, { recursive: true, force: true });
 section("墓碑：删了就是没了");
 
 const TOMB_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "platform-tombstone-"));
-process.env.BUDDY_DATA_DIR = TOMB_DIR;
+process.env.FACADE_DATA_DIR = TOMB_DIR;
 allPlatforms();
 
 // 脏墓碑：一个目录里根本没有的 id（早先删过、目录里早就不存在了）。它不该拖累
@@ -608,7 +608,7 @@ section("墓碑与删行是一件事");
 // 下面是那个残局的反面：删完这一下读回来，墓碑与「行没了」必须同时成立。
 // 判断的判别力在预置 id 上：非预置的 id 不写墓碑，比了也证不了什么。
 const ATOMIC_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "platform-tombstone-atomic-"));
-process.env.BUDDY_DATA_DIR = ATOMIC_DIR;
+process.env.FACADE_DATA_DIR = ATOMIC_DIR;
 allPlatforms();
 
 check("删之前 qoder-cn 在", openPlatformOf("qoder-cn") !== null);
@@ -670,7 +670,7 @@ section("删两次：第二次不动墓碑");
 // 与这一删落到同一次「删」，下面的断言查的就是这一路：删不到东西的时候既不报
 // 成功，也不写墓碑。
 const TWICE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "platform-tombstone-twice-"));
-process.env.BUDDY_DATA_DIR = TWICE_DIR;
+process.env.FACADE_DATA_DIR = TWICE_DIR;
 allPlatforms();
 
 /** 墓碑里记的时刻。没有这一行就是 null。 */

@@ -72,7 +72,7 @@ mise run privacy --all      # 现状体检（必要时才跑）
 7. **替换是否彻底**：同一份真值可能在多处出现（测试、注释、断言、fixture、文档）。
    换了一处、别处还留着，是最常见的残留。用真值的关键片段 `grep` 全仓找一遍。
 8. **新引入的 debug 输出**：`console.log` / `authLog` 里有没有可能落到 stdout 或日志文件的
-   完整令牌、cookie、用户对话正文；`BUDDY_DEBUG_UPSTREAM_FILE` 这类开关指向的路径在不在
+   完整令牌、cookie、用户对话正文；`FACADE_DEBUG_UPSTREAM_FILE` 这类开关指向的路径在不在
    数据目录里。
 
 ### 4. 交付

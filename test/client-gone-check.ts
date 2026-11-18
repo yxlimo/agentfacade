@@ -237,7 +237,7 @@ async function startGateway(): Promise<Gateway> {
   const tokenFile = path.join(gw.dataDir, "admin-token");
   const token = fs.existsSync(tokenFile) ? fs.readFileSync(tokenFile, "utf8").trim() : "";
 
-  const seed = new DatabaseSync(path.join(gw.dataDir, "buddy.db"));
+  const seed = new DatabaseSync(path.join(gw.dataDir, "agentfacade.db"));
   seed.exec("PRAGMA busy_timeout = 5000");
   const insertSecret = seed.prepare(
     "INSERT INTO secrets (id, kind, data, updated_at) VALUES (?, ?, ?, ?) " +
@@ -332,7 +332,7 @@ async function startGateway(): Promise<Gateway> {
 
 /** 冷却表里现在有哪些账号（网关那个进程自己写的库）。 */
 function minimaxCooldowns(gw: Gateway): { provider_id: string; reason: string }[] {
-  const db = new DatabaseSync(path.join(gw.dataDir, "buddy.db"));
+  const db = new DatabaseSync(path.join(gw.dataDir, "agentfacade.db"));
   db.exec("PRAGMA busy_timeout = 5000");
   const rows = db.prepare("SELECT provider_id, reason FROM cooldown").all() as {
     provider_id: string;
@@ -344,7 +344,7 @@ function minimaxCooldowns(gw: Gateway): { provider_id: string; reason: string }[
 
 /** 清掉冷却表：上一条用例落的账不该算到这一条头上。 */
 async function clearMinimaxCooldowns(gw: Gateway): Promise<void> {
-  const db = new DatabaseSync(path.join(gw.dataDir, "buddy.db"));
+  const db = new DatabaseSync(path.join(gw.dataDir, "agentfacade.db"));
   db.exec("PRAGMA busy_timeout = 5000");
   db.prepare("DELETE FROM cooldown").run();
   db.close();
@@ -434,7 +434,7 @@ console.log("客户端走了：上游停、账号不背锅、不换目标");
     check("上游被掐断了（它还在算就是在计费）", qoderAborted, "上游还在算");
     check("上游只被打了一次（客户端走了就不该再打）", qoderHits === 1, String(qoderHits));
 
-    const db = new DatabaseSync(path.join(gw.dataDir, "buddy.db"));
+    const db = new DatabaseSync(path.join(gw.dataDir, "agentfacade.db"));
     const cooldowns = db
       .prepare("SELECT provider_id FROM cooldown WHERE provider_id = ?")
       .all(gw.qoderId) as unknown[];
@@ -459,7 +459,7 @@ console.log("客户端走了：上游停、账号不背锅、不换目标");
     check("WorkBuddy：上游被掐断了（它还在算就是在计费）", workbuddyAborted, "上游还在算");
     check("WorkBuddy：上游只被打了一次（客户端走了就不该再打）", workbuddyHits === 1, String(workbuddyHits));
 
-    const db = new DatabaseSync(path.join(gw.dataDir, "buddy.db"));
+    const db = new DatabaseSync(path.join(gw.dataDir, "agentfacade.db"));
     const cooldowns = db
       .prepare("SELECT provider_id FROM cooldown WHERE provider_id = ?")
       .all(gw.workbuddyId) as unknown[];
@@ -682,7 +682,7 @@ const openUpstreamBase = `http://127.0.0.1:${(openUpstream.address() as { port: 
  * ------------------------------------------------------------------ */
 
 // 必须在 import 之前：数据目录是模块求值时读的。
-process.env.BUDDY_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "buddy-client-gone-open-"));
+process.env.FACADE_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "buddy-client-gone-open-"));
 process.env.PERIODIC_ENABLED = "false";
 process.env.BENEFITS_DISABLED = "1";
 // MiniMax Code 的上游只在「客户端走了 + 上游同时报 401」那一条用例里用：指向假
@@ -995,5 +995,5 @@ console.log(`${pass} ok, ${fail} failed`);
 upstream.close();
 openUpstream.close();
 await new Promise<void>((resolve) => openServer.close(() => resolve()));
-fs.rmSync(process.env.BUDDY_DATA_DIR!, { recursive: true, force: true });
+fs.rmSync(process.env.FACADE_DATA_DIR!, { recursive: true, force: true });
 if (fail) process.exit(1);

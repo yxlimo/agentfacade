@@ -57,7 +57,7 @@ function retryAfterOf(error: unknown): number | undefined {
 
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "credential-fault-"));
 // 数据目录要在导入库模块之前定下来：store 是进程里的单例。
-process.env.BUDDY_DATA_DIR = DATA_DIR;
+process.env.FACADE_DATA_DIR = DATA_DIR;
 
 const { addAccount, listProviders } = await import("../lib/providers.ts");
 const { setSecret, store } = await import("../lib/store.ts");

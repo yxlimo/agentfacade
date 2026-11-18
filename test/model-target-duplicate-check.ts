@@ -44,7 +44,7 @@ function section(title: string): void {
 
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "model-target-duplicate-"));
 // 数据目录要在导入库模块之前定下来：store 是进程里的单例。
-process.env.BUDDY_DATA_DIR = DATA_DIR;
+process.env.FACADE_DATA_DIR = DATA_DIR;
 
 const { savePublishedModel, publishedModels } = await import("../lib/admin/models.ts");
 const { traceUnexpected } = await import("../lib/admin/http.ts");

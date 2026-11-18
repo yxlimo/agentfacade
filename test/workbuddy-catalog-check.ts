@@ -34,7 +34,7 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "workbuddy-catalog-"));
 // The data directory has to be set before the store is imported: the store
 // opens the file the first time it is asked for it.
-process.env.BUDDY_DATA_DIR = tmp;
+process.env.FACADE_DATA_DIR = tmp;
 
 const { catalogId, catalogTtlMs, readStoredCatalog, writeStoredCatalog, initWorkBuddyCatalog } =
   await import("../lib/workbuddy/catalog-store.ts");
@@ -106,7 +106,7 @@ function readInAnotherProcess(env: NodeJS.ProcessEnv = {}): OtherProcess {
     ["--experimental-strip-types", "--input-type=module", "-e", script],
     {
       cwd: ROOT,
-      env: { ...process.env, BUDDY_DATA_DIR: tmp, ...env },
+      env: { ...process.env, FACADE_DATA_DIR: tmp, ...env },
       encoding: "utf8",
     },
   );

@@ -43,7 +43,7 @@ fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
 // The store reads the data directory from the environment when it is imported,
 // so the environment has to point there first — otherwise this would write into
 // the machine's own database.
-process.env.BUDDY_DATA_DIR = DATA_DIR;
+process.env.FACADE_DATA_DIR = DATA_DIR;
 // 账号与会话由 test/fake-sessions.ts 写（它在网关起来之前跑）：一份种的来源就够。
 // 早先这里还直接按平台名写过一份会话，账号 id 变成自增整数之后那些格子指向
 // 不存在的账号，等于没写。
@@ -77,7 +77,7 @@ await new Promise<void>((resolve, reject) => {
     cwd: ROOT,
     env: {
       ...process.env,
-      BUDDY_DATA_DIR: DATA_DIR,
+      FACADE_DATA_DIR: DATA_DIR,
       TEST_UPSTREAMS: "qoder,qoder-cn,workbuddy-cn,minimax",
     },
     stdio: ["ignore", "pipe", "pipe"],

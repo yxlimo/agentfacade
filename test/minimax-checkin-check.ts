@@ -8,7 +8,7 @@
 // (MiniMax-AI/minimax-code, packages/tui/src/checkin/http-gateway.ts).
 
 // 数据目录必须先于任何触及 store() 的模块被求值：checkin.ts 的导入链在模块加载时
-// 就会走到 store()，而 store() 读 BUDDY_DATA_DIR。ESM 静态 import 在任意顶层语句
+// 就会走到 store()，而 store() 读 FACADE_DATA_DIR。ESM 静态 import 在任意顶层语句
 // 之前求值，所以本文件第一个 import 这个小模块，让它在 checkin.ts 之前把目录设好。
 import "./data-dir-setup.ts";
 
@@ -109,8 +109,8 @@ console.log("runMiniMaxBenefits 会说今天签没签（假上游，不碰真平
   const os = await import("node:os");
   const path = await import("node:path");
   const http = await import("node:http");
-  // 先定数据目录再引入 store：store 在模块加载时读 BUDDY_DATA_DIR。
-  process.env.BUDDY_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "test-minimax-checkin-"));
+  // 先定数据目录再引入 store：store 在模块加载时读 FACADE_DATA_DIR。
+  process.env.FACADE_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "test-minimax-checkin-"));
   const { setSecret } = await import("../lib/store.ts");
   const { addAccount } = await import("../lib/providers.ts");
   const accountId = String(addAccount({ platform: "minimax" }).id);

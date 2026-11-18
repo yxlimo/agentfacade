@@ -58,7 +58,7 @@ const CONNECT_PROBE_PATH = "/buddy.admin.v1.AdminService/__harness_probe__";
 export interface GatewayOptions {
   /** 不给就 mkdtemp 一个临时目录。 */
   dataDir?: string;
-  /** 追加/覆盖的环境变量（BUDDY_DATA_DIR、ROUTER_PORT、PERIODIC_ENABLED 由 helper 自己填）。 */
+  /** 追加/覆盖的环境变量（FACADE_DATA_DIR、ROUTER_PORT、PERIODIC_ENABLED 由 helper 自己填）。 */
   env?: Record<string, string>;
   /** 默认 "/health"。 */
   healthPath?: string;
@@ -348,7 +348,7 @@ async function waitForReady(
  * 子进程退了就不等了：等下去也是白等。
  */
 async function waitForSchema(dataDir: string, child: ChildProcess): Promise<void> {
-  const file = path.join(dataDir, "buddy.db");
+  const file = path.join(dataDir, "agentfacade.db");
   for (let i = 0; i < 200; i++) {
     if (exited(child)) throw new Error("网关在建表的时候退了");
     try {
@@ -516,7 +516,7 @@ export async function startGateway(options: GatewayOptions = {}): Promise<Gatewa
         // lib/router/upstreams/policy.ts 的 ATTEMPT_BUDGET_DEFAULT_MS）。
         ROUTER_RETRY_BUDGET_MS: "10000",
         ...options.env,
-        BUDDY_DATA_DIR: dataDir,
+        FACADE_DATA_DIR: dataDir,
         ROUTER_PORT: String(port),
       },
       stdio: ["ignore", "pipe", "pipe"],

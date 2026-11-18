@@ -23,7 +23,7 @@ import { DatabaseSync } from "node:sqlite";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cleanup-check-"));
-process.env.BUDDY_DATA_DIR = tmp;
+process.env.FACADE_DATA_DIR = tmp;
 
 /**
  * 把服务绑到一个空端口上，返回真正的号。
@@ -189,7 +189,7 @@ const seeded = spawnSync(
   ["--experimental-strip-types", "test/fake-sessions.ts"],
   {
     cwd: ROOT,
-    env: { ...process.env, BUDDY_DATA_DIR: ROUTER_DIR, TEST_UPSTREAMS: "qoder-cn" },
+    env: { ...process.env, FACADE_DATA_DIR: ROUTER_DIR, TEST_UPSTREAMS: "qoder-cn" },
     encoding: "utf8",
   },
 );
@@ -239,7 +239,7 @@ const answerBody = await answered.text();
 check("请求走通了", answered.status === 200, `HTTP ${answered.status} ${answerBody.slice(0, 160)}`);
 
 // 读数据库里那一行：client 必须是「Qoder」，upstream_id 是「qoder-cn」。
-const routerDb = new DatabaseSync(path.join(ROUTER_DIR, "buddy.db"), { readOnly: true });
+const routerDb = new DatabaseSync(path.join(ROUTER_DIR, "agentfacade.db"), { readOnly: true });
 const rows = routerDb
   .prepare("SELECT upstream_id, client FROM usage_event ORDER BY id DESC LIMIT 5")
   .all() as any[];

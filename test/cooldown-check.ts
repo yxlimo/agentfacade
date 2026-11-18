@@ -42,7 +42,7 @@ const BUSY_TIMEOUT_MS = 5000;
 // 本进程里直接跑几段算法，所以给本进程一个自己的数据目录 —— 跟网关那份、
 // 跟真的那份都无关。（网关的子进程各自用自己的目录，这里不传给他们。）
 const UNIT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "cooldown-unit-"));
-process.env.BUDDY_DATA_DIR = UNIT_DIR;
+process.env.FACADE_DATA_DIR = UNIT_DIR;
 
 let pass = 0;
 let fail = 0;
@@ -256,7 +256,7 @@ async function startGateway(dataDir?: string): Promise<Gateway> {
   };
 
   // 账号与凭据：只在这个测试自己的库里。
-  const seed = new DatabaseSync(path.join(dir, "buddy.db"), { timeout: BUSY_TIMEOUT_MS });
+  const seed = new DatabaseSync(path.join(dir, "agentfacade.db"), { timeout: BUSY_TIMEOUT_MS });
   const insertSecret = seed.prepare(
     "INSERT INTO secrets (id, kind, data, updated_at) VALUES (?, ?, ?, ?) " +
       "ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
@@ -345,7 +345,7 @@ async function chatStream(gw: Gateway): Promise<{ status: number; text: string }
 /** 库里那一行冷却。 */
 function cooldownRow(dataDir: string, providerId: string): { untilMs: number; reason: string } | null {
   // 读同样会被写事务挡住，所以这条连接也要等锁。
-  const db = new DatabaseSync(path.join(dataDir, "buddy.db"), { timeout: BUSY_TIMEOUT_MS });
+  const db = new DatabaseSync(path.join(dataDir, "agentfacade.db"), { timeout: BUSY_TIMEOUT_MS });
   try {
     const row = db
       .prepare("SELECT until_ms, reason FROM cooldown WHERE provider_id = ?")
@@ -359,7 +359,7 @@ function cooldownRow(dataDir: string, providerId: string): { untilMs: number; re
 
 /** 往库里写一行冷却（测试自己写的，跟网关写的是同一张表）。 */
 function writeCooldown(dataDir: string, providerId: string, untilMs: number, reason = "test"): void {
-  const db = new DatabaseSync(path.join(dataDir, "buddy.db"), { timeout: BUSY_TIMEOUT_MS });
+  const db = new DatabaseSync(path.join(dataDir, "agentfacade.db"), { timeout: BUSY_TIMEOUT_MS });
   try {
     db.prepare(
       "INSERT INTO cooldown (provider_id, until_ms, reason, updated_at) VALUES (?, ?, ?, ?) " +
@@ -689,7 +689,7 @@ console.log("算法：冷却的四条规矩");
   setCooldown("acct-long", long, "rate-limit");
   setCooldown("acct-long", Date.now() + 5 * 60_000, "server");
   const until = cooldownUntil("acct-long");
-  const db = new DatabaseSync(path.join(UNIT_DIR, "buddy.db"), { timeout: BUSY_TIMEOUT_MS });
+  const db = new DatabaseSync(path.join(UNIT_DIR, "agentfacade.db"), { timeout: BUSY_TIMEOUT_MS });
   const reason = String(
     (db.prepare("SELECT reason FROM cooldown WHERE provider_id = ?").get("acct-long") as any)?.reason ?? "",
   );
@@ -879,7 +879,7 @@ console.log("回归：测试自己的连接要等锁（CI 上撞过 database is 
   // 让 store 把这个库建出来（cooldown 表在里面）。
   const { store } = await import("../lib/store.ts");
   store();
-  const dbFile = path.join(UNIT_DIR, "buddy.db");
+  const dbFile = path.join(UNIT_DIR, "agentfacade.db");
 
   // 持锁的是另一个线程：主线程写库时是同步阻塞的，锁只能由别处放开。
   const holder = new Worker(

@@ -58,7 +58,7 @@ function section(name: string): void {
 
 // 配置要读库（面板那份设置在数据库里），所以先给一个临时目录。
 const UNIT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "breaker-unit-"));
-process.env.BUDDY_DATA_DIR = UNIT_DIR;
+process.env.FACADE_DATA_DIR = UNIT_DIR;
 // 开关开着：这一半测的就是开着时的行为。
 process.env.UPSTREAM_BREAKER_ENABLED = "true";
 
@@ -251,7 +251,7 @@ async function startGateway(breaker: boolean): Promise<Gateway> {
   const gw: Gateway = { ...running, token };
 
   // 两个账号：一个在全球区，一个在中国区。凭据挂在账号行上（不填就发不出去）。
-  const seed = new DatabaseSync(path.join(running.dataDir, "buddy.db"));
+  const seed = new DatabaseSync(path.join(running.dataDir, "agentfacade.db"));
   seed.exec("PRAGMA busy_timeout = 5000");
   const insertSecret = seed.prepare(
     "INSERT INTO secrets (id, kind, data, updated_at) VALUES (?, ?, ?, ?) " +
@@ -347,7 +347,7 @@ async function stateReasonOf(gw: Gateway, platform: string): Promise<string> {
 
 /** 用量表里某个平台有几行（跳过的那些也算进去）。 */
 function usageRowsOf(gw: Gateway, platform: string): number {
-  const db = new DatabaseSync(path.join(gw.dataDir, "buddy.db"), { readOnly: true });
+  const db = new DatabaseSync(path.join(gw.dataDir, "agentfacade.db"), { readOnly: true });
   try {
     const row = db
       .prepare("SELECT count(*) AS n FROM usage_event WHERE upstream_id = ?")

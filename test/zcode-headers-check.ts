@@ -25,7 +25,7 @@ import type { Json } from "../lib/json.ts";
 // ZCode 的会话那一层在求值期就读配置，所以库会在导入期打开。给它自己的数据
 // 目录：默认目录在别的机器上可能不可写（也会把运维的那一份库打开）。
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "zcode-headers-"));
-process.env.BUDDY_DATA_DIR = DATA_DIR;
+process.env.FACADE_DATA_DIR = DATA_DIR;
 
 // 动态导入：静态 import 先于模块体跑，那时数据目录还没定下来。
 const { zcodeHeaders, zcodePlatformHeaders, zcodeBody, ZCODE_MESSAGES_URL } = await import("../lib/zcode/transport.ts");

@@ -64,7 +64,7 @@ async function seedQoderAccount(alias: string, token?: string): Promise<string> 
   const args = ['--experimental-strip-types', 'tests/seed-session.ts', 'qoder-cn', account];
   if (token) args.push(token);
   execFileSync(process.execPath, args, {
-    env: { ...process.env, BUDDY_DATA_DIR: dataDir() },
+    env: { ...process.env, FACADE_DATA_DIR: dataDir() },
     stdio: 'pipe',
   });
   return account;
