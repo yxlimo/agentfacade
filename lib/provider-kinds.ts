@@ -387,6 +387,13 @@ export interface ZcodeClaimSnapshot {
   planName?: string;
   /** 计划什么时候开始算数（ISO）。 */
   effectiveAt?: string;
+  /**
+   * 这个账号已经领过的计划（plan_id）。
+   *
+   * 用来不再重复领同一个计划：上游的 preview 可能滞后，还列着刚领过的计划。
+   * 换一个新活动（新的 plan_id）不受它影响。
+   */
+  claimedPlanIds?: string[];
 }
 
 /**

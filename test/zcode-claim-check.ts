@@ -37,7 +37,7 @@ process.env.FACADE_DATA_DIR = DATA_DIR;
  * ------------------------------------------------------------------ */
 
 /** preview 这一轮怎么答。 */
-type PreviewMode = "plans" | "empty" | "unauthorized" | "server-error";
+type PreviewMode = "plans" | "plan-beta" | "empty" | "unauthorized" | "server-error";
 /** claim 这一轮怎么答。 */
 type ClaimMode =
   | "ok"
@@ -156,6 +156,14 @@ const fake = http.createServer((req, res) => {
         return send(401, { code: 401, msg: "unauthorized" });
       case "server-error":
         return send(500, { code: 500, msg: "internal error" });
+      case "plan-beta":
+        // 只列另一个计划（另一个 plan_id）：用来验「已经领过的那个不重复领，
+        // 换一个新活动照领」。
+        return send(200, {
+          code: 0,
+          msg: "",
+          data: { server_time: 1800000000, plans: [PLANS[1]] },
+        });
       case "empty":
         // 实测的「没有可领」：HTTP 200、code 0、**没有 data 字段**。
         return send(200, { code: 0, msg: "", logid: "log-test" });
@@ -246,6 +254,20 @@ function reset(preview: PreviewMode = "plans", claim: ClaimMode = "ok"): void {
   lastClaimHeaders = {};
   lastPreviewUrl = "";
   lastPreviewHeaders = {};
+  // 领取的状态也复位（结论与「已经领过哪些计划」都在快照里）：否则上一节
+  // 领过的计划会让这一节不再 POST，下面的断言就测不到东西了。
+  resetClaimState();
+}
+
+/**
+ * 复位领取的状态。
+ *
+ * 领取的结论与「已经领过哪些计划」都存在现役的那份健康快照里
+ * （zcode[账号].claim），所以复位就是换一份没有结论的快照 —— lib/ 里没有
+ * 「只给测试用」的开关。
+ */
+function resetClaimState(): void {
+  putHealthSnapshot({ zcode: {} } as unknown as HealthSnapshot);
 }
 
 /* ------------------------------------------------------------------ *
@@ -610,6 +632,14 @@ check(
   JSON.stringify(noneNote),
 );
 
+// 结论只有一份，就在现役的快照里：换了快照就没有旧结论（进程里不再另存一份）。
+putHealthSnapshot({ zcode: {} } as unknown as HealthSnapshot);
+check(
+  "换了快照 → 结论也跟着换（没有另一份内存里的旧结论）",
+  zcodeClaimSnapshot(ACCOUNT_ID) === undefined,
+  JSON.stringify(zcodeClaimSnapshot(ACCOUNT_ID)),
+);
+
 /* ------------------------------------------------------------------ *
  * 八、领到之后额度那一问能看到那个计划
  * ------------------------------------------------------------------ */
@@ -758,6 +788,43 @@ check(
   "transport.ts 里平台标识只写了一次",
   (transportSource.match(/win32-x64/g) ?? []).length === 1,
   String((transportSource.match(/win32-x64/g) ?? []).length),
+);
+
+/* ------------------------------------------------------------------ *
+ * 十一、同一个计划不重复 POST
+ * ------------------------------------------------------------------ */
+
+section("十一、同一个计划不重复 POST");
+
+reset("plans");
+const firstClaim = await claimOnce(ACCOUNT_ID);
+check("第一轮领到了", firstClaim?.state === "claimed", JSON.stringify(firstClaim));
+check("第一轮发了一个领取请求", claimHits === 1, String(claimHits));
+
+// 第二轮：preview 还是列着刚领过的那个计划（上游滞后）。不能再 POST。
+const hitsAfterFirst = claimHits;
+const secondRound = await claimOnce(ACCOUNT_ID);
+check(
+  "同一个计划再来一轮 → 不再 POST",
+  claimHits === hitsAfterFirst,
+  `${hitsAfterFirst} → ${claimHits}`,
+);
+check(
+  "第二轮的结论还是「已领到」（不是「已领过」）",
+  secondRound?.state === "claimed",
+  JSON.stringify(secondRound),
+);
+
+// 换一个计划（新的 plan_id）：新活动不能被这个保护挡住。
+// 这里不复位领取的状态（要留着「已经领过 plan-alpha」那份记忆）。
+previewMode = "plan-beta";
+claimHits = 0;
+const thirdRound = await claimOnce(ACCOUNT_ID);
+check("换一个计划 → 照发 POST", claimHits === 1, String(claimHits));
+check(
+  "换一个计划 → 领到的是那个计划",
+  thirdRound?.state === "claimed" && thirdRound.planName === "BETA PLAN",
+  JSON.stringify(thirdRound),
 );
 
 const { closeStore } = await import("../lib/store.ts");

@@ -15,6 +15,10 @@
 // 判断** —— 不自己记「已放弃」：服务端的可领列表每轮都可能变，把自己记成
 // 「放弃」就再也领不到了。
 //
+// 例外：已经**领到**的那个计划不再重复领（按 plan_id 记，记忆在快照里）。
+// preview 可能滞后，还列着刚领过的计划；照着它 POST 就是一天几十次重复写。
+// 换一个新活动（新的 plan_id）照领不误。
+//
 // 开关：`FACADE_ZCODE_AUTO_CLAIM`（默认开）。关掉时一个请求都不发。
 
 import { configFlag, configNumber, markHotSetting } from "../config.ts";
@@ -77,8 +81,12 @@ export function zcodeClaimSnapshot(providerId: string): ZcodeClaimSnapshot | und
 /**
  * 记一次结论。
  *
- * 同时写进现在的那份快照（如果有）：面板读的是快照，等下一次全量刷新才看到
- * 结论的话，人会以为没领（这一轮与下一次刷新之间最多差五分钟）。
+ * 同时写进现在的那份快照：面板读的是快照，等下一次全量刷新才看到结论的话，
+ * 人会以为没领（这一轮与下一次刷新之间最多差五分钟）。
+ *
+ * 「已经领过哪些计划」也在这份结论里（claimedPlanIds）：它跟着快照走，
+ * 刷新时带过去（lib/admin/upstreams.ts 把这一格原样抄进新快照），所以不会
+ * 因为一次刷新就忘掉 —— 忘了就会重复领同一个计划。
  *
  * 额度那一格还没有的时候，造出来的那一份带着 `quota: null` —— 那是「没问过
  * 额度」，不是「额度是 0」（null 那一档面板不摆额度卡）。
@@ -88,15 +96,32 @@ export function zcodeClaimSnapshot(providerId: string): ZcodeClaimSnapshot | und
  */
 function record(providerId: string, snapshot: ZcodeClaimSnapshot): void {
   const live = peekHealthSnapshot<HealthSnapshot>()?.data;
+  const previous = live?.zcode?.[providerId]?.claim as ZcodeClaimSnapshot | undefined;
+  // 合并「已经领过哪些计划」：新的结论（none / failed）不该把这份记忆抹掉。
+  const claimed = Array.from(
+    new Set([...(previous?.claimedPlanIds ?? []), ...(snapshot.claimedPlanIds ?? [])]),
+  );
+  const merged: ZcodeClaimSnapshot = claimed.length
+    ? { ...snapshot, claimedPlanIds: claimed }
+    : snapshot;
   if (!live) {
     putHealthSnapshot({
-      zcode: { [providerId]: { quota: null, claim: snapshot } },
+      zcode: { [providerId]: { quota: null, claim: merged } },
     } as unknown as HealthSnapshot);
     return;
   }
   const entry = live.zcode?.[providerId];
   live.zcode = { ...(live.zcode ?? {}) };
-  live.zcode[providerId] = { ...(entry ?? { quota: null }), claim: snapshot };
+  live.zcode[providerId] = { ...(entry ?? { quota: null }), claim: merged };
+}
+
+/**
+ * 这个账号已经领过的计划（plan_id）。
+ *
+ * 存在结论里（见 record）：进程内存的那份健康快照就是全部记忆。
+ */
+function claimedPlanIdsOf(providerId: string): string[] {
+  return zcodeClaimSnapshot(providerId)?.claimedPlanIds ?? [];
 }
 
 /**
@@ -210,8 +235,24 @@ export async function claimOnce(providerId: string): Promise<ZcodeClaimSnapshot 
     record(providerId, snapshot);
     return snapshot;
   }
-  const result = await claimPlan(providerId, plan.planId);
   const action = describeClaimedPlan(plan.name || plan.planId, plan.planId);
+  // 同一个计划不重复领：上游的 preview 可能滞后，还列着刚领过的计划 —— 照着
+  // 它 POST 就是一天几十次重复写。换个 plan_id（新活动）不受影响，照领。
+  //
+  // 记忆只活在进程内存的快照里：重启之后可能多 POST 一次，服务端会回终态码
+  // （already），不会多领到额度。
+  if (claimedPlanIdsOf(providerId).includes(plan.planId)) {
+    logClaimAttempt({
+      accountId: providerId,
+      platformId,
+      claimable: plans.length,
+      action,
+      state: "already",
+      message: "这个计划已经领过（网关记得），不再重复领取",
+    });
+    return zcodeClaimSnapshot(providerId) ?? null;
+  }
+  const result = await claimPlan(providerId, plan.planId);
   if (result.state === "claimed") {
     const effectiveAt = effectiveAtOf(result.plan);
     logClaimAttempt({
@@ -228,6 +269,7 @@ export async function claimOnce(providerId: string): Promise<ZcodeClaimSnapshot 
       message: "",
       planName: plan.name || result.plan.planId,
       effectiveAt,
+      claimedPlanIds: [...claimedPlanIdsOf(providerId), plan.planId],
     };
     record(providerId, snapshot);
     return snapshot;
