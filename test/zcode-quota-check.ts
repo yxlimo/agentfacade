@@ -242,45 +242,31 @@ check(
   kind.recoverAt?.(ACCOUNT, { zcode: {} } as unknown as HealthSnapshot) === null,
 );
 
-// 2. unauthorized：一张说明卡，不是整片留白；不算用尽，也没有恢复时刻。
+// 2. unauthorized：不摆额度卡 —— 「剩余 0 点」读起来是「额度用完了」，而真相是
+// 「不知道，因为凭据被拒」。不算用尽，也没有恢复时刻。
 const unauthorizedViews = kind.quotas(ACCOUNT, snapshotOf(unauthorizedProbe()));
-check("凭据被拒 → 一张额度卡", unauthorizedViews.length === 1, JSON.stringify(unauthorizedViews));
-check(
-  "凭据被拒 → 卡上写明要重新登录",
-  /重新登录/.test(unauthorizedViews[0]?.credits?.note ?? ""),
-  JSON.stringify(unauthorizedViews[0]?.credits?.note),
-);
+check("凭据被拒 → 没有额度卡", unauthorizedViews.length === 0, JSON.stringify(unauthorizedViews));
 check("凭据被拒 → 不算用尽", kind.outOfCredits(ACCOUNT, snapshotOf(unauthorizedProbe())) === false);
 check(
   "凭据被拒 → 没有恢复时刻",
   kind.recoverAt?.(ACCOUNT, snapshotOf(unauthorizedProbe())) === null,
 );
 
-// 3. failed：与「被拒」要能分开。
+// 3. failed：与「被拒」一样是「不知道」，同样不摆卡。
 const failedViews = kind.quotas(ACCOUNT, snapshotOf(failedProbe()));
-check("问不到 → 一张额度卡", failedViews.length === 1, JSON.stringify(failedViews));
-check(
-  "问不到 → 卡上说的是「没问到」",
-  /没问到/.test(failedViews[0]?.credits?.note ?? ""),
-  JSON.stringify(failedViews[0]?.credits?.note),
-);
+check("问不到 → 没有额度卡", failedViews.length === 0, JSON.stringify(failedViews));
 check("问不到 → 不算用尽", kind.outOfCredits(ACCOUNT, snapshotOf(failedProbe())) === false);
 check(
   "问不到 → 没有恢复时刻",
   kind.recoverAt?.(ACCOUNT, snapshotOf(failedProbe())) === null,
 );
 
-// 4. missing：与「问不到」也要能分开。
+// 4. missing：也是「不知道」，同样不摆卡。
 const missingViews = kind.quotas(ACCOUNT, snapshotOf(missingProbe()));
-check("没有会话 → 一张额度卡", missingViews.length === 1, JSON.stringify(missingViews));
-check(
-  "没有会话 → 卡上说的是「没登录」",
-  /登录会话/.test(missingViews[0]?.credits?.note ?? ""),
-  JSON.stringify(missingViews[0]?.credits?.note),
-);
+check("没有会话 → 没有额度卡", missingViews.length === 0, JSON.stringify(missingViews));
 check("没有会话 → 不算用尽", kind.outOfCredits(ACCOUNT, snapshotOf(missingProbe())) === false);
 
-// 5. ok + 空桶：额度用完了（不是「不知道」）。
+// 5. ok + 空桶：额度用完了（不是「不知道」）—— 照旧摆一张 0 的卡。
 const emptyViews = kind.quotas(ACCOUNT, snapshotOf(okProbe([])));
 check("空桶 → 一张额度卡", emptyViews.length === 1, JSON.stringify(emptyViews));
 check(
@@ -288,6 +274,7 @@ check(
   /用完/.test(emptyViews[0]?.credits?.note ?? ""),
   JSON.stringify(emptyViews[0]?.credits?.note),
 );
+check("空桶 → 剩余是 0", emptyViews[0]?.credits?.remaining === 0, String(emptyViews[0]?.credits?.remaining));
 check("空桶 → 算用尽", kind.outOfCredits(ACCOUNT, snapshotOf(okProbe([]))) === true);
 
 // 6. ok + 有桶：现状不变。

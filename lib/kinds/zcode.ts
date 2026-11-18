@@ -97,23 +97,24 @@ function zcodeQuotas(provider: ProviderRow, snapshot: HealthSnapshot): QuotaView
   ];
   // 没有问过：面板上不摆额度卡 —— 摆一张全 0 的卡等于说「额度是 0」。
   if (!probe) return [];
-  // 问到了，但不是答上来了：面板上要说清是哪一种「没有数字」。
+  // 问到了，但不是答上来了：面板上不摆额度卡。
   //
   //   unauthorized  上游拒了这把令牌 —— 要人重新登录，不是额度的问题
   //   failed        这一轮问不到（网络、超时、5xx、看不懂的答复）
   //   missing       本地就没有会话，压根没问
   //
-  // 三件事都不许折成「没额度」：折掉之后面板上就是一片空白，等于告诉用户这个
-  // 账号正常，而下一次请求就会吃 401。
-  if (probe.state === "unauthorized") {
-    return view({ total: 0, used: 0, remaining: 0, lots: [], note: `凭据被拒，需重新登录（${probe.message}）` });
-  }
-  if (probe.state === "failed") {
-    return view({ total: 0, used: 0, remaining: 0, lots: [], note: `额度没问到：${probe.message}` });
-  }
-  if (probe.state === "missing") {
-    return view({ total: 0, used: 0, remaining: 0, lots: [], note: "没有登录会话，未向平台问额度" });
-  }
+  // 三件事都不许折成「没额度」，也不许折成「额度是 0」：契约里 credits 只有
+  // 数字加 note，没有「状态」这一格，于是数字那一格没有诚实的写法 —— 编一个 0
+  // 等于说「额度用完了」，会把凭据那条线已经说清的事抵消掉。三种「不知道」各
+  // 自另有承担：凭据被拒由凭据行承担（EXPIRED + detail），问不到由既有的
+  // 「额度没问到」日志承担，上游状态也不再是绿的。
+  //
+  // 摆一张全 0 的卡正是本仓库栽过三次的那一类错误（spent 账号显示 ready、
+  // checkedAt=0 显示成「还没签过」、no-snapshot 用例没真测到）：把「不知道」
+  // 写成「没有」。
+  if (probe.state === "unauthorized") return [];
+  if (probe.state === "failed") return [];
+  if (probe.state === "missing") return [];
   const buckets = zcodeBucketsOf(provider, snapshot);
   if (buckets === null) return [];
   // An empty list is the answer "spent", so the panel gets a card that says so
