@@ -55,7 +55,7 @@ run = "node --experimental-strip-types test/privacy-check.ts"
 [tasks.test]
 description = "Run the offline tests (the mock upstream, no tokens spent)"
 run = "bash test/smoke.sh"
-depends = ["test:selection", "test:policy", "test:upstream:status", "test:minimax:fallback", "test:minimax:credits", "test:minimax:credits:view", "test:minimax:checkin", "test:minimax:cycle", "test:policy:e2e", "test:catalog-parity", "test:cleanup", "test:cleanup:admin", "test:account-id", "test:open-platform:admin", "test:quota:plugin", "test:quota:plugins:three", "test:quota:state", "test:open-platform:kind", "test:anthropic-platform", "test:open-platform:account", "test:admin:state", "test:credential:fault", "test:credential:plan", "test:admin:parity", "test:platform:availability", "test:admin", "test:open-platforms", "test:platform:migration", "test:platform:delete", "test:quota", "test:dead-session", "test:periodic", "test:periodic:off", "test:workbuddy:benefits", "test:workbuddy:catalog", "test:workbuddy:catalog:tool", "test:refresh-flow", "test:zcode", "test:zcode:headers", "test:zcode:system", "test:zcode:session", "test:zcode:quota", "test:zcode:claim", "test:zcode:rewrite", "test:zcode:rewrite:e2e", "test:session", "test:agent", "test:session-map", "test:tokenrhythm", "test:balance-account", "test:timer-refresh", "test:account-weight", "test:token-plan", "test:model-visibility", "test:cooldown", "test:cooldown:single", "test:unreachable", "test:route", "test:snapshot", "test:health:cooldown", "test:aggregate", "test:aggregate:error", "test:aggregate:usage", "test:usage", "test:admin:contract", "test:admin:login", "test:login:record", "test:catalog:billing", "test:catalog:billing:panel", "test:catalog:persist", "test:model-catalog", "test:model-overrides", "test:model-traits", "test:model-traits:tool", "test:model:duplicate", "test:upstream:cooldown", "test:upstream:breaker", "test:admin:regression", "test:deliver:frames", "test:deliver:backpressure", "test:peek:stream", "test:stream:idle", "test:stream:limits", "test:empty-answer", "test:dialect:stream", "test:dialect:cache", "test:effort", "test:client:gone", "test:log:scrub", "test:scrub:client", "test:admin:policy", "test:sensenova:intern", "test:intern-ai", "test:intern-ai:quota", "test:qiniu", "test:qiniu:keys", "test:xinghuo", "test:rate:wait", "test:qoder:benefits", "test:qoder:legacy", "test:qoder:models", "test:helper", "test:config", "test:admin:config", "test:privacy", "test:probe", "test:e2e:matrix"]
+depends = ["test:selection", "test:policy", "test:upstream:status", "test:minimax:fallback", "test:minimax:credits", "test:minimax:credits:view", "test:minimax:checkin", "test:minimax:cycle", "test:policy:e2e", "test:catalog-parity", "test:cleanup", "test:cleanup:admin", "test:account-id", "test:open-platform:admin", "test:quota:plugin", "test:quota:plugins:three", "test:quota:state", "test:open-platform:kind", "test:anthropic-platform", "test:open-platform:account", "test:admin:state", "test:credential:fault", "test:credential:plan", "test:admin:parity", "test:platform:availability", "test:admin", "test:open-platforms", "test:platform:migration", "test:platform:delete", "test:quota", "test:dead-session", "test:periodic", "test:periodic:off", "test:workbuddy:benefits", "test:workbuddy:catalog", "test:workbuddy:catalog:tool", "test:refresh-flow", "test:zcode", "test:zcode:headers", "test:zcode:system", "test:zcode:session", "test:zcode:quota", "test:zcode:claim", "test:zcode:rewrite", "test:zcode:rewrite:e2e", "test:session", "test:agent", "test:session-map", "test:tokenrhythm", "test:balance-account", "test:timer-refresh", "test:account-weight", "test:token-plan", "test:model-visibility", "test:cooldown", "test:cooldown:single", "test:unreachable", "test:route", "test:snapshot", "test:health:cooldown", "test:aggregate", "test:aggregate:error", "test:aggregate:usage", "test:usage", "test:admin:contract", "test:admin:login", "test:login:record", "test:catalog:billing", "test:catalog:billing:panel", "test:catalog:persist", "test:model-catalog", "test:model-overrides", "test:model-traits", "test:model-traits:tool", "test:model:duplicate", "test:upstream:cooldown", "test:upstream:breaker", "test:admin:regression", "test:deliver:frames", "test:deliver:backpressure", "test:peek:stream", "test:stream:idle", "test:stream:limits", "test:empty-answer", "test:dialect:stream", "test:dialect:cache", "test:effort", "test:client:gone", "test:log:scrub", "test:scrub:client", "test:admin:policy", "test:sensenova:intern", "test:intern-ai", "test:intern-ai:quota", "test:qiniu", "test:qiniu:keys", "test:xinghuo", "test:rate:wait", "test:qoder:benefits", "test:qoder:legacy", "test:qoder:models", "test:helper", "test:config", "test:admin:config", "test:privacy", "test:probe", "test:e2e:matrix", "test:fake-upstream"]
 
 
 [tasks."helper:sync"]
@@ -630,7 +630,7 @@ depends = ["test:minimax:fallback", "test:minimax:credits", "test:minimax:credit
 
 [tasks."check:misc"]
 description = "Catalogue parity, cleanup rules, the helper scripts, the privacy scanner and the offline matrix (test/, helper/, check-privacy.ts)"
-depends = ["test:catalog-parity", "test:cleanup", "test:helper", "test:privacy", "test:verify", "test:probe", "test:e2e:matrix"]
+depends = ["test:catalog-parity", "test:cleanup", "test:helper", "test:privacy", "test:verify", "test:probe", "test:fake-upstream", "test:e2e:matrix"]
 
 [tasks."test:verify"]
 description = "Check the diff-based gate chooser (which gates each change needs)"
@@ -647,6 +647,18 @@ run = "node --experimental-strip-types tools/probe.ts"
 [tasks."test:probe"]
 description = "Check the probe tool offline (the 127.0.0.1 fake upstream: whitelist headers, the write gate, the $arg substitution)"
 run = "node --experimental-strip-types test/probe-check.ts"
+
+[tasks."test:fake-upstream"]
+description = "Check the fake upstream module and the probe's --dry-run / --fake switches, plus the pre-commit hook is still in place"
+run = "node --experimental-strip-types test/fake-upstream-check.ts"
+
+[tasks."hooks:install"]
+description = "Install the pre-commit hook (git config core.hooksPath .githooks; idempotent)"
+run = """
+git config core.hooksPath .githooks
+echo "pre-commit hook 已装上：.githooks/pre-commit（core.hooksPath → .githooks）。重复跑无害"
+echo "临时跳过一次提交：git commit --no-verify"
+"""
 
 [tasks."check:web"]
 description = "Panel frontend, no browser (web/src)"

@@ -1,0 +1,19 @@
+#!/bin/sh
+# pre-commit — 提交前按 diff 跑门禁，跑哪些交给 tools/verify-changes.ts 算
+# （--base HEAD = 这次要提交的内容）。
+#
+# 环境坏掉时放行，不卡提交：环境坏是环境的事，不是代码的事；把提交卡死只会
+# 让人学会用 --no-verify 绕过一切。真正的门禁坏了会在 CI 与主代理的全量
+# check 里暴露。
+
+skip() {
+  echo "pre-commit: 门禁环境不可用，跳过（$1）"
+  exit 0
+}
+
+command -v mise >/dev/null 2>&1 || skip "找不到 mise"
+command -v node >/dev/null 2>&1 || skip "找不到 node"
+node --experimental-strip-types -e "" >/dev/null 2>&1 || skip "node --experimental-strip-types 不能用（要 Node 22+）"
+[ -d node_modules/.bin ] || skip "这个工作树没有 node_modules/.bin（先 pnpm install）"
+
+exec mise run verify --base HEAD
