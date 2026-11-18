@@ -4,6 +4,8 @@ description: 外部 PR 的独立 review：只读、不改代码、不跑测试�
 inheritSkills: false
 inheritProjectContext: true
 tools: read, grep, find, ls, bash
+# 扩展在后台子代理里会被环境自动发现，用空数组显式关掉（见 pi-subagents-extend#10）
+extensions: []
 thinking: high
 systemPromptMode: replace
 ---

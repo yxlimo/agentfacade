@@ -4,6 +4,8 @@ description: 管理面板后端：provider/upstream 的增删改查、凭据与�
 inheritSkills: false
 inheritProjectContext: true
 tools: read, grep, find, ls, bash, write, edit
+# 扩展在后台子代理里会被环境自动发现，用空数组显式关掉（见 pi-subagents-extend#10）
+extensions: []
 thinking: medium
 systemPromptMode: replace
 ---

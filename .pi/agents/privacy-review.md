@@ -4,6 +4,8 @@ description: 提交前的隐私审查：查这次改动有没有把真实身份�
 inheritSkills: false
 inheritProjectContext: true
 tools: read, grep, find, ls, bash
+# 扩展在后台子代理里会被环境自动发现，用空数组显式关掉（见 pi-subagents-extend#10）
+extensions: []
 thinking: medium
 systemPromptMode: replace
 ---
