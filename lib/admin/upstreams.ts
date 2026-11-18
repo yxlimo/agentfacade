@@ -10,6 +10,7 @@
 import { configNumber, configString } from "../config.ts";
 import { zcodeQuota } from "../zcode/credits.ts";
 import { zcodeLoginAtMs } from "../zcode/auth.ts";
+import { zcodeClaimSnapshot } from "../zcode/auto-claim.ts";
 import { readCredential } from "../minimax/auth.ts";
 import { regionKey } from "../minimax/hosts.ts";
 import { fetchMiniMaxBalance, fetchMiniMaxTokenPlanWithSession } from "../minimax/credits.ts";
@@ -535,6 +536,10 @@ async function refreshOne(snapshot: HealthSnapshot, row: ProviderRow): Promise<v
       snapshot.zcode[row.id] = {
         quota: await zcodeQuota(300_000, row.id),
         loginAtMs: zcodeLoginAtMs(row.id),
+        // 领取的结论：成功与失败都存。面板从这一格读出「今天领了没有、为什么
+        // 没领成」。它从领取那一步的记处取（进程内存里），不是这里问来的 ——
+        // 这里再问一遍就是第二次领取。
+        claim: zcodeClaimSnapshot(row.id),
       };
       return;
     }

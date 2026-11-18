@@ -365,6 +365,31 @@ export function vendorMissing(at = Date.now()): VendorProbe<never> {
 }
 
 /**
+ * 一次活动额度领取的结论（快照里那一格）。
+ *
+ * 六种状态说的是六件不同的事，缺一不可：
+ *
+ *   claimed      领到了（计划名与生效时刻在下面两格）
+ *   already      终态：服务端说不能再领了（1001–1005 那组），本轮不再试
+ *   none         现在没有可领的（preview 的列表是空的）—— 不是失败
+ *   captcha      要人工过验证码：网关过不了，人得自己去过
+ *   unauthorized 上游拒了这把凭据 —— 要人重新登录
+ *   failed       问到了但没领成：下一轮还会再试
+ */
+export interface ZcodeClaimSnapshot {
+  /** 这次尝试的时刻（毫秒）。 */
+  at: number;
+  /** 结论。 */
+  state: "claimed" | "already" | "none" | "captcha" | "unauthorized" | "failed";
+  /** 服务端的原话。没有就空串。 */
+  message: string;
+  /** 领到的计划名。 */
+  planName?: string;
+  /** 计划什么时候开始算数（ISO）。 */
+  effectiveAt?: string;
+}
+
+/**
  * /health 里的快照：各家报上来的原始数字。
  *
  * 按上游分开：两个同类的上游各有各的数字。
@@ -390,7 +415,7 @@ export interface HealthSnapshot {
    * `loginAtMs` 是问这一轮时那份会话的登录时刻 —— 凭据那一头拿它与结论的时刻
    * 比：重新登录之后旧的那次拒绝就自动作废了。
    */
-  zcode: Record<string, { quota: unknown; loginAtMs?: number }>;
+  zcode: Record<string, { quota: unknown; loginAtMs?: number; claim?: ZcodeClaimSnapshot }>;
   workbuddy: Record<string, { credits: unknown }>;
   /**
    * 额度插件问回来的结论：插件 id → 账号 id → 那一次的结论。

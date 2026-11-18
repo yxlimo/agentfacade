@@ -15,6 +15,7 @@ import {
   type VendorProbe,
 } from "./shared.ts";
 import { loadSession, zcodeStatus } from "../zcode/auth.ts";
+import type { ZcodeClaimSnapshot } from "../provider-kinds.ts";
 import { zcodeModelsInUse } from "../zcode/models.ts";
 import { ZCODE_MESSAGES_URL } from "../zcode/transport.ts";
 import { peekHealthSnapshot } from "../health-cache.ts";
@@ -119,6 +120,61 @@ function zcodeServerNowMs(probe: VendorProbe<ZcodeQuota> | null): number {
   return Date.now();
 }
 
+/**
+ * 这个账号最近一次领取的结论（快照里那一格）。
+ *
+ * null = 还没领过（不是「领了但没结论」）。
+ */
+function zcodeClaimOf(
+  providerId: string,
+  snapshot: HealthSnapshot | null | undefined,
+): ZcodeClaimSnapshot | null {
+  const entry = snapshot?.zcode?.[providerId];
+  const claim = entry?.claim;
+  if (!claim || typeof claim !== "object") return null;
+  return claim as ZcodeClaimSnapshot;
+}
+
+/**
+ * 领取的结论写成额度卡上的一句话。
+ *
+ * 只在「没有桶、也没有待生效计划」时补这一句：那时候额度卡说的是「用完了」，
+ * 而领取那一格说的是今天为什么没领到 —— 两句合起来才是完整的实情。有桶或者
+ * 有待生效计划时额度卡本来就在说额度的事，不必再插一句。
+ *
+ * 服务端的原话原样带上（它是中文，比我们转述的准）。
+ */
+function zcodeClaimNote(
+  providerId: string,
+  snapshot: HealthSnapshot | null | undefined,
+): string {
+  const claim = zcodeClaimOf(providerId, snapshot);
+  if (!claim) return "";
+  const message = String(claim.message ?? "");
+  switch (claim.state) {
+    case "claimed": {
+      const name = String(claim.planName ?? "");
+      const at = String(claim.effectiveAt ?? "");
+      const what = name ? `「${name}」` : "";
+      const when = at ? `（${at} 生效）` : "";
+      return `领取：已领到${what}${when}`;
+    }
+    case "already":
+      return `领取：已领过${message ? `（${message}）` : ""}`;
+    case "none":
+      // preview 的列表是空的：今天的名额用完了。服务端说了什么就带上什么。
+      return `领取：今日领取名额已用完${message ? `（${message}）` : ""}`;
+    case "captcha":
+      return `领取：需要人工过验证码${message ? `（${message}）` : ""}`;
+    case "unauthorized":
+      return `领取：上游拒绝了这把凭据${message ? `（${message}）` : ""}`;
+    case "failed":
+      return `领取：没领成${message ? `（${message}）` : ""}`;
+    default:
+      return "";
+  }
+}
+
 /** 一个「领到了但还没生效」的计划。 */
 interface PendingPlan {
   /** 计划的名字（面板上要念给人听）。 */
@@ -217,12 +273,15 @@ function zcodeQuotas(provider: ProviderRow, snapshot: HealthSnapshot): QuotaView
           `（${pending.grantUnits} token）`,
       });
     }
+    // 领取那一格的话：今天为什么没领到（没名额 / 已领过 / 要验证码）。没有这一句
+    // 时面板只说「用完了」，而真相可能是「今天压根没领」。
+    const claimNote = zcodeClaimNote(provider.id, snapshot);
     return view({
       total: 0,
       used: 0,
       remaining: 0,
       lots: [],
-      note: "套餐额度已用完（平台没有返回额度桶）",
+      note: "套餐额度已用完（平台没有返回额度桶）" + (claimNote ? `；${claimNote}` : ""),
     });
   }
   return view({

@@ -30,7 +30,9 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import type { HealthSnapshot, ProviderRow, QuotaView } from "../lib/provider-kinds.ts";
+import type { HealthSnapshot, QuotaView } from "../lib/provider-kinds.ts";
+// ProviderRow 在 lib/providers.ts 里（注册表只是用它，不导出它）。
+import type { ProviderRow } from "../lib/providers.ts";
 
 // The ZCode session layer reads config while the module is evaluated, so the
 // data directory and the fake upstream's address have to be set before the
