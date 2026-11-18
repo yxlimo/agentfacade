@@ -382,7 +382,8 @@ function runTasks(tasks: string[]): number {
       console.log("");
       console.log("✗ " + task + " 没过（" + seconds.toFixed(1) + " 秒）。后面的组不跑了。");
       printSummary(done, (Date.now() - startedAll) / 1000);
-      return result.status === 0 ? 1 : result.status;
+      // status 为 null 表示被信号杀死，也算失败（原来落进这个分支只是类型不对）
+      return result.status ?? 1;
     }
   }
   printSummary(done, (Date.now() - startedAll) / 1000);

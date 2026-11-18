@@ -315,7 +315,9 @@ function fingerprint(traits: Omit<TableEntry, "providers" | "sources">): string 
  * 判断谁更对。差得多的那几条记进 conflicts，打给人看。
  */
 export function mergePi(entries: { provider: string; model: PiModel }[]): MergeOutcome {
-  const grouped = new Map<string, { provider: string; id: string; traits: Omit<TableEntry, "providers" | "sources"> }[]>();
+  // 这里不能用 Omit<TableEntry, ...>：TableEntry 带字符串索引签名，Omit 会退化成
+  // Pick<T, string>，把 efforts 等具名属性擦成 {}，后面 .length 就推不出来
+  const grouped = new Map<string, { provider: string; id: string; traits: TableEntry }[]>();
   for (const { provider, model } of entries) {
     const raw = String(model.id ?? "").trim();
     if (!raw) continue;
@@ -455,7 +457,8 @@ export interface RunResult {
   withEfforts: number;
   withReasoning: number;
   conflicts: { id: string; providers: string[] }[];
-  pkg: { name: string; version: string };
+  // 字段叫 package 不叫 name：render 写进 source.package，main 打印 pkg.package
+  pkg: { package: string; version: string };
   /** 与磁盘上那份是否一样（`--dry-run` 与「没变化」的提示要用）。 */
   changed: boolean;
 }
