@@ -28,9 +28,10 @@
 | `mise run check:kinds` | 上游 kind、模拟端与开放平台（`lib/kinds`、`lib/minimax`、`lib/qoder`、`lib/workbuddy`、`lib/zcode`、`lib/tokenrhythm`、`lib/intern-ai`、`lib/qiniu`、`lib/xinghuo`、`lib/sensenova`） |
 | `mise run check:misc` | 目录一致性、清理规则、辅助脚本、隐私扫描器自身的测试、离线矩阵 |
 | `mise run check:web` | 面板前端，不启浏览器（`web/src`） |
-| `mise run check:panel` | 面板端到端，真浏览器（需要系统 chromium，约 90 秒） |
+| `mise run check:panel` | 面板端到端，真浏览器（需要系统 chromium，约三分钟） |
 
 改动 `proto/**` 时自己跑 `mise run proto`，两份生成物（`lib/gen` 与 `web/.gen`）都就位才算做完。
+改动了 `web/**` 里的用户可见文案或渲染条件时，`check:web` 不够：它只跑单测。文案在 e2e 里也有断言，跑一次 `mise run check:panel`（真浏览器，约三分钟），否则单测全绿、面板 e2e 红，主代理要重来一轮。
 
 你不提交，但也不要留下真实身份、凭据或内网地址 —— 主代理提交前会跑 `mise run privacy` 扫这些。
 
@@ -83,6 +84,7 @@ git stash        git checkout -- <file>        git restore <file>
 - 上游响应正文要进日志，不只是状态码。排查上游行为时，先录一次真实响应，之后对着假上游重放。
 - 面板把平台显示成绿色，必须表示「最近真的发得出去」。
 - 额度用尽、余额不足、排队是三种不同状态，不要把一种映射成另一种。
+- 拿推理模型当探针时，`max_tokens` 给 256：正文与思考共用同一份预算，给太小（32）思考就吃光了、正文是空的（`finish_reason` 也可能是 `stop`），看起来像「模型不工作」。给太大只是白花钱。
 
 ## 测试样例
 
