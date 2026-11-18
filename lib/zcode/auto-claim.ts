@@ -19,10 +19,10 @@
 
 import { configFlag, configNumber, markHotSetting } from "../config.ts";
 import { parseBool, readEnvValue } from "../env.ts";
-import { listProviders, type ProviderRow } from "../providers.ts";
+import { listProviders, provider, type ProviderRow } from "../providers.ts";
 import { peekHealthSnapshot } from "../health-cache.ts";
 import type { HealthSnapshot, ZcodeClaimSnapshot } from "../provider-kinds.ts";
-import { claimPlan, previewClaims } from "./claim.ts";
+import { claimPlan, describeClaimedPlan, logClaimAttempt, previewClaims } from "./claim.ts";
 
 /**
  * 多久跑一轮。
@@ -125,9 +125,28 @@ function effectiveAtOf(plan: { entitlements?: { effectiveAt?: string | null }[] 
  * 每一轮都重新 preview —— 上一轮的终态不作数（可领列表每轮都可能变）。
  */
 export async function claimOnce(providerId: string): Promise<ZcodeClaimSnapshot | null> {
+  const platformId = provider(providerId)?.platform ?? "zcode";
   const preview = await previewClaims(providerId);
-  if (preview.state === "missing") return null;
+  if (preview.state === "missing") {
+    logClaimAttempt({
+      accountId: providerId,
+      platformId,
+      claimable: null,
+      action: "none",
+      state: "missing",
+      message: "本地没有会话",
+    });
+    return null;
+  }
   if (preview.state === "unauthorized") {
+    logClaimAttempt({
+      accountId: providerId,
+      platformId,
+      claimable: null,
+      action: "none",
+      state: "unauthorized",
+      message: preview.message,
+    });
     const snapshot: ZcodeClaimSnapshot = {
       at: preview.at,
       state: "unauthorized",
@@ -137,6 +156,14 @@ export async function claimOnce(providerId: string): Promise<ZcodeClaimSnapshot 
     return snapshot;
   }
   if (preview.state === "failed") {
+    logClaimAttempt({
+      accountId: providerId,
+      platformId,
+      claimable: null,
+      action: "none",
+      state: "failed",
+      message: preview.message,
+    });
     const snapshot: ZcodeClaimSnapshot = {
       at: preview.at,
       state: "failed",
@@ -148,29 +175,71 @@ export async function claimOnce(providerId: string): Promise<ZcodeClaimSnapshot 
   const plans = preview.value.plans ?? [];
   if (!plans.length) {
     // 「没有可领」也是一个结论：面板要能说出「今天没有名额」，而不是空白。
+    logClaimAttempt({
+      accountId: providerId,
+      platformId,
+      claimable: 0,
+      action: "none",
+      state: "none",
+    });
     const snapshot: ZcodeClaimSnapshot = { at: preview.at, state: "none", message: "" };
     record(providerId, snapshot);
     return snapshot;
   }
   const plan = pickPlan(plans);
   if (!plan) {
+    logClaimAttempt({
+      accountId: providerId,
+      platformId,
+      claimable: plans.length,
+      action: "none",
+      state: "none",
+    });
     const snapshot: ZcodeClaimSnapshot = { at: preview.at, state: "none", message: "" };
     record(providerId, snapshot);
     return snapshot;
   }
   const result = await claimPlan(providerId, plan.planId);
+  const action = describeClaimedPlan(plan.name || plan.planId, plan.planId);
   if (result.state === "claimed") {
+    const effectiveAt = effectiveAtOf(result.plan);
+    logClaimAttempt({
+      accountId: providerId,
+      platformId,
+      claimable: plans.length,
+      action,
+      state: "claimed",
+      effectiveAt,
+    });
     const snapshot: ZcodeClaimSnapshot = {
       at: result.at,
       state: "claimed",
       message: "",
       planName: plan.name || result.plan.planId,
-      effectiveAt: effectiveAtOf(result.plan),
+      effectiveAt,
     };
     record(providerId, snapshot);
     return snapshot;
   }
-  if (result.state === "missing") return null;
+  if (result.state === "missing") {
+    logClaimAttempt({
+      accountId: providerId,
+      platformId,
+      claimable: plans.length,
+      action,
+      state: "missing",
+      message: "本地没有会话",
+    });
+    return null;
+  }
+  logClaimAttempt({
+    accountId: providerId,
+    platformId,
+    claimable: plans.length,
+    action,
+    state: result.state,
+    message: result.message,
+  });
   const snapshot: ZcodeClaimSnapshot = {
     at: result.at,
     state: result.state,

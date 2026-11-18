@@ -58,6 +58,7 @@ let claimHits = 0;
 let lastClaimBody = "";
 let lastClaimHeaders: Record<string, string> = {};
 let lastPreviewUrl = "";
+let lastPreviewHeaders: Record<string, string> = {};
 
 const PLANS = [
   {
@@ -143,6 +144,9 @@ const fake = http.createServer((req, res) => {
   if (url.startsWith("/api/v1/zcode-plan/billing/preview")) {
     previewHits++;
     lastPreviewUrl = url;
+    lastPreviewHeaders = Object.fromEntries(
+      Object.entries(req.headers).map(([k, v]) => [k.toLowerCase(), String(v ?? "")]),
+    );
     switch (previewMode) {
       case "unauthorized":
         return send(401, { code: 401, msg: "unauthorized" });
@@ -204,6 +208,7 @@ const { claimOnce, runZcodeAutoClaim, zcodeClaimSnapshot, forgetZcodeClaim } = a
   "../lib/zcode/auto-claim.ts"
 );
 const { fetchZcodeQuota } = await import("../lib/zcode/credits.ts");
+const { ZCODE_CLIENT_PLATFORM } = await import("../lib/zcode/transport.ts");
 const { putHealthSnapshot, peekHealthSnapshot } = await import("../lib/health-cache.ts");
 const { setSecret } = await import("../lib/store.ts");
 const { providerSecretId } = await import("../lib/credential-ids.ts");
@@ -238,6 +243,7 @@ function reset(preview: PreviewMode = "plans", claim: ClaimMode = "ok"): void {
   lastClaimBody = "";
   lastClaimHeaders = {};
   lastPreviewUrl = "";
+  lastPreviewHeaders = {};
 }
 
 /* ------------------------------------------------------------------ *
@@ -291,7 +297,8 @@ check(
 );
 check(
   "preview 的 query 带着版本与平台",
-  /app_version=3\.18\.2/.test(lastPreviewUrl) && /platform=win32-x64/.test(lastPreviewUrl),
+  /app_version=3\.18\.2/.test(lastPreviewUrl) &&
+    lastPreviewUrl.includes(`platform=${encodeURIComponent(ZCODE_CLIENT_PLATFORM)}`),
   lastPreviewUrl,
 );
 check("preview 发了恰好一个请求", previewHits === 1, String(previewHits));
@@ -340,7 +347,7 @@ check(
 );
 check(
   "头里有 X-Platform",
-  lastClaimHeaders["x-platform"] === "win32-x64",
+  lastClaimHeaders["x-platform"] === ZCODE_CLIENT_PLATFORM,
   JSON.stringify(lastClaimHeaders["x-platform"]),
 );
 check(
@@ -570,6 +577,138 @@ check(
 );
 
 putHealthSnapshot({ zcode: {} } as unknown as HealthSnapshot);
+
+/* ------------------------------------------------------------------ *
+ * 九、每次尝试都有一行日志
+ * ------------------------------------------------------------------ */
+
+section("九、每次尝试都有一行日志");
+
+/**
+ * 收一轮里打出去的行（log 与 warn 分开：失败那一行得是 warn）。
+ *
+ * 不真的连上游，只是把 console 换掉。
+ */
+async function captureLogs(
+  fn: () => Promise<unknown>,
+): Promise<{ log: string[]; warn: string[] }> {
+  const log: string[] = [];
+  const warn: string[] = [];
+  const realLog = console.log;
+  const realWarn = console.warn;
+  console.log = (...args: unknown[]) => {
+    log.push(args.map(String).join(" "));
+  };
+  console.warn = (...args: unknown[]) => {
+    warn.push(args.map(String).join(" "));
+  };
+  try {
+    await fn();
+  } finally {
+    console.log = realLog;
+    console.warn = realWarn;
+  }
+  return { log, warn };
+}
+
+/** 一轮里的 [ZCODE] 那几行。 */
+function claimLines(lines: string[]): string[] {
+  return lines.filter((l) => l.includes("[ZCODE] claim"));
+}
+
+reset("plans");
+const claimedLogs = await captureLogs(() => claimOnce(ACCOUNT_ID));
+const claimedLine = claimLines(claimedLogs.log)[0] ?? "";
+check(
+  "领到了：日志里有账号、状态与领到的计划",
+  claimedLine.includes(`account=${ACCOUNT_ID}`) &&
+    claimedLine.includes("state=claimed") &&
+    claimedLine.includes("ALPHA PLAN"),
+  claimedLine,
+);
+check(
+  "领到了：日志里带着生效时刻",
+  /effective=\d{4}-\d{2}-\d{2}T/.test(claimedLine),
+  claimedLine,
+);
+check(
+  "领到了：日志里带着 preview 的结论",
+  /preview=2\b/.test(claimedLine),
+  claimedLine,
+);
+check(
+  "领到了：日志里 plan_id 是截断的",
+  claimedLine.includes("plan-alp") && !claimedLine.includes("plan-alpha("),
+  claimedLine,
+);
+check("领到了：只有一行", claimLines(claimedLogs.log).length === 1, claimedLine);
+
+reset("plans", "terminal");
+const terminalLogs = await captureLogs(() => claimOnce(ACCOUNT_ID));
+const terminalLine = claimLines(terminalLogs.log)[0] ?? "";
+check(
+  "终态：日志里带着上游原话",
+  terminalLine.includes("state=already") && terminalLine.includes("今日领取名额已用完"),
+  terminalLine,
+);
+
+reset("empty");
+const noneLogs = await captureLogs(() => claimOnce(ACCOUNT_ID));
+const noneLine = claimLines(noneLogs.log)[0] ?? "";
+check(
+  "没有可领：日志里写着「没有可领」",
+  noneLine.includes("没有可领") && noneLine.includes("state=none"),
+  noneLine,
+);
+
+reset("plans", "server-error");
+const failedLogs = await captureLogs(() => claimOnce(ACCOUNT_ID));
+const failedLine = claimLines(failedLogs.warn)[0] ?? "";
+check(
+  "失败：日志走的是 warn（要能一眼看见）",
+  failedLine.includes("state=failed") && failedLine.includes(`account=${ACCOUNT_ID}`),
+  failedLine,
+);
+check("失败：没有混进普通 log 里", claimLines(failedLogs.log).length === 0, failedLine);
+
+/* ------------------------------------------------------------------ *
+ * 十、platform 只有一份：query 与 X-Platform 头必须是同一个值
+ * ------------------------------------------------------------------ */
+
+section("十、platform 只有一份：query 与 X-Platform 头必须是同一个值");
+
+reset("plans");
+await previewClaims(ACCOUNT_ID);
+const queryPlatform = new URL(lastPreviewUrl, "http://127.0.0.1").searchParams.get("platform");
+check(
+  "preview 的 query platform 与 X-Platform 头是同一个值",
+  queryPlatform === ZCODE_CLIENT_PLATFORM &&
+    lastPreviewHeaders["x-platform"] === ZCODE_CLIENT_PLATFORM,
+  `${queryPlatform} / ${lastPreviewHeaders["x-platform"]}`,
+);
+
+const claimSource = fs.readFileSync(
+  path.join(import.meta.dirname, "..", "lib", "zcode", "claim.ts"),
+  "utf8",
+);
+const claimCode = claimSource
+  .split("\n")
+  .filter((l) => !l.trim().startsWith("//"))
+  .join("\n");
+check(
+  "claim.ts 里没有自己写死的平台标识（只有 transport 那一份）",
+  !claimCode.includes("win32-x64"),
+  claimCode.match(/win32-x64/g)?.join(",") ?? "",
+);
+const transportSource = fs.readFileSync(
+  path.join(import.meta.dirname, "..", "lib", "zcode", "transport.ts"),
+  "utf8",
+);
+check(
+  "transport.ts 里平台标识只写了一次",
+  (transportSource.match(/win32-x64/g) ?? []).length === 1,
+  String((transportSource.match(/win32-x64/g) ?? []).length),
+);
 
 const { closeStore } = await import("../lib/store.ts");
 closeStore();

@@ -49,6 +49,19 @@ const CLIENT = {
 } as const;
 
 /**
+ * 客户端报的平台标识。
+ *
+ * 导出是因为**别处也要用它**：账单那些端点把 platform 放在 query 里，而
+ * 逆向结论说「query 里的 platform 与 X-Platform 头必须一致」。两处各写一份
+ * 字面量的话，改一处另一处不动就是静默不一致 —— 上游不一定报错，只是
+ * 认不出这是同一个客户端。
+ *
+ * 这里导出的是 CLIENT.platform 本身（不是第三份副本）：改上面那个值，
+ * 头与 query 一起变。
+ */
+export const ZCODE_CLIENT_PLATFORM = CLIENT.platform;
+
+/**
  * 官方客户端发的头。
  *
  * 归因那几个头（x-request-id 之类）每次请求都不一样 —— 它们是给平台看

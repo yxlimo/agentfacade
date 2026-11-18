@@ -27,6 +27,7 @@
 // 的 `claim` 步进），不塞进 benefits —— 签到页不该说成签到。
 
 import { configFlag, configNumber, configString } from "../config.ts";
+import { scrubForLog } from "../log-scrub.ts";
 import {
   vendorFailed,
   vendorMissing,
@@ -35,7 +36,7 @@ import {
   type VendorProbe,
 } from "../provider-kinds.ts";
 import { ZCODE_BASE, loadSession } from "./auth.ts";
-import { zcodePlatformHeaders } from "./transport.ts";
+import { ZCODE_CLIENT_PLATFORM, zcodePlatformHeaders } from "./transport.ts";
 
 /**
  * 领取与 preview 这两个端点用的客户端版本。
@@ -44,9 +45,6 @@ import { zcodePlatformHeaders } from "./transport.ts";
  * 这两个是账单计划接口的版本。实测这两个端点报的是 3.18.2。
  */
 export const ZCODE_CLAIM_APP_VERSION = configString("ZCODE_CLAIM_APP_VERSION", "3.18.2");
-
-/** 平台标识：这两个端点要它在 query 里。 */
-const PLATFORM = "win32-x64";
 
 /** 问一轮就收手（毫秒）。 */
 const CLAIM_TIMEOUT_MS = configNumber("ZCODE_CLAIM_TIMEOUT_MS", 20_000);
@@ -190,6 +188,75 @@ function plansOf(rows: unknown): ZcodeClaimPlan[] {
 }
 
 /* ------------------------------------------------------------------ *
+ * 日志
+ * ------------------------------------------------------------------ */
+
+/** 一次领取尝试要记的那几样。 */
+export interface ZcodeClaimLogFields {
+  /** 账号 id。 */
+  accountId: string;
+  /** 平台 id（账号行上那个）。 */
+  platformId: string;
+  /** preview 看到几个可领的；null = 问不到（不知道几个）。 */
+  claimable: number | null;
+  /** 做了什么（领了哪个计划，或没领）。 */
+  action: string;
+  /** 结论状态。 */
+  state: string;
+  /** 上游的原话（有就带上 —— 排查上游行为最有用的就是它）。 */
+  message?: string;
+  /** 领到时的生效时刻（ISO）。 */
+  effectiveAt?: string | null;
+}
+
+/** plan_id 在日志里截断：整串 id 没必要进日志，够认出来就行。 */
+function shortPlanId(planId: string): string {
+  const id = String(planId ?? "");
+  return id.length > 8 ? `${id.slice(0, 8)}…` : id;
+}
+
+/**
+ * 打一行领取日志。
+ *
+ * 每次尝试一行：成功、终态、没有可领、失败都要有 —— 这一步每天要打一次上游
+ * 的写接口，属于会改账号状态的后台动作，不留痕就分不清「跑过没有」与
+ * 「跑成了没有」。
+ *
+ * 一行说完，不打多行 JSON（人 grep 一行就够）：账号、平台、preview 的结论、
+ * 做了什么、结论状态、上游原话、成功时的生效时刻。
+ *
+ * `failed` 用 warn（这一轮没成，要看见），其余用 log。
+ */
+export function logClaimAttempt(fields: ZcodeClaimLogFields): void {
+  const preview =
+    fields.claimable === null
+      ? "unknown"
+      : fields.claimable === 0
+        ? "0（没有可领）"
+        : String(fields.claimable);
+  const parts = [
+    `[ZCODE] claim account=${fields.accountId} platform=${fields.platformId}`,
+    `preview=${preview}`,
+    `action=${fields.action}`,
+    `state=${fields.state}`,
+  ];
+  // 上游原话进日志前先抹一遍：上游正文里偶尔回显账号标识。
+  const message = scrubForLog(String(fields.message ?? "").replace(/\s+/g, " ").trim(), 300);
+  if (message) parts.push(`msg=「${message}」`);
+  const effective = fields.effectiveAt ? String(fields.effectiveAt) : "";
+  if (effective) parts.push(`effective=${effective}`);
+  const line = parts.join(" ");
+  if (fields.state === "failed") console.warn(line);
+  else console.log(line);
+}
+
+/** 领的那个计划在日志里怎么说：名字 + 截断的 plan_id。 */
+export function describeClaimedPlan(name: string, planId: string): string {
+  const label = String(name ?? "").trim() || shortPlanId(planId);
+  return `claim ${label}(${shortPlanId(planId)})`;
+}
+
+/* ------------------------------------------------------------------ *
  * 问上游
  * ------------------------------------------------------------------ */
 
@@ -208,7 +275,7 @@ export async function previewClaims(providerId = "zcode"): Promise<VendorProbe<Z
     r = await fetch(
       `${ZCODE_BASE}/api/v1/zcode-plan/billing/preview` +
         `?app_version=${encodeURIComponent(ZCODE_CLAIM_APP_VERSION)}` +
-        `&platform=${encodeURIComponent(PLATFORM)}`,
+        `&platform=${encodeURIComponent(ZCODE_CLIENT_PLATFORM)}`,
       {
         headers: {
           ...zcodePlatformHeaders(session),
