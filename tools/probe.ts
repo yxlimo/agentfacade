@@ -14,8 +14,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { scrubForLog } from "../lib/log-scrub.ts";
-import { loadSession, ZCODE_BASE } from "../lib/zcode/auth.ts";
-import { zcodePlatformHeaders } from "../lib/zcode/transport.ts";
+import { loadSession, ZCODE_BASE, ZCODE_VERSION } from "../lib/zcode/auth.ts";
+import { ZCODE_CLAIM_APP_VERSION } from "../lib/zcode/claim.ts";
+import { ZCODE_CLIENT_PLATFORM, zcodePlatformHeaders } from "../lib/zcode/transport.ts";
 
 // ── 白名单 ────────────────────────────────────────────────────────────────
 
@@ -42,6 +43,19 @@ export const BASES: Record<string, () => string> = {
   ZCODE_BASE: () => ZCODE_BASE,
 };
 
+/**
+ * `$const.<NAME>` 的登记处：配置里只能引用这里出现过的仓库常量。
+ *
+ * 为什么不让配置写版本号/平台字面量：网关真实发的版本来自 lib 里的常量，
+ * 探针配置里再写死一份必然漂移（preview 的 app_version 就漂过一次），
+ * 问出去的是「另一个客户端身份」的问题，答案对网关没有代表性。
+ */
+export const CONSTS: Record<string, () => string> = {
+  ZCODE_VERSION: () => ZCODE_VERSION,
+  ZCODE_CLAIM_APP_VERSION: () => ZCODE_CLAIM_APP_VERSION,
+  ZCODE_CLIENT_PLATFORM: () => ZCODE_CLIENT_PLATFORM,
+};
+
 // ── 配置 ─────────────────────────────────────────────────────────────────
 
 export interface ProbeRequest {
@@ -64,14 +78,18 @@ export interface ProbeConfig {
 /** 配置里不许出现的键名：探针配置只描述形状，凭据永远来自白名单函数。 */
 const CREDENTIAL_KEY = /(authorization|cookie|token|api[-_]?key|password|secret|bearer|x-api-key)/i;
 
+/** 值里像版本号/平台字面量的形状：配置要写常量名，不是值。 */
+const DRIFT_VALUE = [/^3\.\d+/, /^win32|^darwin|^linux/i];
+
 /** 值里像真凭据的形状：Bearer 前缀、sk- 开头的 key、JWT 的两段 base64。 */
 const CREDENTIAL_VALUE = [/^bearer\s/i, /^sk-[A-Za-z0-9_-]{16,}$/, /^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/];
 
-function findCredentialLiterals(value: unknown, where: string): string[] {
+function findLiterals(value: unknown, where: string): string[] {
   const hits: string[] = [];
   const walk = (v: unknown, where: string) => {
     if (typeof v === "string") {
       if (CREDENTIAL_VALUE.some((re) => re.test(v))) hits.push(`${where}: 值长得像凭据`);
+      else if (DRIFT_VALUE.some((re) => re.test(v))) hits.push(`${where}: 值长得像版本号/平台字面量 —— 写常量名（$const.X），不写值`);
       return;
     }
     if (Array.isArray(v)) {
@@ -92,7 +110,7 @@ function findCredentialLiterals(value: unknown, where: string): string[] {
 /** 校验配置：凭据字面量、白名单名字、请求的基本形状。不合法就抛错。 */
 export function validateConfig(config: ProbeConfig): void {
   const problems: string[] = [];
-  for (const hit of findCredentialLiterals(config, "config")) problems.push(hit);
+  for (const hit of findLiterals(config, "config")) problems.push(hit);
   if (!(config.headers in HEADER_FACTORIES)) {
     problems.push(
       `headers "${config.headers}" 不在白名单里（可选：${Object.keys(HEADER_FACTORIES).join(", ")}）—— 这个平台的凭据头从哪来没定义`,
@@ -158,9 +176,24 @@ function parseArgs(argv: string[]): Args {
 // ── $arg 注入 ────────────────────────────────────────────────────────────
 
 const ARG_REF = /^\$arg\.([A-Za-z0-9_]+)$/;
+const CONST_REF = /^\$const\.([A-Za-z0-9_]+)$/;
 
-function substitute(value: unknown, provided: Record<string, string>, where: string, missing: string[]): unknown {
+function substitute(
+  value: unknown,
+  provided: Record<string, string>,
+  where: string,
+  missing: string[],
+  constErrors: string[],
+): unknown {
   if (typeof value === "string") {
+    const c = CONST_REF.exec(value);
+    if (c) {
+      if (!(c[1] in CONSTS)) {
+        constErrors.push(`${where}: CONSTS 里没有 ${c[1]}（可选：${Object.keys(CONSTS).join(", ")}）`);
+        return value;
+      }
+      return CONSTS[c[1]]();
+    }
     const m = ARG_REF.exec(value);
     if (m) {
       if (!(m[1] in provided)) {
@@ -171,10 +204,10 @@ function substitute(value: unknown, provided: Record<string, string>, where: str
     }
     return value;
   }
-  if (Array.isArray(value)) return value.map((v, i) => substitute(v, provided, `${where}[${i}]`, missing));
+  if (Array.isArray(value)) return value.map((v, i) => substitute(v, provided, `${where}[${i}]`, missing, constErrors));
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) out[k] = substitute(v, provided, `${where}.${k}`, missing);
+    for (const [k, v] of Object.entries(value)) out[k] = substitute(v, provided, `${where}.${k}`, missing, constErrors);
     return out;
   }
   return value;
@@ -190,16 +223,48 @@ export function assertCredentialHeader(headers: Record<string, string>): void {
   }
 }
 
+/**
+ * path 里的替换：$const.X / $arg.X 可以出现在路径中间（如 /echo/$const.X），
+ * 逐个出现位置替换；不像 query/body 那样要求整个值就是引用。
+ */
+function substituteInline(
+  value: string,
+  provided: Record<string, string>,
+  where: string,
+  missing: string[],
+  constErrors: string[],
+): string {
+  return value.replace(/\$(?:arg|const)\.([A-Za-z0-9_]+)/g, (whole, name) => {
+    if (whole.startsWith("$const")) {
+      if (!(name in CONSTS)) {
+        constErrors.push(`${where}: CONSTS 里没有 ${name}（可选：${Object.keys(CONSTS).join(", ")}）`);
+        return whole;
+      }
+      return CONSTS[name]();
+    }
+    if (!(name in provided)) {
+      missing.push(`${where} 需要 --arg ${name}=…`);
+      return whole;
+    }
+    return provided[name];
+  });
+}
+
 /** 拼 URL：base + path，query 原样拼进去（值来自配置或 --arg，不再加工）。 */
-function buildUrl(base: string, req: ProbeRequest, provided: Record<string, string>): { url: string; missing: string[] } {
+function buildUrl(
+  base: string,
+  req: ProbeRequest,
+  provided: Record<string, string>,
+): { url: string; missing: string[]; constErrors: string[] } {
   const missing: string[] = [];
-  const pathPart = String(substitute(req.path, provided, "path", missing));
+  const constErrors: string[] = [];
+  const pathPart = substituteInline(req.path, provided, "path", missing, constErrors);
   const search = new URLSearchParams();
   for (const [k, v] of Object.entries(req.query ?? {})) {
-    search.set(k, String(substitute(v, provided, `query.${k}`, missing)));
+    search.set(k, String(substitute(v, provided, `query.${k}`, missing, constErrors)));
   }
   const qs = search.toString();
-  return { url: `${base}${pathPart}${qs ? `?${qs}` : ""}`, missing };
+  return { url: `${base}${pathPart}${qs ? `?${qs}` : ""}`, missing, constErrors };
 }
 
 /** 请求引用了哪些 $arg 名字（不算缺，只是清单）。 */
@@ -270,8 +335,12 @@ async function runOne(config: ProbeConfig, req: ProbeRequest, args: Args, file: 
   const headers = headerFactory(args.account ?? "");
   assertCredentialHeader(headers);
 
-  const { url } = buildUrl(base, req, args.arg);
-  const body = req.body === undefined ? undefined : JSON.stringify(substitute(req.body, args.arg, "body", missing));
+  const { url, constErrors } = buildUrl(base, req, args.arg);
+  if (constErrors.length) throw new Error(`配置引用了未登记的常量：\n  - ${constErrors.join("\n  - ")}`);
+  const body =
+    req.body === undefined
+      ? undefined
+      : JSON.stringify(substitute(req.body, args.arg, "body", missing, constErrors));
   const method = req.method.toUpperCase();
 
   console.log(`→ ${method} ${url}`);

@@ -14,6 +14,8 @@
 //   · 配置里的凭据值字面量 → 拒绝
 
 import assert from "node:assert";
+//   · $const.X 被替换成仓库常量的真实值；未登记的名字 → 报错点名
+//   · 漂移回归：zcode.json 里不许有版本号/平台字面量
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -79,7 +81,9 @@ const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "probe-check-"));
 process.env.FACADE_DATA_DIR = dataDir;
 process.env.ZCODE_BASE_URL = BASE;
 
-const { saveSession } = await import("../lib/zcode/auth.ts");
+const { saveSession, ZCODE_VERSION } = await import("../lib/zcode/auth.ts");
+const { ZCODE_CLAIM_APP_VERSION } = await import("../lib/zcode/claim.ts");
+const { ZCODE_CLIENT_PLATFORM } = await import("../lib/zcode/transport.ts");
 saveSession(
   {
     // privacy:allow — 编造的样例，假上游不看内容
@@ -131,11 +135,11 @@ try {
   // ── 1. GET 探针：URL/query、白名单头、状态与 code ──────────────────────
   {
     const file = okConfig([
-      { name: "whoami", method: "GET", path: "/me", query: { app_version: "3.16.3" }, write: false },
+      { name: "whoami", method: "GET", path: "/me", query: { app_version: "$const.ZCODE_VERSION" }, write: false },
     ]);
     const r = await run(["--request", "whoami"], file);
     check("GET 探针退出码 0", r.code === 0, r.err);
-    check("打印请求行（真实 URL 带 query）", r.out.includes(`GET ${BASE}/me?app_version=3.16.3`), r.out);
+    check("打印请求行（$const 替换后带 query）", r.out.includes(`GET ${BASE}/me?app_version=${encodeURIComponent(ZCODE_VERSION)}`), r.out);
     check("打印 HTTP 状态", r.out.includes("HTTP 200"), r.out);
     check("打印 code", r.out.includes("code = 0"), r.out);
 
@@ -144,7 +148,48 @@ try {
     // privacy:allow — 编造的样例，假上游只记头不验证
     check("authorization 来自白名单函数（Bearer 会话令牌）", hit.authorization[0] === "Bearer zcode-TESTONLY-header-probe-token", hit.authorization[0]); // privacy:allow — 编造的样例
     check("白名单函数带的设备头也在", true);
-    check("query 原样到达上游", hit.url === "/me?app_version=3.16.3", hit.url);
+    check("query 原样到达上游", hit.url === `/me?app_version=${encodeURIComponent(ZCODE_VERSION)}`, hit.url);
+  }
+
+  // ── 1b. $const 引用未登记的名字 → 报错并点名 CONSTS ─────────────────────────
+  {
+    const before = recorded.length;
+    const file = okConfig([
+      { name: "nope", method: "GET", path: "/me", query: { v: "$const.MADE_UP_NAME" }, write: false },
+    ]);
+    const r = await run(["--request", "nope"], file);
+    check("未登记的 $const 被拒绝（退出码 2）", r.code === 2, `${r.code} ${r.err}`);
+    check("报错点名 CONSTS 里没有 MADE_UP_NAME", r.err.includes("CONSTS 里没有 MADE_UP_NAME"), r.err);
+    check("报错列出可选常量", r.err.includes("ZCODE_VERSION") && r.err.includes("ZCODE_CLIENT_PLATFORM"), r.err);
+    check("报错时没有发出任何请求", recorded.length === before);
+  }
+
+  // ── 1c. $const 也能用在 path 与 body，替换值等于仓库常量 ───────────────────
+  {
+    const file = okConfig([
+      { name: "cpath", method: "GET", path: "/echo/$const.ZCODE_CLIENT_PLATFORM", write: false },
+    ]);
+    const r = await run(["--request", "cpath"], file);
+    check("path 里的 $const 整段替换", r.code === 0 && r.out.includes(`/echo/${encodeURIComponent(ZCODE_CLIENT_PLATFORM)}`), r.out);
+
+    const before = recorded.length;
+    const file2 = okConfig([
+      { name: "cbody", method: "POST", path: "/echo", body: { v: "$const.ZCODE_CLAIM_APP_VERSION" }, write: true },
+    ]);
+    const r2 = await run(["--request", "cbody", "--yes-write"], file2);
+    check("body 里的 $const 被替换", r2.code === 0 && recorded.length === before + 1, r2.err);
+    check("body 替换值等于仓库常量", JSON.parse(recorded.at(-1)!.body!).v === ZCODE_CLAIM_APP_VERSION, recorded.at(-1)!.body!);
+  }
+
+  // ── 1d. 漂移回归：zcode.json 不许再写版本号/平台字面量 ────────────────────
+  {
+    const raw = fs.readFileSync(path.join(import.meta.dirname!, "../tools/probes/zcode.json"), "utf8");
+    const versionLiterals = raw.match(/"[0-9]+\.[0-9.]+"/g) ?? [];
+    check("zcode.json 里没有版本号字面量", versionLiterals.length === 0, versionLiterals.join(", "));
+    check("zcode.json 里没有平台字面量", !/win32|darwin|linux/i.test(raw), raw);
+    check("preview 用的是 $const.ZCODE_CLAIM_APP_VERSION", raw.includes("$const.ZCODE_CLAIM_APP_VERSION"), raw);
+    check("preview 的 platform 用 $const.ZCODE_CLIENT_PLATFORM", raw.includes("$const.ZCODE_CLIENT_PLATFORM"), raw);
+    check("balance 用的是 $const.ZCODE_VERSION", raw.includes("$const.ZCODE_VERSION"), raw);
   }
 
   // ── 2. 回归：配置里带 authorization 键 → 拒绝，不发请求 ────────────────

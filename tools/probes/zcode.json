@@ -7,7 +7,7 @@
       "name": "balance",
       "method": "GET",
       "path": "/api/v1/zcode-plan/billing/balance",
-      "query": { "app_version": "3.16.3" },
+      "query": { "app_version": "$const.ZCODE_VERSION" },
       "write": false,
       "notes": "额度与计划（plans[] 里是领到的计划，balances[] 是桶）"
     },
@@ -15,7 +15,7 @@
       "name": "preview",
       "method": "GET",
       "path": "/api/v1/zcode-plan/billing/preview",
-      "query": { "app_version": "3.18.2", "platform": "win32-x64" },
+      "query": { "app_version": "$const.ZCODE_CLAIM_APP_VERSION", "platform": "$const.ZCODE_CLIENT_PLATFORM" },
       "write": false,
       "notes": "有没有可领的；200 + code 0 + 没有 data = 此刻没有"
     },
