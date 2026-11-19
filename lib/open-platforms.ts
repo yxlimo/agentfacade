@@ -74,6 +74,15 @@ export interface ModelTraits {
   reasoning?: boolean;
   /** 能选的思考档位。空数组是上游明确说「没有档位」，不是不知道。 */
   efforts?: string[];
+  /**
+   * 上游报的输入模态（"text"、"image/jpeg"……）。
+   *
+   * 只有上游报了才有这一格：模态是它自己的说法，我们不替它补。没报的那一侧
+   * 就没有（空数组会被读成「不支持这一种」）。
+   */
+  modalitiesInput?: string[];
+  /** 上游报的输出模态。同上，没报就没有。 */
+  modalitiesOutput?: string[];
   /** 默认档位。列表那一层还没有这一格（CatalogModel），先存在行里。 */
   defaultEffort?: string;
   /** 能不能调工具。 */
@@ -641,6 +650,18 @@ function normalizeBilling(raw: unknown): ModelBilling | undefined {
   return billing;
 }
 
+/** 字符串列表：不是数组就是没给；数组里的空项与重号去掉。 */
+function stringList(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: string[] = [];
+  for (const item of raw) {
+    const value = String(item ?? "").trim();
+    if (!value || out.includes(value)) continue;
+    out.push(value);
+  }
+  return out;
+}
+
 function normalizeTraits(raw: unknown): ModelTraits {
   const src = (raw ?? {}) as Record<string, unknown>;
   const out: ModelTraits = {};
@@ -665,6 +686,10 @@ function normalizeTraits(raw: unknown): ModelTraits {
     }
     out.efforts = efforts;
   }
+  const modalitiesInput = stringList(src.modalitiesInput);
+  if (modalitiesInput) out.modalitiesInput = modalitiesInput;
+  const modalitiesOutput = stringList(src.modalitiesOutput);
+  if (modalitiesOutput) out.modalitiesOutput = modalitiesOutput;
   const billing = normalizeBilling(src.billing);
   if (billing) out.billing = billing;
   return out;

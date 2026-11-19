@@ -28,6 +28,7 @@ import {
   groupCatalog,
   platformGroups,
   type AggregateEntry,
+  type CatalogDialect,
 } from "./catalog.ts";
 import { platformAvailabilities, platformAvailability, type PlatformAvailability } from "./availability.ts";
 import { fetchWorkBuddyCatalog } from "../workbuddy/transport.ts";
@@ -168,13 +169,52 @@ export function publishedModel(id: string): AggregateModel | null {
 }
 
 /**
+ * The shape the caller wants: the query first, the headers second.
+ *
+ * The query wins over the headers: `?dialect=openai` / `?dialect=anthropic`.
+ * An unknown value is a 400, not a silent fallback — the caller asked for
+ * something we do not have, and reading the answer as if it were what they
+ * asked for is worse than saying no.
+ *
+ * Without a query the headers decide. The Anthropic SDK always sends
+ * `anthropic-version` (`anthropic-beta` when it wants a beta feature); the
+ * OpenAI clients send `authorization: Bearer`. A caller with an `x-api-key` and
+ * no `authorization` is an Anthropic caller that did not need a version header.
+ * Everything else is OpenAI: that is what most clients are, and opencode-go's
+ * own `recommended_api` is chat-completions.
+ */
+function dialectOf(ctx: Koa.Context): CatalogDialect | null {
+  const asked = String(ctx.query.dialect ?? "").trim().toLowerCase();
+  if (asked) {
+    if (asked === "openai" || asked === "anthropic") return asked;
+    return null;
+  }
+  const headers = ctx.headers ?? {};
+  if (headers["anthropic-version"] || headers["anthropic-beta"]) return "anthropic";
+  if (headers["x-api-key"] && !headers["authorization"]) return "anthropic";
+  return "openai";
+}
+
+/**
  * `GET /v1/models`, with or without the platform in the path.
  *
  * The upstream's catalogue is the source of truth; it is fetched in the
  * background so this answer is never blocked by it.
  */
 export function serveModels(ctx: Koa.Context): void {
-  const dialect = String(ctx.query.dialect ?? "").toLowerCase();
+  const dialect = dialectOf(ctx);
+  if (!dialect) {
+    const asked = String(ctx.query.dialect ?? "").trim();
+    ctx.status = 400;
+    ctx.body = {
+      error: {
+        type: "invalid_request_error",
+        message: `unknown dialect "${asked}"; /v1/models speaks openai and anthropic`,
+      },
+      hint: "用 ?dialect=openai 或 ?dialect=anthropic 指定形状；不带参数时看请求头。",
+    };
+    return;
+  }
   refreshLiveCatalogs();
   // allPlatforms() 每次调用读一次 platform 表（开放平台在那张表里）。
   const availabilities = platformAvailabilities(allPlatforms());
@@ -183,7 +223,7 @@ export function serveModels(ctx: Koa.Context): void {
   if (platform) {
     // The path names the platform; the models are the platform's, with the
     // real ids — the path already says where they live.
-    ctx.body = groupCatalog(platform, groups, dialect === "openai");
+    ctx.body = groupCatalog(platform, groups, dialect);
     return;
   }
   // The root route publishes one list: the models the database says it

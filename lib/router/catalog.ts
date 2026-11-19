@@ -1,9 +1,8 @@
 // lib/router/catalog.ts — the model lists.
 //
-// The clients ask for the list in two shapes: the Anthropic one, which carries
-// the extra metadata pi reads, and the OpenAI one, which is just a list of
-// names. Both are rendered from the same models, so a model never shows up in
-// one shape and not in the other.
+// The clients ask for the list in two shapes: the OpenAI one (the default) and
+// the Anthropic one, which pi reads. Both are rendered from the same models,
+// so a model never shows up in one shape and not in the other.
 //
 // The list is per upstream: the plain `/v1/models` answers with everything and
 // the prefixed form (`/qoder-cn/v1/models`) with one upstream, and the model
@@ -11,10 +10,20 @@
 
 import type { AggregateModel } from "../aggregate.ts";
 import type { CatalogModel } from "../catalog-models.ts";
+import type { ModelBilling } from "../catalog-billing.ts";
 import { allPlatforms } from "../platforms.ts";
 import { kindOf } from "../provider-kinds.ts";
 import { platformAvailabilities, type PlatformAvailability } from "./availability.ts";
+import {
+  anthropicEntry,
+  createdMemo,
+  factsOf,
+  openAIEntry,
+  type CatalogDialect,
+} from "./catalog-entry.ts";
 import "../kinds/index.ts";
+
+export { createdOf, type CatalogDialect } from "./catalog-entry.ts";
 
 export type { CatalogModel };
 export {
@@ -73,29 +82,21 @@ export function platformGroups(availabilities?: Map<string, PlatformAvailability
   return groups;
 }
 
-export function groupCatalog(group: UpstreamGroup, groups: CatalogGroup[], openai: boolean): any {
+export function groupCatalog(group: UpstreamGroup, groups: CatalogGroup[], dialect: CatalogDialect): any {
   const found = groups.find((g) => g.group === group);
   const models = found?.models ?? [];
-  if (openai) {
-    const created = Math.floor(Date.now() / 1000);
+  const createdFor = createdMemo();
+  const created = createdFor(group);
+  if (dialect === "openai") {
     return {
       object: "list",
-      data: models.map((m) => ({ id: m.id, object: "model", created, owned_by: group, name: m.displayName })),
+      data: models.map((m) => openAIEntry(m.id, m.displayName, group, created, factsOf(m))),
     };
   }
-  const created = Math.floor(Date.now() / 1000);
-  const data = models.map((m) => ({
-    id: m.id,
-    type: "model",
-    display_name: m.displayName,
-    created_at: created,
-    reasoning: m.reasoning,
-    tool_call: m.toolCall,
-    ...(m.contextWindow ? { context_window: m.contextWindow } : {}),
-    ...(m.maxOutputTokens ? { max_output_tokens: m.maxOutputTokens } : {}),
-    ...(m.effortOptions ? { effort_options: [...m.effortOptions] } : {}),
-    ...(m.backend ? { backend: m.backend } : {}),
-  }));
+  const data = models.map((m) => {
+    const entry = anthropicEntry(m.id, m.displayName, created, factsOf(m));
+    return m.backend ? { ...entry, backend: m.backend } : entry;
+  });
   return {
     data,
     has_more: false,
@@ -128,6 +129,10 @@ export interface AggregateEntry {
   /** 平台没报输出上限的时候没有这个数。 */
   maxOutputTokens?: number;
   effortOptions?: string[];
+  /** 平台报的价格（上游自己的那份）。没有就是不知道，不是免费。 */
+  billing?: ModelBilling;
+  /** 平台报的模态。只带上游报了的那一侧。 */
+  modalities?: { input?: string[]; output?: string[] };
   strategy: "single" | "fallback";
   targets: AggregateTargetSpec[];
 }
@@ -221,6 +226,11 @@ export function aggregateCatalog(groups: CatalogGroup[], configured: AggregateMo
       ? efforts.reduce((a, b) => a.filter((v) => b.includes(v)))
       : undefined;
 
+    // 价格与模态跟着目标走：第一个报了的那个说了算（目标之间不一致时，
+    // 客户端看到的是一份能兑现的承诺，不是两个数里的一个）。
+    const billing = found.find((m) => m.billing)?.billing;
+    const modalities = found.find((m) => m.modalities)?.modalities;
+
     entries.push({
       id: model.id,
       displayName: model.displayName,
@@ -229,6 +239,8 @@ export function aggregateCatalog(groups: CatalogGroup[], configured: AggregateMo
       contextWindow: model.contextWindow ?? (contexts.length ? Math.min(...contexts) : undefined),
       maxOutputTokens: model.maxOutputTokens ?? (outputs.length ? Math.min(...outputs) : undefined),
       effortOptions: publishedEfforts(model, commonEfforts),
+      ...(billing ? { billing } : {}),
+      ...(modalities ? { modalities } : {}),
       strategy: model.strategy,
       targets,
     });
@@ -243,16 +255,26 @@ export function aggregateCatalog(groups: CatalogGroup[], configured: AggregateMo
  * database or from the upstreams themselves.
  */
 export function aggregateOpenAICatalog(entries: AggregateEntry[]): any {
-  const created = Math.floor(Date.now() / 1000);
+  const createdFor = createdMemo();
   return {
     object: "list",
-    data: entries.map((e) => ({
-      id: e.id,
-      object: "model",
-      created,
-      owned_by: e.targets[0]?.group ?? "buddy",
-      name: e.displayName,
-    })),
+    data: entries.map((e) =>
+      openAIEntry(
+        e.id,
+        e.displayName,
+        e.targets[0]?.group ?? "buddy",
+        createdFor(e.targets[0]?.group ?? ""),
+        {
+          reasoning: e.reasoning,
+          toolCall: e.toolCall,
+          contextWindow: e.contextWindow,
+          maxOutputTokens: e.maxOutputTokens,
+          effortOptions: e.effortOptions,
+          modalities: e.modalities,
+          billing: e.billing,
+        },
+      ),
+    ),
   };
 }
 
@@ -260,18 +282,16 @@ export function aggregateOpenAICatalog(entries: AggregateEntry[]): any {
  * The aggregate catalog in the Anthropic shape, with the metadata pi reads.
  */
 export function aggregateAnthropicCatalog(entries: AggregateEntry[]): any {
-  const created = Math.floor(Date.now() / 1000);
-  const data = entries.map((e) => ({
-    id: e.id,
-    type: "model",
-    display_name: e.displayName,
-    created_at: created,
-    reasoning: e.reasoning,
-    tool_call: e.toolCall,
-    ...(e.contextWindow ? { context_window: e.contextWindow } : {}),
-    ...(e.maxOutputTokens ? { max_output_tokens: e.maxOutputTokens } : {}),
-    ...(e.effortOptions ? { effort_options: [...e.effortOptions] } : {}),
-  }));
+  const createdFor = createdMemo();
+  const data = entries.map((e) =>
+    anthropicEntry(e.id, e.displayName, createdFor(e.targets[0]?.group ?? ""), {
+      reasoning: e.reasoning,
+      toolCall: e.toolCall,
+      contextWindow: e.contextWindow,
+      maxOutputTokens: e.maxOutputTokens,
+      effortOptions: e.effortOptions,
+    }),
+  );
   return {
     data,
     has_more: false,
