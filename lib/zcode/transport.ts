@@ -11,6 +11,7 @@
 
 import type { Json } from "../json.ts";
 import crypto from "node:crypto";
+import { configString } from "../config.ts";
 import { AuthError } from "../credential.ts";
 import { scrubForClient, scrubForLog } from "../log-scrub.ts";
 import { ZCODE_BASE, ZCODE_VERSION, loadSession, type ZcodeSession } from "./auth.ts";
@@ -28,7 +29,18 @@ const USER_AGENT = `ZCode/${ZCODE_VERSION}`;
  * 抓包那台是 Asia/Shanghai / zh-CN。网关跑在中国区，时区也是 Asia/Shanghai。
  */
 const TIMEZONE = "Asia/Shanghai";
-const LANGUAGE = "zh-CN";
+
+/**
+ * 客户端报的语言。
+ *
+ * 来源只有一处常量：配置 ZCODE_CLIENT_LANGUAGE（进程环境变量
+ * FACADE_ZCODE_CLIENT_LANGUAGE 优先，面板里写的设置次之）。
+ *
+ * 进程的语言环境**不**参与：官方客户端只有中文界面，进程跑在什么语言环境
+ * 里都报 zh-CN —— 实测上游回的 language 也是 zh-CN，报别的语言只会让上游
+ * 换一种渲染。默认值就是 zh-CN。
+ */
+export const ZCODE_CLIENT_LANGUAGE = configString("ZCODE_CLIENT_LANGUAGE", "zh-CN");
 
 /**
  * 客户端身份：桌面端（Electron）在 Windows 上的样子。
@@ -92,7 +104,7 @@ export function zcodeHeaders(
     "X-ZCode-App-Version": ZCODE_VERSION,
     "X-Title": CLIENT.title,
     "X-Release-Channel": "production",
-    "X-Client-Language": LANGUAGE,
+    "X-Client-Language": ZCODE_CLIENT_LANGUAGE,
     "X-Client-Timezone": TIMEZONE,
     "X-ZCode-Agent": "glm",
     "X-Platform": CLIENT.platform,

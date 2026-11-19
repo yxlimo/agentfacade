@@ -169,12 +169,18 @@ function zcodeClaimNote(
     case "already":
       return `领取：已领过${message ? `（${message}）` : ""}`;
     case "none":
-      // preview 的列表是空的：此刻没有可领的。可能是名额用完了，也可能已经领过、
-      // 活动还没开始 —— preview 没给 data 就分不出来，所以不编结论，只说「此刻」。
+      // 投放里没有带「领取」按钮的投放：此刻没有可领的。可能是名额用完了，也可能已经领过、
+      // 活动还没开始 —— 分不出来，所以不编结论，只说「此刻」。
       // 服务端说了什么就带上什么。
       return `领取：此刻没有可领的${message ? `（${message}）` : ""}`;
     case "captcha":
-      return `领取：需要人工过验证码${message ? `（${message}）` : ""}`;
+      // 网关过不了阿里云验证码（要人工弹窗），所以这句话要说明白下一步
+      // 怎么做：在官方客户端里点一次领取。结论那一格已经带着这句话
+      // （见 lib/zcode/auto-claim.ts），这里不重复说一遍。
+      return `领取：${message || "可领，但需在官方客户端点一次领取"}`;
+    case "missing_device":
+      // 老会话没有设备标识，问不了投放接口 —— 这是「问不到」，不是「没有可领」。
+      return `领取：问不了投放（这个账号没有设备标识）${message ? `（${message}）` : ""}`;
     case "unauthorized":
       return `领取：上游拒绝了这把凭据${message ? `（${message}）` : ""}`;
     case "failed":

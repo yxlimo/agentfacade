@@ -54,7 +54,7 @@ function section(title: string): void {
 // 单元部分用自己的数据目录，免得跟网关抢一个库。
 process.env.FACADE_DATA_DIR = UNIT_DIR;
 
-const { senseNovaCatalogModels, internAiCatalogModels } = await import("../lib/router/catalog.ts");
+const { senseNovaCatalogModels, internAiCatalogModels } = await import("../lib/catalog-models.ts");
 const { mergeCatalogModels, hasCapability } = await import("../lib/intern-ai/models.ts");
 const { parsePoolUsage } = await import("../lib/sensenova/quota.ts");
 const { parseBalance, parseCreditPack } = await import("../lib/intern-ai/quota.ts");

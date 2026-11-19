@@ -6,18 +6,23 @@
 //
 // 一轮做三件事：
 //
-//   1. preview：看有没有可领的。没有（plans 空）就到此为止 —— 一个请求都不
-//      发领取。
+//   1. 问投放（marketing/touch）：有没有带「领取」按钮的投放。没有就到此
+//      为止 —— 一个领取请求都不发。
 //   2. 领第一个（priority 最大的那个，同优先级按列表顺序）。一轮只领一个。
 //   3. 把结论记下来（成功与失败都记），面板从额度卡 note 上读出来。
 //
-// 终态（已领过 / 要验证码 / 领到了）本轮不再试；**下一个周期重新 preview
-// 判断** —— 不自己记「已放弃」：服务端的可领列表每轮都可能变，把自己记成
+// 判据是投放接口，不是 billing/preview：客户端就是靠投放里的
+// claim_zcode_plan 按钮决定「有没有可领」的，而 preview 在没有可领时答的是
+// 「没有 data 字段」，客户端把它当错误。两者说的不是同一件事。
+//
+// 终态（已领过 / 要验证码 / 领到了）本轮不再试；**下一个周期重新问投放
+// 判断** —— 不自己记「已放弃」：服务端的投放每轮都可能变，把自己记成
 // 「放弃」就再也领不到了。
 //
-// 例外：已经**领到**的那个计划不再重复领（按 plan_id 记，记忆在快照里）。
-// preview 可能滞后，还列着刚领过的计划；照着它 POST 就是一天几十次重复写。
-// 换一个新活动（新的 plan_id）照领不误。
+// 例外：已经**领到**（或已经要人工过验证码）的那一个投放不再重复领
+// （按 campaign_id + plan_id 记，记忆在快照里）。上游的投放可能一直挂着，
+// 照着它 POST 就是一天几十次重复写。换个 campaign_id 或 plan_id（新活动）
+// 照领不误。
 //
 // 开关：`FACADE_ZCODE_AUTO_CLAIM`（默认开）。关掉时一个请求都不发。
 
@@ -26,7 +31,8 @@ import { parseBool, readEnvValue } from "../env.ts";
 import { listProviders, provider, type ProviderRow } from "../providers.ts";
 import { peekHealthSnapshot } from "../health-cache.ts";
 import type { HealthSnapshot, ZcodeClaimSnapshot } from "../provider-kinds.ts";
-import { claimPlan, describeClaimedPlan, logClaimAttempt, previewClaims } from "./claim.ts";
+import { claimPlan, describeClaimedPlan, logClaimAttempt } from "./claim.ts";
+import { fetchTouch, offerKey, type ZcodeMarketingOffer } from "./marketing.ts";
 
 /**
  * 多久跑一轮。
@@ -147,9 +153,9 @@ export function mergePendingClaims(snapshot: HealthSnapshot): void {
  * 同时写进现在的那份快照：面板读的是快照，等下一次全量刷新才看到结论的话，
  * 人会以为没领（这一轮与下一次刷新之间最多差五分钟）。
  *
- * 「已经领过哪些计划」也在这份结论里（claimedPlanIds）：它跟着快照走，
+ * 「已经领过哪些投放」也在这份结论里（claimedKeys）：它跟着快照走，
  * 刷新时带过去（lib/admin/upstreams.ts 把这一格原样抄进新快照），所以不会
- * 因为一次刷新就忘掉 —— 忘了就会重复领同一个计划。
+ * 因为一次刷新就忘掉 —— 忘了就会重复领同一个投放。
  *
  * 额度那一格还没有的时候，造出来的那一份带着 `quota: null` —— 那是「没问过
  * 额度」，不是「额度是 0」（null 那一档面板不摆额度卡）。
@@ -162,12 +168,12 @@ function record(providerId: string, snapshot: ZcodeClaimSnapshot): void {
   const live = peekHealthSnapshot<HealthSnapshot>()?.data ?? null;
   const previous =
     live?.zcode?.[providerId]?.claim ?? pendingClaims.get(providerId)?.claim;
-  // 合并「已经领过哪些计划」：新的结论（none / failed）不该把这份记忆抹掉。
+  // 合并「已经领过哪些投放」：新的结论（none / failed）不该把这份记忆抹掉。
   const claimed = Array.from(
-    new Set([...(previous?.claimedPlanIds ?? []), ...(snapshot.claimedPlanIds ?? [])]),
+    new Set([...(previous?.claimedKeys ?? []), ...(snapshot.claimedKeys ?? [])]),
   );
   const merged: ZcodeClaimSnapshot = claimed.length
-    ? { ...snapshot, claimedPlanIds: claimed }
+    ? { ...snapshot, claimedKeys: claimed }
     : snapshot;
   if (!live) {
     pendingClaims.set(providerId, { snapshot: null, claim: merged });
@@ -179,28 +185,28 @@ function record(providerId: string, snapshot: ZcodeClaimSnapshot): void {
 }
 
 /**
- * 这个账号已经领过的计划（plan_id）。
+ * 这个账号已经领过的投放（`campaign_id|plan_id`）。
  *
  * 存在结论里（见 record）：进程内存的那份健康快照就是全部记忆。
  */
-function claimedPlanIdsOf(providerId: string): string[] {
-  return zcodeClaimSnapshot(providerId)?.claimedPlanIds ?? [];
+function claimedKeysOf(providerId: string): string[] {
+  return zcodeClaimSnapshot(providerId)?.claimedKeys ?? [];
 }
 
 /**
  * 领哪一个：一轮只领一个。
  *
- * priority 最大的那个先领；同优先级按 preview 给的列表顺序（上游说同优先级时
+ * priority 最大的那个先领；同优先级按投放给的列表顺序（上游说同优先级时
  * 顺序本身有意义，别自己打乱）。
  *
  * 「priority 最大」是按数字大小取的：上游给的是数字，没说越小越优先，那就按
  * 字面意思（大的先）。
  */
-export function pickPlan<T extends { priority: number }>(plans: T[]): T | null {
-  if (!plans.length) return null;
-  let best = plans[0];
-  for (const plan of plans) {
-    if (Number(plan?.priority ?? 0) > Number(best?.priority ?? 0)) best = plan;
+export function pickOffer<T extends { priority: number }>(offers: T[]): T | null {
+  if (!offers.length) return null;
+  let best = offers[0];
+  for (const offer of offers) {
+    if (Number(offer?.priority ?? 0) > Number(best?.priority ?? 0)) best = offer;
   }
   return best;
 }
@@ -221,118 +227,153 @@ function effectiveAtOf(plan: { entitlements?: { effectiveAt?: string | null }[] 
 /**
  * 一个账号的一轮。
  *
- * 每一轮都重新 preview —— 上一轮的终态不作数（可领列表每轮都可能变）。
+ * 每一轮都重新问投放 —— 上一轮的终态不作数（投放每轮都可能变）。
  */
 export async function claimOnce(providerId: string): Promise<ZcodeClaimSnapshot | null> {
   const platformId = provider(providerId)?.platform ?? "zcode";
-  const preview = await previewClaims(providerId);
-  if (preview.state === "missing") {
+  const touch = await fetchTouch(providerId);
+  if (touch.state === "missing") {
     logClaimAttempt({
       accountId: providerId,
       platformId,
-      claimable: null,
+      offers: null,
       action: "none",
       state: "missing",
       message: "本地没有会话",
     });
     return null;
   }
-  if (preview.state === "unauthorized") {
+  if (touch.state === "missing_device") {
+    // 没有设备标识就发不了投放请求。这是「问不到」，**不是**「没有可领」——
+    // 两件事的面板说法必须分开。
     logClaimAttempt({
       accountId: providerId,
       platformId,
-      claimable: null,
+      offers: null,
       action: "none",
-      state: "unauthorized",
-      message: preview.message,
+      state: "missing_device",
+      message: touch.message,
     });
     const snapshot: ZcodeClaimSnapshot = {
-      at: preview.at,
-      state: "unauthorized",
-      message: preview.message,
+      at: touch.at,
+      state: "missing_device",
+      message: touch.message,
     };
     record(providerId, snapshot);
     return snapshot;
   }
-  if (preview.state === "failed") {
+  if (touch.state === "unauthorized") {
     logClaimAttempt({
       accountId: providerId,
       platformId,
-      claimable: null,
+      offers: null,
       action: "none",
-      state: "failed",
-      message: preview.message,
+      state: "unauthorized",
+      message: touch.message,
     });
     const snapshot: ZcodeClaimSnapshot = {
-      at: preview.at,
-      state: "failed",
-      message: preview.message,
+      at: touch.at,
+      state: "unauthorized",
+      message: touch.message,
     };
     record(providerId, snapshot);
     return snapshot;
   }
-  const plans = preview.value.plans ?? [];
-  if (!plans.length) {
-    // 「没有可领」也是一个结论：面板要能说出「今天没有名额」，而不是空白。
+  if (touch.state === "failed") {
     logClaimAttempt({
       accountId: providerId,
       platformId,
-      claimable: 0,
+      offers: null,
       action: "none",
-      state: "none",
+      state: "failed",
+      message: touch.message,
     });
-    const snapshot: ZcodeClaimSnapshot = { at: preview.at, state: "none", message: "" };
+    const snapshot: ZcodeClaimSnapshot = {
+      at: touch.at,
+      state: "failed",
+      message: touch.message,
+    };
     record(providerId, snapshot);
     return snapshot;
   }
-  const plan = pickPlan(plans);
-  if (!plan) {
+  const offers = touch.offers ?? [];
+  if (touch.invalid > 0) {
+    // 坏投放（缺 plan_id 之类）被丢弃了，但要说出来：投放接口改了形状就
+    // 在这里露出来，而不是变成「没有可领」。
+    console.warn(
+      `[ZCODE] 投放里有 ${touch.invalid} 条坏投放被丢弃（没有 plan_id）account=${providerId}`,
+    );
+  }
+  if (!offers.length) {
+    // 「没有可领」也是一个结论：面板要能说出「此刻没有可领的」，而不是空白。
     logClaimAttempt({
       accountId: providerId,
       platformId,
-      claimable: plans.length,
+      offers: 0,
       action: "none",
       state: "none",
     });
-    const snapshot: ZcodeClaimSnapshot = { at: preview.at, state: "none", message: "" };
+    const snapshot: ZcodeClaimSnapshot = { at: touch.at, state: "none", message: "" };
     record(providerId, snapshot);
     return snapshot;
   }
-  const action = describeClaimedPlan(plan.name || plan.planId, plan.planId);
-  // 同一个计划不重复领：上游的 preview 可能滞后，还列着刚领过的计划 —— 照着
-  // 它 POST 就是一天几十次重复写。换个 plan_id（新活动）不受影响，照领。
+  const offer = pickOffer(offers);
+  if (!offer) {
+    logClaimAttempt({
+      accountId: providerId,
+      platformId,
+      offers: offers.length,
+      action: "none",
+      state: "none",
+    });
+    const snapshot: ZcodeClaimSnapshot = { at: touch.at, state: "none", message: "" };
+    record(providerId, snapshot);
+    return snapshot;
+  }
+  const action = describeClaimedPlan(offer.name || offer.planId, offer.planId);
+  const key = offerKey(offer);
+  // 同一个投放不重复领：上游的投放可能一直挂着（它不会说「这个已经领过了」）
+  // —— 照着它 POST 就是一天几十次重复写。换个 campaign_id 或 plan_id（新活动）
+  // 不受影响，照领。
   //
   // 记忆只活在进程内存的快照里：重启之后可能多 POST 一次，服务端会回终态码
   // （already），不会多领到额度。
-  if (claimedPlanIdsOf(providerId).includes(plan.planId)) {
+  if (claimedKeysOf(providerId).includes(key)) {
     logClaimAttempt({
       accountId: providerId,
       platformId,
-      claimable: plans.length,
+      offers: offers.length,
       action,
       state: "already",
-      message: "这个计划已经领过（网关记得），不再重复领取",
+      planId: offer.planId,
+      campaignId: offer.campaignId,
+      message: "这个投放已经领过（网关记得），不再重复领取",
     });
     return zcodeClaimSnapshot(providerId) ?? null;
   }
-  const result = await claimPlan(providerId, plan.planId);
+  const result = await claimPlan(providerId, offer.planId);
   if (result.state === "claimed") {
     const effectiveAt = effectiveAtOf(result.plan);
     logClaimAttempt({
       accountId: providerId,
       platformId,
-      claimable: plans.length,
+      offers: offers.length,
       action,
       state: "claimed",
       effectiveAt,
+      planId: offer.planId,
+      campaignId: offer.campaignId,
     });
     const snapshot: ZcodeClaimSnapshot = {
       at: result.at,
       state: "claimed",
       message: "",
-      planName: plan.name || result.plan.planId,
+      planName: offer.name || result.plan.planId,
       effectiveAt,
-      claimedPlanIds: [...claimedPlanIdsOf(providerId), plan.planId],
+      planId: offer.planId,
+      campaignId: offer.campaignId,
+      code: 0,
+      claimedKeys: [...claimedKeysOf(providerId), key],
     };
     record(providerId, snapshot);
     return snapshot;
@@ -341,25 +382,45 @@ export async function claimOnce(providerId: string): Promise<ZcodeClaimSnapshot 
     logClaimAttempt({
       accountId: providerId,
       platformId,
-      claimable: plans.length,
+      offers: offers.length,
       action,
       state: "missing",
+      planId: offer.planId,
+      campaignId: offer.campaignId,
       message: "本地没有会话",
     });
     return null;
   }
+  // 终态（已领过 / 要人工过验证码）也记进「已经领过」：再 POST 一次也不会
+  // 变好，只是每天多写一次上游。failed 不记 —— 下一轮还要再试。
+  const terminal = result.state === "already" || result.state === "captcha";
+  const code = "code" in result ? result.code : null;
+  // 验证码那一档要说清下一步怎么做：网关过不了阿里云验证码，人得自己去
+  // 官方客户端点一次领取。含糊的「失败」会让人以为再等等就好了。
+  const message =
+    result.state === "captcha"
+      ? `需在官方客户端点一次领取（网关过不了验证码）${result.message ? `：${result.message}` : ""}`
+      : result.message;
   logClaimAttempt({
     accountId: providerId,
     platformId,
-    claimable: plans.length,
+    offers: offers.length,
     action,
     state: result.state,
-    message: result.message,
+    message,
+    planId: offer.planId,
+    campaignId: offer.campaignId,
+    code,
   });
   const snapshot: ZcodeClaimSnapshot = {
     at: result.at,
     state: result.state,
-    message: result.message,
+    message,
+    planId: offer.planId,
+    campaignId: offer.campaignId,
+    code,
+    planName: offer.name ?? undefined,
+    claimedKeys: terminal ? [...claimedKeysOf(providerId), key] : undefined,
   };
   record(providerId, snapshot);
   return snapshot;
@@ -373,7 +434,7 @@ function zcodeAccounts(): ProviderRow[] {
 /**
  * 跑一轮：名下每个 zcode 账号各来一次。
  *
- * 开关关着就一个请求都不发（连 preview 都不发 —— preview 也是问上游）。
+ * 开关关着就一个请求都不发（连问投放都不发 —— 问投放也是问上游）。
  * 一个账号失败不挡住别的账号。
  */
 export async function runZcodeAutoClaim(): Promise<void> {

@@ -371,8 +371,9 @@ export function vendorMissing(at = Date.now()): VendorProbe<never> {
  *
  *   claimed      领到了（计划名与生效时刻在下面两格）
  *   already      终态：服务端说不能再领了（1001–1005 那组），本轮不再试
- *   none         现在没有可领的（preview 的列表是空的）—— 不是失败
+ *   none         现在没有可领的（投放接口里没有可领的投放）—— 不是失败
  *   captcha      要人工过验证码：网关过不了，人得自己去过
+ *   missing_device 这个账号没有设备标识（老会话），问不了投放接口
  *   unauthorized 上游拒了这把凭据 —— 要人重新登录
  *   failed       问到了但没领成：下一轮还会再试
  */
@@ -380,7 +381,14 @@ export interface ZcodeClaimSnapshot {
   /** 这次尝试的时刻（毫秒）。 */
   at: number;
   /** 结论。 */
-  state: "claimed" | "already" | "none" | "captcha" | "unauthorized" | "failed";
+  state:
+    | "claimed"
+    | "already"
+    | "none"
+    | "captcha"
+    | "missing_device"
+    | "unauthorized"
+    | "failed";
   /** 服务端的原话。没有就空串。 */
   message: string;
   /** 领到的计划名。 */
@@ -388,12 +396,22 @@ export interface ZcodeClaimSnapshot {
   /** 计划什么时候开始算数（ISO）。 */
   effectiveAt?: string;
   /**
-   * 这个账号已经领过的计划（plan_id）。
+   * 这次领的计划的 plan_id。
    *
-   * 用来不再重复领同一个计划：上游的 preview 可能滞后，还列着刚领过的计划。
-   * 换一个新活动（新的 plan_id）不受它影响。
+   * 有它才查得出「是哪一次投放没领成」—— 面板与日志都靠它对账。
    */
-  claimedPlanIds?: string[];
+  planId?: string;
+  /** 这次投放的 campaign_id（与 plan_id 一起构成幂等键）。 */
+  campaignId?: string;
+  /** 上游给的业务码（3007 = 要人工过验证码）。 */
+  code?: number | null;
+  /**
+   * 这个账号已经领过的投放（`campaign_id|plan_id`）。
+   *
+   * 用来不再重复领同一件事：上游的投放可能一直挂着（它不会告诉我们「这个
+   * 已经领过了」）。换一个 campaign_id 或 plan_id 就不受它影响。
+   */
+  claimedKeys?: string[];
 }
 
 /**

@@ -1,15 +1,15 @@
-// lib/zcode/claim.ts — ZCode 的活动免费额度：看有没有可领的，有就领。
+// lib/zcode/claim.ts — ZCode 的活动免费额度：领的那一下。
 //
-// 两个端点（实测形状，2026-11 在容器里真打过）：
+// 判据在 lib/zcode/marketing.ts（投放接口）：**有没有可领**是投放接口说的，
+// 不是 billing/preview 说的。preview 在「没有可领」时答 {code:0, msg:"",
+// logid}（没有 data 字段），客户端把它当错误而不是当「没有可领」——
+// 拿它当判据就是把「没有可领」与「问错了接口」混成一件事。这里因此不再调
+// preview（省一次上游请求）。
 //
-//   GET  {ZCODE_BASE}/api/v1/zcode-plan/billing/preview
-//        ?app_version=<版本>&platform=win32-x64
-//        → 有可领：{code:0, data:{server_time, plans:[…]}}
-//        → 没有可领：{code:0, msg:"", logid:"…"}（**没有 data 字段**）
-//        → 其它（非 200 / code 非 0）：失败
+// 领取本身（实测形状，2026-11 在容器里真打过）：
 //
 //   POST {ZCODE_BASE}/api/v1/zcode-plan/billing/claim
-//        body: {"plan_id": "<preview 里的 plan_id>"}
+//        body: {"plan_id": "<投放里的 plan_id>"}
 //        → 成功：code===0 且 data.plan 存在
 //        → 失败：透传 code 与 data.message（服务端给中文，别自己映射）
 //
@@ -17,32 +17,26 @@
 //
 //   · Authorization 头**不能自己加**：zcodePlatformHeaders() 已经带了（外加
 //     x-api-key 与那套客户端标识头）。叠一份会让上游回 401 空正文。
-//   · 「没有可领」是 HTTP 200 + code 0 + 没有 data 字段，不是失败。把它当成
-//     失败，就会在面板上显示成「问不到」，而真相是「今天没有可领的」。
 //   · 1001–1005 在官方客户端里是**终态**（不重试）；缺阿里云验证码时是 3007
 //     （文案含「验证码校验失败」）—— 网关过不了验证码，那要落成一个独立状态，
 //     不许伪装成别的。
+//   · 网关过不了阿里云验证码（真客户端由闭源版的头走人工验证码弹窗取得，
+//     开源版那一段是空实现桩）—— 所以 3007 的结论要写明「需在官方客户端点
+//     一次领取」，而不是含糊的「失败」。
 //
 // 领取与每日签到是两件事：这里只有领取。定时器那一步也单开（lib/periodic.ts
 // 的 `claim` 步进），不塞进 benefits —— 签到页不该说成签到。
 
-import { configFlag, configNumber, configString } from "../config.ts";
+import { configNumber, configString } from "../config.ts";
 import { scrubForLog } from "../log-scrub.ts";
-import {
-  vendorFailed,
-  vendorMissing,
-  vendorOk,
-  vendorUnauthorized,
-  type VendorProbe,
-} from "../provider-kinds.ts";
 import { ZCODE_BASE, loadSession } from "./auth.ts";
-import { ZCODE_CLIENT_PLATFORM, zcodePlatformHeaders } from "./transport.ts";
+import { zcodePlatformHeaders } from "./transport.ts";
 
 /**
- * 领取与 preview 这两个端点用的客户端版本。
+ * 账单域（领取与投放）用的客户端版本。
  *
  * 与 ZCODE_VERSION 分开：那个是**模型请求**的指纹（动了会被上游当异常活动），
- * 这两个是账单计划接口的版本。实测这两个端点报的是 3.18.2。
+ * 这个是账单计划接口的版本。实测这两个端点报的是 3.18.2。
  */
 export const ZCODE_CLAIM_APP_VERSION = configString("ZCODE_CLAIM_APP_VERSION", "3.18.2");
 
@@ -80,24 +74,6 @@ export interface ZcodeClaimEntitlement {
   priority: number;
   /** 什么时候开始算数（ISO）。null = 上游没给。 */
   effectiveAt: string | null;
-}
-
-/** preview 里的一份可领计划。 */
-export interface ZcodeClaimPlan {
-  planId: string;
-  name: string;
-  description: string;
-  /** 数字越大越先领。同优先级按列表顺序。 */
-  priority: number;
-  entitlements: ZcodeClaimEntitlement[];
-}
-
-/** preview 的答复。 */
-export interface ZcodeClaimPreview {
-  /** 可领的计划。空数组 = 现在没有可领的（不是失败）。 */
-  plans: ZcodeClaimPlan[];
-  /** 上游的服务器时间（ISO）。 */
-  serverTime: string | null;
 }
 
 /** 领到的一个计划。 */
@@ -177,16 +153,6 @@ function entitlementsOf(rows: unknown): ZcodeClaimEntitlement[] {
   }));
 }
 
-function plansOf(rows: unknown): ZcodeClaimPlan[] {
-  return (Array.isArray(rows) ? rows : []).map((row: any) => ({
-    planId: String(row?.plan_id ?? ""),
-    name: String(row?.name ?? ""),
-    description: String(row?.description ?? ""),
-    priority: num(row?.priority),
-    entitlements: entitlementsOf(row?.entitlements),
-  }));
-}
-
 /* ------------------------------------------------------------------ *
  * 日志
  * ------------------------------------------------------------------ */
@@ -197,8 +163,8 @@ export interface ZcodeClaimLogFields {
   accountId: string;
   /** 平台 id（账号行上那个）。 */
   platformId: string;
-  /** preview 看到几个可领的；null = 问不到（不知道几个）。 */
-  claimable: number | null;
+  /** 投放里有几个可领的；null = 问不到（不知道几个）。 */
+  offers: number | null;
   /** 做了什么（领了哪个计划，或没领）。 */
   action: string;
   /** 结论状态。 */
@@ -207,6 +173,12 @@ export interface ZcodeClaimLogFields {
   message?: string;
   /** 领到时的生效时刻（ISO）。 */
   effectiveAt?: string | null;
+  /** 领的那个计划的 plan_id。 */
+  planId?: string;
+  /** 投放的 id（与 plan_id 一起构成幂等键）。 */
+  campaignId?: string;
+  /** 上游给的业务码。 */
+  code?: number | null;
 }
 
 /** plan_id 在日志里截断：整串 id 没必要进日志，够认出来就行。 */
@@ -222,24 +194,29 @@ function shortPlanId(planId: string): string {
  * 的写接口，属于会改账号状态的后台动作，不留痕就分不清「跑过没有」与
  * 「跑成了没有」。
  *
- * 一行说完，不打多行 JSON（人 grep 一行就够）：账号、平台、preview 的结论、
- * 做了什么、结论状态、上游原话、成功时的生效时刻。
+ * 一行说完，不打多行 JSON（人 grep 一行就够）：账号、平台、投放的结论、
+ * 做了什么、结论状态、plan_id 与业务码、上游原话、成功时的生效时刻。
  *
  * `failed` 用 warn（这一轮没成，要看见），其余用 log。
  */
 export function logClaimAttempt(fields: ZcodeClaimLogFields): void {
-  const preview =
-    fields.claimable === null
+  const offers =
+    fields.offers === null
       ? "unknown"
-      : fields.claimable === 0
+      : fields.offers === 0
         ? "0（没有可领）"
-        : String(fields.claimable);
+        : String(fields.offers);
   const parts = [
     `[ZCODE] claim account=${fields.accountId} platform=${fields.platformId}`,
-    `preview=${preview}`,
+    `offers=${offers}`,
     `action=${fields.action}`,
     `state=${fields.state}`,
   ];
+  // plan_id 与业务码：查「为什么没领到」就靠这两个（尤其 3007 那种要人工
+  // 过验证码的终态 —— 光看 state 看不出是哪一次投放）。
+  if (fields.planId) parts.push(`plan=${fields.planId}`);
+  if (fields.campaignId) parts.push(`campaign=${fields.campaignId}`);
+  if (fields.code !== undefined && fields.code !== null) parts.push(`code=${fields.code}`);
   // 上游原话进日志前先抹一遍：上游正文里偶尔回显账号标识。
   const message = scrubForLog(String(fields.message ?? "").replace(/\s+/g, " ").trim(), 300);
   if (message) parts.push(`msg=「${message}」`);
@@ -259,49 +236,6 @@ export function describeClaimedPlan(name: string, planId: string): string {
 /* ------------------------------------------------------------------ *
  * 问上游
  * ------------------------------------------------------------------ */
-
-/**
- * 看有没有可领的（只读）。
- *
- * 「没有可领」也是 `ok`：`plans` 是空数组。上游那时答的是 HTTP 200 + code 0
- * 但**没有 data 字段** —— 那是「今天没有」，不是「问不到」。把它折成 failed，
- * 面板上就变成「额度没问到」，而真相是「没有可领的」。
- */
-export async function previewClaims(providerId = "zcode"): Promise<VendorProbe<ZcodeClaimPreview>> {
-  const session = loadSession(providerId);
-  if (!session) return vendorMissing();
-  let r: Response;
-  try {
-    r = await fetch(
-      `${ZCODE_BASE}/api/v1/zcode-plan/billing/preview` +
-        `?app_version=${encodeURIComponent(ZCODE_CLAIM_APP_VERSION)}` +
-        `&platform=${encodeURIComponent(ZCODE_CLIENT_PLATFORM)}`,
-      {
-        headers: {
-          ...zcodePlatformHeaders(session),
-          accept: "application/json",
-        },
-        signal: AbortSignal.timeout(CLAIM_TIMEOUT_MS),
-      },
-    );
-  } catch (e) {
-    return vendorFailed(`问不到可领的额度：${(e as Error)?.message ?? String(e)}`);
-  }
-  if (r.status === 401 || r.status === 403) {
-    return vendorUnauthorized(`上游拒绝了这把令牌（HTTP ${r.status}）`);
-  }
-  if (!r.ok) return vendorFailed(`上游答了 HTTP ${r.status}`);
-  const body: any = await r.json().catch(() => null);
-  if (!body) return vendorFailed("上游的答复不是 JSON");
-  if (body?.code !== 0) {
-    return vendorFailed(`上游报了业务错误 ${body?.code ?? "?"}：${String(body?.msg ?? "")}`);
-  }
-  const data = body?.data ?? {};
-  return vendorOk({
-    plans: plansOf(data?.plans),
-    serverTime: isoOf(data?.server_time),
-  });
-}
 
 /**
  * 领一个计划。
