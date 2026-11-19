@@ -31,6 +31,11 @@ reference/qoder/
 # a grep, not another 250 MB download.
 reference/zcode-client-*/
 
+# The notes written while reversing it (endpoint semantics, claim fingerprint).
+# They quote the client's internals verbatim and exist to answer the next
+# question on this machine; they are not part of the service's documentation.
+reference/*.md
+
 # Helpers for the machine this runs on, not for the service: they rewrite
 # personal client configs and poke at the opencode client's own storage.
 #
