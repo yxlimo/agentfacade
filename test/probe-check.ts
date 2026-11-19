@@ -81,9 +81,13 @@ const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "probe-check-"));
 process.env.FACADE_DATA_DIR = dataDir;
 process.env.ZCODE_BASE_URL = BASE;
 
-const { saveSession, ZCODE_VERSION } = await import("../lib/zcode/auth.ts");
+const { saveSession, ZCODE_VERSION, loadSession } = await import("../lib/zcode/auth.ts");
 const { ZCODE_CLAIM_APP_VERSION } = await import("../lib/zcode/claim.ts");
 const { ZCODE_CLIENT_PLATFORM } = await import("../lib/zcode/transport.ts");
+const { ZCODE_MARKETING_TOUCH_PATH, zcodeMarketingHeaders } = await import(
+  "../lib/zcode/marketing.ts"
+);
+const { HEADER_FACTORIES } = await import("../tools/probe.ts");
 saveSession(
   {
     // privacy:allow — 编造的样例，假上游不看内容
@@ -187,9 +191,66 @@ try {
     const versionLiterals = raw.match(/"[0-9]+\.[0-9.]+"/g) ?? [];
     check("zcode.json 里没有版本号字面量", versionLiterals.length === 0, versionLiterals.join(", "));
     check("zcode.json 里没有平台字面量", !/win32|darwin|linux/i.test(raw), raw);
-    check("preview 用的是 $const.ZCODE_CLAIM_APP_VERSION", raw.includes("$const.ZCODE_CLAIM_APP_VERSION"), raw);
-    check("preview 的 platform 用 $const.ZCODE_CLIENT_PLATFORM", raw.includes("$const.ZCODE_CLIENT_PLATFORM"), raw);
     check("balance 用的是 $const.ZCODE_VERSION", raw.includes("$const.ZCODE_VERSION"), raw);
+    check(
+      "zcode.json 里没有写死的版本号（版本走 $const）",
+      !raw.includes(ZCODE_CLAIM_APP_VERSION),
+      raw,
+    );
+  }
+
+  // ── 1e. 漂移回归：判据那条探针与 lib 里实际发请求的那处同源 ──────────────
+  {
+    const config = JSON.parse(
+      fs.readFileSync(path.join(import.meta.dirname!, "../tools/probes/zcode.json"), "utf8"),
+    ) as {
+      requests: { name: string; method: string; path: string; headers?: string }[];
+    };
+    const touch = config.requests.find((r) => r.name === "touch");
+    check("zcode.json 里有那条「可领」判据的探针（touch）", Boolean(touch), JSON.stringify(config.requests));
+    check(
+      "判据探针的路径就是 lib 里发请求的那个路径",
+      touch?.path === ZCODE_MARKETING_TOUCH_PATH,
+      `${touch?.path} vs ${ZCODE_MARKETING_TOUCH_PATH}`,
+    );
+    check(
+      "判据探针的头函数名是 lib 里那个（zcodeMarketingHeaders）",
+      touch?.headers === "zcodeMarketingHeaders",
+      String(touch?.headers),
+    );
+    check(
+      "探针工具的白名单里登记了这个头函数",
+      typeof HEADER_FACTORIES.zcodeMarketingHeaders === "function",
+      Object.keys(HEADER_FACTORIES).join(", "),
+    );
+    // 同一份来源：探针白名单里的那个函数与 lib 导出的那个给出一致的头。
+    // 逐个值比不了 —— 归因那几个头（x-request-id 之类）每次请求都不同，
+    // 比的是「有哪些头」与那几个关键的（版本、语言、设备）。
+    const session = loadSession("probe-test");
+    const probeHeaders = session ? HEADER_FACTORIES.zcodeMarketingHeaders("probe-test") : {};
+    const libHeaders = session ? zcodeMarketingHeaders(session) : {};
+    check(
+      "探针用的头与 lib 用的头是同一份（改一处两处一起变）",
+      session !== null &&
+        JSON.stringify(Object.keys(probeHeaders).sort()) === JSON.stringify(Object.keys(libHeaders).sort()) &&
+        probeHeaders["X-ZCode-App-Version"] === libHeaders["X-ZCode-App-Version"] &&
+        probeHeaders["X-Client-Language"] === libHeaders["X-Client-Language"] &&
+        probeHeaders["X-Device-Mid"] === libHeaders["X-Device-Mid"],
+      JSON.stringify({
+        probe: Object.keys(probeHeaders).sort(),
+        lib: Object.keys(libHeaders).sort(),
+      }),
+    );
+    check(
+      "判据那条头里的 App-Version 是账单那一版（不是模型请求那一版）",
+      probeHeaders["X-ZCode-App-Version"] === ZCODE_CLAIM_APP_VERSION,
+      String(probeHeaders["X-ZCode-App-Version"]),
+    );
+    check(
+      "判据探针不再指向 billing/preview（那条不参与判据）",
+      !config.requests.some((r) => r.path.includes("billing/preview")),
+      JSON.stringify(config.requests.map((r) => r.path)),
+    );
   }
 
   // ── 2. 回归：配置里带 authorization 键 → 拒绝，不发请求 ────────────────
@@ -316,7 +377,7 @@ try {
     const zcodeConfig = path.join(import.meta.dirname!, "../tools/probes/zcode.json");
     const r = await run(["--platform", "zcode", "--list"]);
     check("zcode.json 能通过校验并列出", r.code === 0, r.err);
-    check("列出 balance / preview / claim", ["balance", "preview", "claim"].every((n) => r.out.includes(n)), r.out);
+    check("列出 balance / touch / claim", ["balance", "touch", "claim"].every((n) => r.out.includes(n)), r.out);
     check("claim 标成写操作", r.out.includes("[写操作]"), r.out);
     check("--list 全程没有联网", recorded.every((h) => !h.url.includes("zcode")));
   }

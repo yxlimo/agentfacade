@@ -19,6 +19,7 @@ import { scrubForLog } from "../lib/log-scrub.ts";
 import { startFakeUpstream } from "../test/fake-upstream.ts";
 import { loadSession, ZCODE_BASE, ZCODE_VERSION } from "../lib/zcode/auth.ts";
 import { ZCODE_CLAIM_APP_VERSION } from "../lib/zcode/claim.ts";
+import { zcodeMarketingHeaders } from "../lib/zcode/marketing.ts";
 import { ZCODE_CLIENT_PLATFORM, zcodePlatformHeaders } from "../lib/zcode/transport.ts";
 
 // ── 白名单 ────────────────────────────────────────────────────────────────
@@ -38,6 +39,13 @@ export const HEADER_FACTORIES: Record<string, HeaderFactory> = {
     const session = loadSession(account);
     if (!session) throw new Error(`账号 ${account} 没有 zcode 会话（先在面板里登录这个账号）`);
     return zcodePlatformHeaders(session);
+  },
+  // 投放接口（marketing/touch）：平台头 + 账单那一版的 App-Version + 语言。
+  // 头在 lib 里拼（同一份常量），探针只调用它 —— 两边不会各写一份。
+  zcodeMarketingHeaders(account: string) {
+    const session = loadSession(account);
+    if (!session) throw new Error(`账号 ${account} 没有 zcode 会话（先在面板里登录这个账号）`);
+    return zcodeMarketingHeaders(session);
   },
 };
 
@@ -69,6 +77,13 @@ export interface ProbeRequest {
   body?: unknown;
   write?: boolean;
   notes?: string;
+  /**
+   * 这一条用哪个头函数（默认用配置文件里的那个）。
+   *
+   * 为什么允许单独指定：同一平台里不同接口的头不一样（投放接口要账单那一版
+   * 的 App-Version 与语言）。头还是在 lib 里拼，配置只写名字。
+   */
+  headers?: string;
 }
 
 export interface ProbeConfig {
@@ -127,6 +142,11 @@ export function validateConfig(config: ProbeConfig): void {
     if (!req.name || !req.method || !req.path) problems.push(`请求缺 name / method / path：${JSON.stringify(req)}`);
     if (names.has(req.name)) problems.push(`请求名重复：${req.name}`);
     names.add(req.name);
+    if (req.headers && !(req.headers in HEADER_FACTORIES)) {
+      problems.push(
+        `请求 ${req.name} 的 headers "${req.headers}" 不在白名单里（可选：${Object.keys(HEADER_FACTORIES).join(", ")}）`,
+      );
+    }
   }
   if (problems.length) throw new Error(`探针配置不合法：\n  - ${problems.join("\n  - ")}`);
 }
@@ -315,9 +335,9 @@ function printJsonFacts(bodyText: string): void {
 }
 
 async function runOne(config: ProbeConfig, req: ProbeRequest, args: Args, file: string): Promise<void> {
-  const headerFactory = HEADER_FACTORIES[config.headers];
+  const headerFactory = HEADER_FACTORIES[req.headers ?? config.headers];
   if (!headerFactory) {
-    throw new Error(`headers "${config.headers}" 不在白名单里 —— 这个平台的凭据头从哪来没定义`);
+    throw new Error(`headers "${req.headers ?? config.headers}" 不在白名单里 —— 这个平台的凭据头从哪来没定义`);
   }
   const base = BASES[config.base]?.();
   if (!base) throw new Error(`base "${config.base}" 不在登记处`);

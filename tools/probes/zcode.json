@@ -12,12 +12,13 @@
       "notes": "额度与计划（plans[] 里是领到的计划，balances[] 是桶）"
     },
     {
-      "name": "preview",
+      "name": "touch",
       "method": "GET",
-      "path": "/api/v1/zcode-plan/billing/preview",
-      "query": { "app_version": "$const.ZCODE_CLAIM_APP_VERSION", "platform": "$const.ZCODE_CLIENT_PLATFORM" },
+      "path": "/api/v1/marketing/touch",
+      "headers": "zcodeMarketingHeaders",
+      "query": { "seq": "0" },
       "write": false,
-      "notes": "有没有可领的；200 + code 0 + 没有 data = 此刻没有"
+      "notes": "投放接口：**有没有可领**由这一条决定（banner 上带 claim_zcode_plan 按钮的投放才算）。billing/preview 不参与判据"
     },
     {
       "name": "claim",
