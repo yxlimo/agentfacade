@@ -10,6 +10,13 @@
 // 把两个键拼成非法值，上游一律 401，据此误判「令牌过期」。手写探针的错
 // 长得像上游的错。所以：头只来自白名单函数，配置里不许出现凭据字面量，
 // 执行器自己也绝不添加 authorization / x-api-key / cookie。
+//
+// 往 stdout 打结果就是这个文件的全部职责：它是命令行工具，输出就是它的
+// 输出契约（pi-lens 的 no-console-except-error 是给库代码的规矩，对命令
+// 行工具不适用 —— 这里没有另一套「logger」可走）。
+//
+// 形状在边界定下来：配置是 JSON、上游答复也是 JSON，两处都在读的那一层
+// 解析成具名类型（ProbeValue / UpstreamJson），unknown 不往调用方流。
 
 import fs from "node:fs";
 import path from "node:path";
@@ -69,12 +76,20 @@ export const CONSTS: Record<string, () => string> = {
 
 // ── 配置 ─────────────────────────────────────────────────────────────────
 
+/**
+ * 探针配置里的值：JSON 能表达的那些。
+ *
+ * 配置是 JSON 文件，形状在读它的那一层定下来（见 parseProbeValue）——
+ * 里面的 unknown 不许往调用方流。
+ */
+export type ProbeValue = string | number | boolean | null | ProbeValue[] | { [key: string]: ProbeValue };
+
 export interface ProbeRequest {
-  name: string;
-  method: string;
-  path: string;
-  query?: Record<string, string>;
-  body?: unknown;
+  name?: string;
+  method?: string;
+  path?: string;
+  query?: Record<string, ProbeValue>;
+  body?: ProbeValue;
   write?: boolean;
   notes?: string;
   /**
@@ -84,13 +99,17 @@ export interface ProbeRequest {
    * 的 App-Version 与语言）。头还是在 lib 里拼，配置只写名字。
    */
   headers?: string;
+  /** 配置里没登记过的键也留着：凭据字面量那几项检查要看得见它们。 */
+  [key: string]: unknown;
 }
 
 export interface ProbeConfig {
-  platform: string;
-  headers: string;
-  base: string;
-  requests: ProbeRequest[];
+  platform?: string;
+  headers?: string;
+  base?: string;
+  requests?: ProbeRequest[];
+  /** 配置里没登记过的键也留着：凭据字面量那几项检查要看得见它们。 */
+  [key: string]: unknown;
 }
 
 /** 配置里不许出现的键名：探针配置只描述形状，凭据永远来自白名单函数。 */
@@ -129,15 +148,15 @@ function findLiterals(value: unknown, where: string): string[] {
 export function validateConfig(config: ProbeConfig): void {
   const problems: string[] = [];
   for (const hit of findLiterals(config, "config")) problems.push(hit);
-  if (!(config.headers in HEADER_FACTORIES)) {
+  if (!config.headers || !(config.headers in HEADER_FACTORIES)) {
     problems.push(
       `headers "${config.headers}" 不在白名单里（可选：${Object.keys(HEADER_FACTORIES).join(", ")}）—— 这个平台的凭据头从哪来没定义`,
     );
   }
-  if (!(config.base in BASES)) {
+  if (!config.base || !(config.base in BASES)) {
     problems.push(`base "${config.base}" 不在登记处（可选：${Object.keys(BASES).join(", ")}）`);
   }
-  const names = new Set<string>();
+  const names = new Set<string | undefined>();
   for (const req of config.requests ?? []) {
     if (!req.name || !req.method || !req.path) problems.push(`请求缺 name / method / path：${JSON.stringify(req)}`);
     if (names.has(req.name)) problems.push(`请求名重复：${req.name}`);
@@ -151,8 +170,94 @@ export function validateConfig(config: ProbeConfig): void {
   if (problems.length) throw new Error(`探针配置不合法：\n  - ${problems.join("\n  - ")}`);
 }
 
+/**
+ * 配置里的字符串字段：缺了留 undefined（校验要看出「缺」），别的形状照旧变成字符串。
+ *
+ * 为什么不是直接 String(value)：缺字段时旧行为是「字段为 undefined，校验报缺」，
+ * 变成 "undefined" 这个字符串就变成「有值」了 —— 校验会放过去。
+ */
+function optionalString(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === "string") return value;
+  return String(value);
+}
+
+/** JSON 里的值 → ProbeValue：配置读进来的那一刻就把形状定下来。 */
+function parseProbeValue(raw: unknown, where: string): ProbeValue {
+  if (raw === null) return null;
+  if (typeof raw === "string" || typeof raw === "boolean") return raw;
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : String(raw);
+  if (Array.isArray(raw)) return raw.map((v, i) => parseProbeValue(v, `${where}[${i}]`));
+  if (typeof raw === "object") {
+    const out: { [key: string]: ProbeValue } = {};
+    for (const [k, v] of Object.entries(raw)) out[k] = parseProbeValue(v, `${where}.${k}`);
+    return out;
+  }
+  return String(raw);
+}
+
+/** 一条请求：已登记的字段定形，没登记的键原样留着（凭据字面量检查要看得见它们）。 */
+function parseProbeRequest(raw: unknown): ProbeRequest {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`探针配置不合法：\n  - requests 里有一项不是对象：${JSON.stringify(raw)}`);
+  }
+  const obj = raw as Record<string, unknown>;
+  const req: ProbeRequest = {
+    ...obj,
+    name: optionalString(obj.name),
+    method: optionalString(obj.method),
+    path: optionalString(obj.path),
+  };
+  if (obj.query !== undefined) {
+    if (!obj.query || typeof obj.query !== "object" || Array.isArray(obj.query)) {
+      throw new Error(`探针配置不合法：\n  - 请求 ${req.name ?? "?"} 的 query 必须是对象`);
+    }
+    const query: Record<string, ProbeValue> = {};
+    for (const [k, v] of Object.entries(obj.query)) query[k] = parseProbeValue(v, `query.${k}`);
+    req.query = query;
+  }
+  if (obj.body !== undefined) req.body = parseProbeValue(obj.body, "body");
+  if (obj.write !== undefined) req.write = typeof obj.write === "boolean" ? obj.write : Boolean(obj.write);
+  if (obj.notes !== undefined) req.notes = optionalString(obj.notes);
+  if (obj.headers !== undefined) req.headers = optionalString(obj.headers);
+  return req;
+}
+
+/** 整个配置：已登记的字段定形，没登记的键原样留着（凭据字面量检查要看得见它们）。 */
+function parseProbeConfig(raw: unknown): ProbeConfig {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("探针配置不合法：顶层不是对象");
+  }
+  const obj = raw as Record<string, unknown>;
+  const config: ProbeConfig = {
+    ...obj,
+    platform: optionalString(obj.platform),
+    headers: optionalString(obj.headers),
+    base: optionalString(obj.base),
+  };
+  if (obj.requests !== undefined) {
+    if (!Array.isArray(obj.requests)) {
+      throw new Error("探针配置不合法：\n  - requests 必须是数组");
+    }
+    config.requests = obj.requests.map(parseProbeRequest);
+  }
+  return config;
+}
+
 export function loadConfig(file: string): ProbeConfig {
-  const config = JSON.parse(fs.readFileSync(file, "utf8")) as ProbeConfig;
+  let text: string;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch (err) {
+    throw new Error(`读不到探针配置 ${file}：${(err as Error).message}`);
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch (err) {
+    throw new Error(`探针配置 ${file} 不是合法 JSON：${(err as Error).message}`);
+  }
+  const config = parseProbeConfig(raw);
   validateConfig(config);
   return config;
 }
@@ -205,13 +310,17 @@ function parseArgs(argv: string[]): Args {
 const ARG_REF = /^\$arg\.([A-Za-z0-9_]+)$/;
 const CONST_REF = /^\$const\.([A-Za-z0-9_]+)$/;
 
+function isRecord(value: ProbeValue): value is { [key: string]: ProbeValue } {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function substitute(
-  value: unknown,
+  value: ProbeValue,
   provided: Record<string, string>,
   where: string,
   missing: string[],
   constErrors: string[],
-): unknown {
+): ProbeValue {
   if (typeof value === "string") {
     const c = CONST_REF.exec(value);
     if (c) {
@@ -232,8 +341,8 @@ function substitute(
     return value;
   }
   if (Array.isArray(value)) return value.map((v, i) => substitute(v, provided, `${where}[${i}]`, missing, constErrors));
-  if (value && typeof value === "object") {
-    const out: Record<string, unknown> = {};
+  if (isRecord(value)) {
+    const out: { [key: string]: ProbeValue } = {};
     for (const [k, v] of Object.entries(value)) out[k] = substitute(v, provided, `${where}.${k}`, missing, constErrors);
     return out;
   }
@@ -285,7 +394,7 @@ function buildUrl(
 ): { url: string; missing: string[]; constErrors: string[] } {
   const missing: string[] = [];
   const constErrors: string[] = [];
-  const pathPart = substituteInline(req.path, provided, "path", missing, constErrors);
+  const pathPart = substituteInline(req.path ?? "", provided, "path", missing, constErrors);
   const search = new URLSearchParams();
   for (const [k, v] of Object.entries(req.query ?? {})) {
     search.set(k, String(substitute(v, provided, `query.${k}`, missing, constErrors)));
@@ -297,49 +406,82 @@ function buildUrl(
 /** 请求引用了哪些 $arg 名字（不算缺，只是清单）。 */
 export function requestArgNames(req: ProbeRequest): string[] {
   const names: string[] = [];
-  const collect = (value: unknown) => {
+  const collect = (value: ProbeValue | undefined): void => {
+    if (value === undefined) return;
     if (typeof value === "string") {
       const m = ARG_REF.exec(value);
       if (m) names.push(m[1]);
       return;
     }
     if (Array.isArray(value)) value.forEach(collect);
-    else if (value && typeof value === "object") Object.values(value).forEach(collect);
+    else if (isRecord(value)) Object.values(value).forEach(collect);
   };
   collect(req.path);
   collect(req.query ?? {});
-  collect(req.body ?? {});
+  collect(req.body);
   return [...new Set(names)];
 }
 
-function printJsonFacts(bodyText: string): void {
-  let parsed: unknown;
+/** 上游答复的 JSON：形状在读它的那一层定下来。 */
+export type UpstreamJson = string | number | boolean | null | UpstreamJson[] | { [key: string]: UpstreamJson };
+
+/** JSON 里的值 → UpstreamJson：答复读进来的那一刻就把形状定下来。 */
+function toUpstreamJson(raw: unknown): UpstreamJson {
+  if (raw === null) return null;
+  if (typeof raw === "string" || typeof raw === "boolean") return raw;
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : String(raw);
+  if (Array.isArray(raw)) return raw.map(toUpstreamJson);
+  if (typeof raw === "object") {
+    const out: { [key: string]: UpstreamJson } = {};
+    for (const [k, v] of Object.entries(raw)) out[k] = toUpstreamJson(v);
+    return out;
+  }
+  return String(raw);
+}
+
+/** 读上游答复里的 JSON：不是 JSON 就说不是 JSON（null 是合法的 JSON，别混）。 */
+function parseUpstreamJson(bodyText: string): { ok: true; value: UpstreamJson } | { ok: false } {
+  let raw: unknown;
   try {
-    parsed = JSON.parse(bodyText);
+    raw = JSON.parse(bodyText);
   } catch {
+    return { ok: false };
+  }
+  return { ok: true, value: toUpstreamJson(raw) };
+}
+
+function isUpstreamRecord(value: UpstreamJson): value is { [key: string]: UpstreamJson } {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function printJsonFacts(bodyText: string): void {
+  const parsed = parseUpstreamJson(bodyText);
+  if (!parsed.ok) {
     console.log("正文不是 JSON —— 探针只摆事实，不猜它是什么");
     return;
   }
-  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-    const keys = Object.keys(parsed as Record<string, unknown>);
+  const value = parsed.value;
+  if (isUpstreamRecord(value)) {
+    const keys = Object.keys(value);
     console.log(`JSON 顶层键：${keys.join(", ") || "(空对象)"}`);
     for (const key of ["code", "msg", "data"]) {
-      if (key in (parsed as Record<string, unknown>)) {
-        const v = (parsed as Record<string, unknown>)[key];
+      if (key in value) {
+        const v = value[key];
         console.log(`  ${key} = ${typeof v === "object" ? JSON.stringify(v) : String(v)}`);
       }
     }
   } else {
-    console.log(`JSON 顶层是 ${Array.isArray(parsed) ? `数组（${parsed.length} 项）` : typeof parsed}`);
+    console.log(`JSON 顶层是 ${Array.isArray(value) ? `数组（${value.length} 项）` : typeof value}`);
   }
 }
 
 async function runOne(config: ProbeConfig, req: ProbeRequest, args: Args, file: string): Promise<void> {
-  const headerFactory = HEADER_FACTORIES[req.headers ?? config.headers];
+  const headerName = req.headers ?? config.headers;
+  const headerFactory = headerName ? HEADER_FACTORIES[headerName] : undefined;
   if (!headerFactory) {
-    throw new Error(`headers "${req.headers ?? config.headers}" 不在白名单里 —— 这个平台的凭据头从哪来没定义`);
+    throw new Error(`headers "${headerName}" 不在白名单里 —— 这个平台的凭据头从哪来没定义`);
   }
-  const base = BASES[config.base]?.();
+  const base = config.base ? BASES[config.base]?.() : undefined;
   if (!base) throw new Error(`base "${config.base}" 不在登记处`);
 
   // 写操作的闸门在发送之前：一旦写出去就没有降级的余地。
@@ -381,7 +523,7 @@ async function runOne(config: ProbeConfig, req: ProbeRequest, args: Args, file: 
     req.body === undefined
       ? undefined
       : JSON.stringify(substitute(req.body, args.arg, "body", missing, constErrors));
-  const method = req.method.toUpperCase();
+  const method = (req.method ?? "").toUpperCase();
 
   // 「我要看这个探针到底会发什么」的标准答案，替代自己在 /tmp 写个 srv.mjs。
   // --dry-run：一个请求都不发；--fake：发到进程内假上游，绝不碰真上游。
@@ -398,8 +540,14 @@ async function runOne(config: ProbeConfig, req: ProbeRequest, args: Args, file: 
     }
     const fake = await startFakeUpstream();
     try {
-      const u = new URL(url);
-      const target = `${fake.url}${u.pathname}${u.search}`;
+      let target: string;
+      try {
+        const u = new URL(url);
+        target = `${fake.url}${u.pathname}${u.search}`;
+      } catch (err) {
+        // 这条探针的哪部分不合法：base + path + query 拼出来的 URL 解析不了。
+        throw new Error(`这条探针拼出来的 URL 不合法（base + path + query）：${url}（${(err as Error).message}）`);
+      }
       console.log("--fake：发到进程内假上游，发出去的是：");
       describe(target);
       const res = await fetch(target, {
@@ -441,7 +589,9 @@ async function runOne(config: ProbeConfig, req: ProbeRequest, args: Args, file: 
 // ── main ─────────────────────────────────────────────────────────────────
 
 function configPathFor(platform: string): string {
-  return path.join(import.meta.dirname!, "probes", `${platform}.json`);
+  const dir = import.meta.dirname;
+  if (!dir) throw new Error("找不到 tools/ 目录（import.meta.dirname 不可用）");
+  return path.join(dir, "probes", `${platform}.json`);
 }
 
 export async function main(argv: string[]): Promise<number> {
@@ -474,8 +624,10 @@ export async function main(argv: string[]): Promise<number> {
 
   if (args.list) {
     console.log(`平台 ${config.platform}（配置 ${file}）声明的请求：`);
-    for (const req of config.requests) {
-      console.log(`  ${req.name.padEnd(12)} ${req.method.padEnd(5)} ${req.path}${req.write ? "  [写操作]" : ""}`);
+    for (const req of config.requests ?? []) {
+      console.log(
+        `  ${(req.name ?? "").padEnd(12)} ${(req.method ?? "").padEnd(5)} ${req.path ?? ""}${req.write ? "  [写操作]" : ""}`,
+      );
       if (req.notes) console.log(`    ${req.notes}`);
     }
     return 0;
@@ -485,9 +637,11 @@ export async function main(argv: string[]): Promise<number> {
     console.error("缺 --request（用 --list 看这个平台有哪些请求）");
     return 2;
   }
-  const req = config.requests.find((r) => r.name === args.request);
+  const req = (config.requests ?? []).find((r) => r.name === args.request);
   if (!req) {
-    console.error(`配置里没有名为 "${args.request}" 的请求（有：${config.requests.map((r) => r.name).join(", ")}）`);
+    console.error(
+      `配置里没有名为 "${args.request}" 的请求（有：${(config.requests ?? []).map((r) => r.name).join(", ")}）`,
+    );
     return 2;
   }
 

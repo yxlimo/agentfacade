@@ -53,7 +53,7 @@ const CLAIM_TIMEOUT_MS = configNumber("ZCODE_CLAIM_TIMEOUT_MS", 20_000);
  * 所以这里整组当一个终态（`already`），不猜具体含义 —— 服务端的中文原话
  * 一起传上去，面板念原话，人才看得出到底哪一条。
  */
-export const ZCODE_CLAIM_TERMINAL_CODES = [1001, 1002, 1003, 1004, 1005];
+const ZCODE_CLAIM_TERMINAL_CODES = [1001, 1002, 1003, 1004, 1005];
 
 /** 需要人工过验证码时上游给的业务码。 */
 const CAPTCHA_CODE = 3007;
@@ -66,7 +66,7 @@ const CAPTCHA_TEXT = "验证码校验失败";
  * ------------------------------------------------------------------ */
 
 /** 计划里的一项权益。 */
-export interface ZcodeClaimEntitlement {
+interface ZcodeClaimEntitlement {
   entitlementId: string;
   showName: string;
   meter: string;
@@ -80,7 +80,7 @@ export interface ZcodeClaimEntitlement {
 }
 
 /** 领到的一个计划。 */
-export interface ZcodeClaimedPlan {
+interface ZcodeClaimedPlan {
   planId: string;
   userPlanId: string;
   status: string;
@@ -203,12 +203,10 @@ function shortPlanId(planId: string): string {
  * `failed` 用 warn（这一轮没成，要看见），其余用 log。
  */
 export function logClaimAttempt(fields: ZcodeClaimLogFields): void {
-  const offers =
-    fields.offers === null
-      ? "unknown"
-      : fields.offers === 0
-        ? "0（没有可领）"
-        : String(fields.offers);
+  let offers: string;
+  if (fields.offers === null) offers = "unknown";
+  else if (fields.offers === 0) offers = "0（没有可领）";
+  else offers = String(fields.offers);
   const parts = [
     `[ZCODE] claim account=${fields.accountId} platform=${fields.platformId}`,
     `offers=${offers}`,
@@ -226,6 +224,8 @@ export function logClaimAttempt(fields: ZcodeClaimLogFields): void {
   const effective = fields.effectiveAt ? String(fields.effectiveAt) : "";
   if (effective) parts.push(`effective=${effective}`);
   const line = parts.join(" ");
+  // console.* 在这里是刻意的：这一行就是本仓库的日志出口（上游正文要能进
+  // 日志，仓库里没有另一套 logger），不是漏掉的调试打印。
   if (fields.state === "failed") console.warn(line);
   else console.log(line);
 }

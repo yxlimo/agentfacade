@@ -62,7 +62,7 @@ export type { ZcodeClaimSnapshot };
  * 环境变量每次现读（不是读一次定死）：这样改了不用重启，测试也能现开现关。
  * 环境变量没给时走配置（面板写进库的那份）。
  */
-export function autoClaimEnabled(): boolean {
+function autoClaimEnabled(): boolean {
   const raw = readEnvValue("FACADE_ZCODE_AUTO_CLAIM");
   const parsed = raw === null ? null : parseBool(raw);
   if (parsed !== null) return parsed;
@@ -215,7 +215,7 @@ function claimedKeysOf(providerId: string): string[] {
  * 「priority 最大」是按数字大小取的：上游给的是数字，没说越小越优先，那就按
  * 字面意思（大的先）。
  */
-export function pickOffer<T extends { priority: number }>(offers: T[]): T | null {
+function pickOffer<T extends { priority: number }>(offers: T[]): T | null {
   if (!offers.length) return null;
   let best = offers[0];
   for (const offer of offers) {
@@ -410,10 +410,10 @@ export async function claimOnce(providerId: string): Promise<ZcodeClaimSnapshot 
   const code = "code" in result ? result.code : null;
   // 验证码那一档要说清下一步怎么做：网关过不了阿里云验证码，人得自己去
   // 官方客户端点一次领取。含糊的「失败」会让人以为再等等就好了。
-  const message =
-    result.state === "captcha"
-      ? `需在官方客户端点一次领取（网关过不了验证码）${result.message ? `：${result.message}` : ""}`
-      : result.message;
+  let message = result.message;
+  if (result.state === "captcha") {
+    message = `需在官方客户端点一次领取（网关过不了验证码）${result.message ? `：${result.message}` : ""}`;
+  }
   logClaimAttempt({
     accountId: providerId,
     platformId,

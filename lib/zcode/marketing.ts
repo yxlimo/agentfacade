@@ -160,6 +160,13 @@ export function parseTouchDeliveries(deliveries: unknown): {
     const effectiveTimes = entitlements
       .map((e) => isoOfSeconds((e as Record<string, unknown>)?.effective_at))
       .filter((t): t is string => Boolean(t));
+    // 这些是 ISO-8601 字符串，字典序即时间序，所以最早的那条就是字典序最小的
+    // 那条 —— 写显式比较，别靠 sort() 的默认行为（入参一换成 epoch 数字或别的
+    // 格式，sort 的默认比较就静默错）。
+    let effectiveAt: string | null = null;
+    for (const t of effectiveTimes) {
+      if (effectiveAt === null || t < effectiveAt) effectiveAt = t;
+    }
     offers.push({
       campaignId: String(delivery.campaign_id ?? ""),
       planId,
@@ -170,7 +177,7 @@ export function parseTouchDeliveries(deliveries: unknown): {
       grantUnits: entitlements
         .map((e) => Number((e as Record<string, unknown>)?.grant_units ?? 0))
         .filter((n) => Number.isFinite(n) && n > 0),
-      effectiveAt: effectiveTimes.sort()[0] ?? null,
+      effectiveAt,
     });
   }
   return { offers, invalid };

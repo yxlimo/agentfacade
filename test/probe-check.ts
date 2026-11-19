@@ -381,6 +381,19 @@ try {
     check("claim 标成写操作", r.out.includes("[写操作]"), r.out);
     check("--list 全程没有联网", recorded.every((h) => !h.url.includes("zcode")));
   }
+
+  // ── 11. 配置不是合法 JSON → 说清哪份配置不合法，退出非零 ─────────────────
+  {
+    const before = recorded.length;
+    const file = path.join(dataDir, "broken.json");
+    fs.writeFileSync(file, "{ this is not json");
+    const r = await run(["--request", "whoami"], file);
+    check("非法 JSON 的配置被拒绝（退出码 2）", r.code === 2, `${r.code} ${r.out}${r.err}`);
+    check("报错点名是哪个配置文件", r.err.includes("broken.json"), r.err);
+    check("报错说清不是合法 JSON", r.err.includes("不是合法 JSON"), r.err);
+    check("报错里没有甩出栈", !/\n\s+at /.test(r.err), r.err);
+    check("被拒绝的配置没有发出任何请求", recorded.length === before);
+  }
 } finally {
   server.close();
   fs.rmSync(dataDir, { recursive: true, force: true });
