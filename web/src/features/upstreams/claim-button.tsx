@@ -36,6 +36,9 @@ export function ClaimButton({
   const elementRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const [result, setResult] = useState<ClaimWording | null>(null)
+  // SDK 只认 CSS 选择器字符串，节点 id 在同一页面里固定且唯一。
+  const elementSelector = '#zcode-captcha-element'
+  const buttonSelector = '#zcode-captcha-button'
 
   if (platform !== 'zcode') return null
   if (status.isPending || status.isError) return null
@@ -63,13 +66,16 @@ export function ClaimButton({
       sceneId: captcha.sceneId,
       prefix: captcha.prefix,
       region: captcha.region,
-      element: elementRef.current,
-      button: buttonRef.current,
+      element: elementSelector,
+      button: buttonSelector,
     })
     if (!verification.ok) {
       setResult(wordingOfCaptcha(verification.stage))
       return
     }
+    const interactiveNotice = verification.interactive
+      ? '这台浏览器不支持无感验证，已用交互式验证码通过'
+      : ''
     try {
       const answer = await claim.mutateAsync({
         providerId: account.id,
@@ -79,10 +85,16 @@ export function ClaimButton({
         // 上游没给 region 时契约里这一格是空串，不是「随便填一个」。
         captchaRegion: captcha.region,
       })
-      setResult(wordingOf(answer))
+      const answerWording = wordingOf(answer)
+      setResult(
+        interactiveNotice
+          ? { text: `${interactiveNotice}；${answerWording.text}`, error: answerWording.error }
+          : answerWording
+      )
     } catch {
       // 传输层失败（连不上网关）时服务端没给结论，不说「没领到」。
-      setResult({ text: '这次领取的结果还不知道，请稍后再看', error: false })
+      const unknown = { text: '这次领取的结果还不知道，请稍后再看', error: false }
+      setResult(interactiveNotice ? { text: `${interactiveNotice}；${unknown.text}`, error: false } : unknown)
     }
   }
 
@@ -91,11 +103,13 @@ export function ClaimButton({
       {/* SDK 要求容器与按钮节点都存在，所以这一格始终挂在 DOM 上，只是不可见。 */}
       <div
         ref={elementRef}
+        id={elementSelector.slice(1)}
         aria-hidden='true'
         className='pointer-events-none absolute h-0 w-0 overflow-hidden'
       />
       <Button
         ref={buttonRef}
+        id={buttonSelector.slice(1)}
         size='sm'
         disabled={running || !enabled}
         onClick={() => void onClick()}

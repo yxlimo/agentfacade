@@ -20,32 +20,40 @@ const CLAIM_PATH = '/agentfacade.admin.v1.AdminService/ClaimZcodePlan';
 const STATUS_PATH = '/agentfacade.admin.v1.AdminService/GetZcodeClaimStatus';
 
 /** 假 SDK：记下 init 收到的节点与配置，按页面上挂的开关决定成功还是失败。 */
+// 照真 SDK 的调用契约：一个参数对象里带四个回调，mode 只认 popup/embed，
+// element/button 是选择器，实例由 getInstance 给，无感方法无参。
 const FAKE_SDK = `
 (() => {
   window.__captchaCalls = [];
-  window.initAliyunCaptcha = (config, onReady) => {
+  window.__captchaConfigAtScript = window.AliyunCaptchaConfig;
+  window.initAliyunCaptcha = (params) => {
+    if (!['popup', 'embed'].includes(params.mode)) throw new Error('modeError');
+    if (typeof params.element !== 'string' || typeof params.button !== 'string') throw new Error('elementError');
+    if (typeof params.getInstance !== 'function' || typeof params.success !== 'function' ||
+        typeof params.fail !== 'function' || typeof params.onError !== 'function') {
+      throw new Error('paramsError');
+    }
     window.__captchaCalls.push({
-      sceneId: config.SceneId,
-      prefix: config.prefix,
-      region: config.region,
-      mode: config.mode,
-      language: config.language,
-      elementExists: !!config.element && document.contains(config.element),
-      buttonExists: !!config.button && document.contains(config.button),
+      sceneId: params.SceneId,
+      prefix: params.prefix,
+      region: params.region,
+      mode: params.mode,
+      language: params.language,
+      elementExists: !!document.querySelector(params.element),
+      buttonExists: !!document.querySelector(params.button),
     });
     const instance = {
-      startTracelessVerification(callback, onError) {
-        window.__captchaCalls.push({ started: true });
+      startTracelessVerification() {
+        window.__captchaCalls.push({ started: true, startArgs: arguments.length });
         const mode = window.__captchaMode || 'success';
         if (mode === 'failure') {
-          onError({ code: 'DYNAMICJS_FAIL', message: 'fake SDK failed' });
+          params.onError({ code: 'DYNAMICJS_FAIL', msg: 'fake SDK failed' });
         } else {
-          callback({ captchaVerifyParam: 'param-TESTONLY', certifyId: 'cert-TESTONLY' });
+          params.success('param-TESTONLY');
         }
       },
     };
-    window.aliyunCaptchaInstance = instance;
-    if (onReady) onReady(instance);
+    params.getInstance(instance);
   };
 })();
 `;
@@ -152,18 +160,23 @@ test('有 offer + 验证码配置：点领取 → 假 SDK 给 param → 带正�
 
     // SDK 那一侧：init 收到的 scene/prefix/region/中文都在，两个节点都真在页面上。
     const calls = await browser.evaluate<
-      { sceneId?: string; prefix?: string; region?: string; mode?: string; language?: string; elementExists?: boolean; buttonExists?: boolean; started?: boolean }[]
+      { sceneId?: string; prefix?: string; region?: string; mode?: string; language?: string; elementExists?: boolean; buttonExists?: boolean; started?: boolean; startArgs?: number }[]
     >('window.__captchaCalls');
     expect(calls[0]).toMatchObject({
       sceneId: 'scene-TESTONLY',
       prefix: 'prefix-TESTONLY',
       region: 'cn',
-      mode: 'no_Captcha',
+      mode: 'popup',
       language: 'cn',
       elementExists: true,
       buttonExists: true,
     });
-    expect(calls.some((call) => call.started === true)).toBe(true);
+    expect(calls[0].mode).toBe('popup');
+    const configAtScript = await browser.evaluate<{ region?: string; prefix?: string }>(
+      'window.__captchaConfigAtScript',
+    );
+    expect(configAtScript).toEqual({ region: 'cn', prefix: 'prefix-TESTONLY' });
+    expect(calls.some((call) => call.started === true && call.startArgs === 0)).toBe(true);
   } finally {
     if (account) await adminRpc('DeleteAccount', { id: account }).catch(() => {});
   }

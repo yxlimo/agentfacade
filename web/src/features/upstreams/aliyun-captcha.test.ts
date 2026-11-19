@@ -7,14 +7,18 @@ import {
   type SdkMessage,
 } from '@/features/upstreams/aliyun-captcha'
 
-/** 页面里真的挂两个节点：SDK 要求它们存在，假实现也照这个规矩验。 */
+/** 页面里真的挂两个节点：SDK 用 CSS 选择器取它们，假实现也照这个规矩验。 */
 function nodes() {
   const host = document.createElement('div')
+  host.id = 'captcha-host-TESTONLY'
   const button = document.createElement('button')
+  button.id = 'captcha-button-TESTONLY'
   document.body.append(host, button)
   return {
-    element: host,
-    button,
+    element: `#${host.id}`,
+    button: `#${button.id}`,
+    host,
+    buttonNode: button,
     cleanup: () => {
       host.remove()
       button.remove()
@@ -22,45 +26,76 @@ function nodes() {
   }
 }
 
-/** 一套记录调用顺序的假 SDK。 */
+type Params = Parameters<AliyunCaptchaSdk['initAliyunCaptcha']>[0]
+
+/**
+ * 照公开 AliyunCaptcha.js 的形状实现假 SDK：
+ * 一个参数对象，四回调都在里面；mode 只收 popup/embed；element/button 是选择器。
+ */
 function fakeSdk(opts: {
-  success?: SdkMessage
+  success?: string
   error?: SdkMessage
-  initThrows?: Error
-  startThrows?: Error
+  initThrow?: (params: Params) => Error | undefined
+  badMode?: boolean
+  startThrow?: Error
+  withoutTraceless?: boolean
+  tracelessCallsArgs?: (args: unknown[]) => void
+  show?: (instance: CaptchaInstance) => void
 } = {}) {
   const calls: string[] = []
-  let gotConfig: Record<string, unknown> | undefined
+  let gotParams: Params | undefined
   const instance: CaptchaInstance = {
-    startTracelessVerification(callback, onError) {
-      calls.push('start')
-      if (opts.startThrows) throw opts.startThrows
-      if (opts.error) onError(opts.error)
-      else if (opts.success) callback(opts.success)
-      // 都不给：等超时。
+    startTracelessVerification:
+      opts.withoutTraceless === true
+        ? undefined
+        : (...args: unknown[]) => {
+            calls.push('start')
+            opts.tracelessCallsArgs?.(args)
+            if (opts.startThrow) throw opts.startThrow
+            if (opts.success !== undefined) gotParams?.success(opts.success)
+            else if (opts.error) gotParams?.onError(opts.error)
+          },
+    show: () => {
+      calls.push('show')
+      opts.show?.(instance)
+      // 交互式过了也走同一个 success 回调，参数是原样的字符串。
+      if (opts.success !== undefined) gotParams?.success(opts.success)
     },
   }
   const sdk: AliyunCaptchaSdk = {
-    initAliyunCaptcha(config, onReady) {
+    initAliyunCaptcha(params) {
       calls.push('init')
-      gotConfig = config
-      if (opts.initThrows) throw opts.initThrows
-      onReady?.(instance)
+      const effective = opts.badMode
+        ? ({ ...params, mode: 'no_Captcha' } as unknown as Params)
+        : params
+      gotParams = effective
+      if (!['popup', 'embed'].includes(effective.mode)) {
+        throw new Error(
+          'modeError: 目前支持弹出式（popup）和嵌入式（embed）。请参见mode参数说明检查此参数是否符合要求。'
+        )
+      }
+      if (typeof params.element !== 'string' || typeof params.button !== 'string') {
+        throw new Error('elementError: 参数必须是 CSS 选择器字符串')
+      }
+      const initError = opts.initThrow?.(effective)
+      if (initError) throw initError
+      effective.getInstance(instance)
     },
   }
-  return { sdk, calls, configOf: () => gotConfig }
+  return { sdk, calls, paramsOf: () => gotParams }
 }
 
 afterEach(() => {
   setCaptchaLoaderForTest(null)
   document.querySelectorAll('script[src*="AliyunCaptcha.js"]').forEach((s) => s.remove())
+  delete (window as Window & { AliyunCaptchaConfig?: unknown }).AliyunCaptchaConfig
 })
 
-describe('阿里云无感验证码封装', () => {
-  it('成功：按 加载 → init → start 的顺序走，init 带齐场景、节点与中文，param 原样交出', async () => {
+describe('阿里云验证码封装', () => {
+  it('成功：Config 先设 → init(四回调) → 无参 start，param 原样交出', async () => {
     const { element, button, cleanup } = nodes()
-    const { sdk, calls, configOf } = fakeSdk({
-      success: { captchaVerifyParam: 'param-TESTONLY', certifyId: 'cert-1' },
+    const { sdk, calls, paramsOf } = fakeSdk({
+      success: 'param-TESTONLY',
     })
     setCaptchaLoaderForTest(async () => sdk)
 
@@ -72,21 +107,110 @@ describe('阿里云无感验证码封装', () => {
       button,
     })
 
-    expect(result).toEqual({
-      ok: true,
-      param: 'param-TESTONLY',
-      certifyId: 'cert-1',
-    })
+    expect(result).toEqual({ ok: true, param: 'param-TESTONLY', interactive: false })
     expect(calls).toEqual(['init', 'start'])
-    expect(configOf()).toMatchObject({
+    expect(paramsOf()).toMatchObject({
       SceneId: 'scene-1',
       prefix: 'prefix-1',
       region: 'cn',
-      mode: 'no_Captcha',
+      mode: 'popup',
       language: 'cn',
+      showErrorTip: false,
       element,
       button,
     })
+    expect(typeof paramsOf()?.getInstance).toBe('function')
+    expect(typeof paramsOf()?.success).toBe('function')
+    expect(typeof paramsOf()?.fail).toBe('function')
+    expect(typeof paramsOf()?.onError).toBe('function')
+    expect((window as Window & { AliyunCaptchaConfig?: unknown }).AliyunCaptchaConfig).toEqual({
+      region: 'cn',
+      prefix: 'prefix-1',
+    })
+    cleanup()
+  })
+
+  it('守门：mode 不是 popup/embed 时假 SDK 抛 modeError，报成 init 层', async () => {
+    const { element, button, cleanup } = nodes()
+    const { sdk } = fakeSdk({
+      // 模拟旧实现把 mode 写成不存在的值：假 SDK 按真 SDK 校验抛 modeError。
+      badMode: true,
+    })
+    setCaptchaLoaderForTest(async () => sdk)
+
+    const result = await runTracelessVerification({
+      sceneId: 's', prefix: 'p', region: 'cn', element, button,
+    })
+    expect(result).toMatchObject({ ok: false, stage: 'init', code: 'modeError' })
+    expect(result.ok === false && result.message).toContain('modeError')
+    cleanup()
+  })
+
+  it('守门：注入脚本之前 window.AliyunCaptchaConfig 已经设好', async () => {
+    const { element, button, cleanup } = nodes()
+    const seen: Array<Record<string, unknown> | undefined> = []
+    const { sdk } = fakeSdk({ success: 'p' })
+    setCaptchaLoaderForTest(async () => {
+      seen.push(
+        (window as Window & { AliyunCaptchaConfig?: Record<string, unknown> }).AliyunCaptchaConfig
+      )
+      return sdk
+    })
+    await runTracelessVerification({
+      sceneId: 's', prefix: 'pfx-1', region: 'sg', element, button,
+    })
+    expect(seen).toEqual([{ region: 'sg', prefix: 'pfx-1' }])
+    cleanup()
+  })
+
+  it('守门：element/button 传的是 CSS 选择器字符串，不是 DOM 节点', async () => {
+    const { element, button, cleanup } = nodes()
+    const { sdk, paramsOf } = fakeSdk({ success: 'p' })
+    setCaptchaLoaderForTest(async () => sdk)
+    await runTracelessVerification({
+      sceneId: 's', prefix: 'p', region: 'cn', element, button,
+    })
+    expect(paramsOf()?.element).toBe(element)
+    expect(paramsOf()?.button).toBe(button)
+    expect(typeof paramsOf()?.element).toBe('string')
+    expect(typeof paramsOf()?.button).toBe('string')
+    cleanup()
+  })
+
+  it('守门：无感不可用时 show() 走交互式，结果标记 interactive', async () => {
+    const { element, button, cleanup } = nodes()
+    const tracelessArgs: unknown[][] = []
+    for (const variant of ['missing', 'throws'] as const) {
+      const { sdk, calls } = fakeSdk({
+        success: 'interactive-param-TESTONLY',
+        withoutTraceless: variant === 'missing',
+        startThrow:
+          variant === 'throws'
+            ? new Error('Traceless verification is unavailable for this captcha instance.')
+            : undefined,
+        tracelessCallsArgs: (args) => {
+          tracelessArgs.push(args)
+        },
+      })
+      setCaptchaLoaderForTest(async () => sdk)
+      const result = await runTracelessVerification({
+        sceneId: 's', prefix: 'p', region: 'cn', element, button,
+      })
+      expect(result).toEqual({ ok: true, param: 'interactive-param-TESTONLY', interactive: true })
+      expect(calls).toEqual(variant === 'missing' ? ['init', 'show'] : ['init', 'start', 'show'])
+      expect(tracelessArgs).toEqual(variant === 'missing' ? [] : [[]])
+    }
+    cleanup()
+  })
+
+  it('无感方法抛别的错时报验证层，不冒充交互式', async () => {
+    const { element, button, cleanup } = nodes()
+    const { sdk } = fakeSdk({ startThrow: new Error('设备指纹失败') })
+    setCaptchaLoaderForTest(async () => sdk)
+    const result = await runTracelessVerification({
+      sceneId: 's', prefix: 'p', region: 'cn', element, button,
+    })
+    expect(result).toMatchObject({ ok: false, stage: 'verification', message: '设备指纹失败' })
     cleanup()
   })
 
@@ -95,21 +219,17 @@ describe('阿里云无感验证码封装', () => {
     setCaptchaLoaderForTest(async () => {
       throw new Error('CDN 不可达')
     })
-
     const result = await runTracelessVerification({
       sceneId: 's', prefix: 'p', region: '', element, button,
     })
-
     expect(result).toMatchObject({ ok: false, stage: 'script' })
     expect(result.ok === false && result.message).toContain('CDN 不可达')
     cleanup()
   })
 
-  it('加载到了但没有 init 入口：也是 script 失败，不是「验证码没过」', async () => {
+  it('加载到了但没有 init 入口：也是 script 失败', async () => {
     const { element, button, cleanup } = nodes()
-    // 脚本加载完了但 SDK 没挂上来：用不完整形状模拟第三方改了版本。
     setCaptchaLoaderForTest(async () => ({}) as AliyunCaptchaSdk)
-
     const result = await runTracelessVerification({
       sceneId: 's', prefix: 'p', region: '', element, button,
     })
@@ -117,29 +237,27 @@ describe('阿里云无感验证码封装', () => {
     cleanup()
   })
 
-  it('节点不在页面上：先报 init 失败，不调 SDK（避免 elementError）', async () => {
-    const { element, button } = nodes()
-    element.remove()
-    const { sdk, calls } = fakeSdk({ success: { captchaVerifyParam: 'p' } })
+  it('选择器找不到节点：先报 init 失败，不调 SDK', async () => {
+    const { element, button, host, cleanup } = nodes()
+    host.remove()
+    const { sdk, calls } = fakeSdk({ success: 'p' })
     setCaptchaLoaderForTest(async () => sdk)
-
     const result = await runTracelessVerification({
       sceneId: 's', prefix: 'p', region: '', element, button,
     })
     expect(result).toMatchObject({ ok: false, stage: 'init', code: 'ELEMENT_MISSING' })
     expect(calls).toEqual([])
-    button.remove()
+    cleanup()
   })
 
-  it('init 抛错：报 init 层，带 INIT_FAIL', async () => {
+  it('init 抛错：报 init 层，带 SDK 原文', async () => {
     const { element, button, cleanup } = nodes()
-    const { sdk } = fakeSdk({ initThrows: new Error('配置不合法') })
+    const { sdk } = fakeSdk({ initThrow: () => new Error('配置不合法') })
     setCaptchaLoaderForTest(async () => sdk)
-
     const result = await runTracelessVerification({
       sceneId: 's', prefix: 'p', region: '', element, button,
     })
-    expect(result).toMatchObject({ ok: false, stage: 'init', code: 'INIT_FAIL' })
+    expect(result).toMatchObject({ ok: false, stage: 'init', code: 'INIT_FAIL', message: '配置不合法' })
     cleanup()
   })
 
@@ -148,13 +266,12 @@ describe('阿里云无感验证码封装', () => {
     ['DEVICE_INIT_FAIL', 'device'],
     ['DYNAMICJS_FAIL', 'verification'],
     ['LIMIT_FLOW', 'verification'],
-  ])('SDK 错误码 %s 落在 %s 层，原话留着', async (code, stage) => {
+    ['T001', 'verification'],
+    ['F001', 'verification'],
+  ])('SDK 错误码 %s 落在 %s 层，msg 原话留着', async (code, stage) => {
     const { element, button, cleanup } = nodes()
-    const { sdk } = fakeSdk({
-      error: { code, message: `上游说 ${code}` },
-    })
+    const { sdk } = fakeSdk({ error: { code, msg: `上游说 ${code}` } })
     setCaptchaLoaderForTest(async () => sdk)
-
     const result = await runTracelessVerification({
       sceneId: 's', prefix: 'p', region: '', element, button,
     })
@@ -163,11 +280,10 @@ describe('阿里云无感验证码封装', () => {
     cleanup()
   })
 
-  it('回调里没有 param：报拿不到结果，不把「不知道」说成「没通过」', async () => {
+  it('success 收到空串：报拿不到结果，不把「不知道」说成「没通过」', async () => {
     const { element, button, cleanup } = nodes()
-    const { sdk } = fakeSdk({ success: { certifyId: '只有 id' } })
+    const { sdk } = fakeSdk({ success: '' })
     setCaptchaLoaderForTest(async () => sdk)
-
     const result = await runTracelessVerification({
       sceneId: 's', prefix: 'p', region: '', element, button,
     })
@@ -176,11 +292,26 @@ describe('阿里云无感验证码封装', () => {
     cleanup()
   })
 
+  it('fail 回调也报验证层', async () => {
+    const { element, button, cleanup } = nodes()
+    const { sdk } = fakeSdk({
+      withoutTraceless: true,
+      show: () => {
+        // 交互式失败走 fail，而不是 success。
+      },
+    })
+    setCaptchaLoaderForTest(async () => sdk)
+    const result = await runTracelessVerification({
+      sceneId: 's', prefix: 'p', region: '', element, button,
+    })
+    expect(result.ok).toBe(false)
+    cleanup()
+  })
+
   it('一直没回调：报 timeout 层', async () => {
     const { element, button, cleanup } = nodes()
     const { sdk } = fakeSdk()
     setCaptchaLoaderForTest(async () => sdk)
-
     const result = await runTracelessVerification({
       sceneId: 's', prefix: 'p', region: '', element, button, timeoutMs: 20,
     })
@@ -193,8 +324,6 @@ describe('阿里云无感验证码封装', () => {
     const spy = vi.fn(async () => fakeSdk().sdk)
     setCaptchaLoaderForTest(spy)
     setCaptchaLoaderForTest(null)
-    // 真加载器会去动 script 节点；这里只确认注入被清掉了，不发真请求：
-    // 用一个假的 document 让 appendChild 落空，load 也不会触发，直接用超时收口。
     const fakeDoc = {
       querySelector: () => null,
       createElement: () => ({

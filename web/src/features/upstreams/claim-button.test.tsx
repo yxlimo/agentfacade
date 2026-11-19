@@ -29,7 +29,7 @@ vi.mock('@/features/upstreams/aliyun-captcha', () => ({
 
 /** 与真实封装同形状的假结果。 */
 function verification(param: string): TracelessResult {
-  return { ok: true, param, certifyId: 'cert-TESTONLY' }
+  return { ok: true, param, interactive: false }
 }
 
 function zcodePlatform() {
@@ -194,6 +194,21 @@ describe('ZCode 账号行的领取按钮', () => {
       captchaRegion: 'cn',
     })
     expect(await screen.findByText(/已领到.*优先/)).toBeInTheDocument()
+  })
+
+  it('交互式通过：如实说这次不是无感，照常发领取请求', async () => {
+    const user = userEvent.setup({ delay: null })
+    runTraceless.mockResolvedValue({ ok: true, param: 'param-TESTONLY', interactive: true })
+    const { client, claimInputs } = setup()
+    renderWithClient({ client, children: <UpstreamsPage /> })
+    await open(user)
+    await user.click(await screen.findByRole('button', { name: '领取' }))
+
+    const status = await screen.findByRole('status')
+    expect(status).toHaveTextContent('交互式验证码通过')
+    expect(status).not.toHaveTextContent('无感通过')
+    expect(status).not.toHaveTextContent('无感验证通过')
+    await waitFor(() => expect(claimInputs).toHaveLength(1))
   })
 
   it('验证码失败：不发领取请求，显示「这台浏览器没能通过验证码」+ 建议去官方客户端', async () => {
