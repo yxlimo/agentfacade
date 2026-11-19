@@ -14,4 +14,14 @@
   打印里写明「import → check:X  [源文件 被 脚本 直接 import]」。
 - 解析失败 / 零个任务解析出来 → 全量 check。
 - tests/** 不进图。
-- `test/verify-changes-check.ts` 加回归用例，已有 25 项不动。
+- `test/verify-changes-check.ts` 加回归用例。已有 25 项没有删减；其中
+  handle.ts 那项把预期从 2 组加到 3 组 —— admin 的 model-visibility 测试
+  确实直接 import 了它，这是新规则抓到的真依赖，不是放宽。
+
+## 状态
+
+- `test:verify` 32 项全过，typecheck 过。
+- 反证真做过：临时让 `matchImports` 返回空，事故 case 真红（28 过 4 没过），
+  已还原。
+- 待跑：`mise run verify --plan --base 0009c6c`。
+

@@ -13,7 +13,12 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { matchRules, planTasks } from "../tools/verify-changes.ts";
+import {
+  analyzePlan,
+  matchRules,
+  parseGateTests,
+  planTasks,
+} from "../tools/verify-changes.ts";
 
 let pass = 0;
 let fail = 0;
@@ -83,8 +88,12 @@ check(
 );
 
 check(
-  "lib/router/handle.ts → check:routing + check:deliver",
-  sameTasks(planTasks(["lib/router/handle.ts"]), ["check:routing", "check:deliver"])
+  "lib/router/handle.ts → check:routing + check:deliver + check:admin（admin 的测试也直接 import 它）",
+  sameTasks(planTasks(["lib/router/handle.ts"]), [
+    "check:admin",
+    "check:routing",
+    "check:deliver",
+  ])
 );
 
 check(
@@ -179,6 +188,93 @@ check(
 const first = planOutput(["lib/zcode/x.ts", "web/src/y.tsx"]);
 const second = planOutput(["lib/zcode/x.ts", "web/src/y.tsx"]);
 check("同一输入两次输出一致", first === second);
+
+// ── 反向依赖：测试脚本直接 import 了改动文件，脚本所在的门禁也要跑 ──
+//
+// 事故复盘：2026-11-19 清 lib/router/catalog.ts 的死导出，当时
+// test/sensenova-intern-ai-check.ts（check:kinds）直接 import 了它；路径规则
+// 只选了 admin + routing，check:kinds 没选上，坏掉的 import 没被任何门禁看见。
+// 现在那个测试已经改成 import lib/catalog-models.ts，所以用一份合成的
+// mise.toml 复现事故当时的形状 —— 规则靠解析 mise.toml，不靠手抄清单。
+
+const incidentToml = `
+[tasks."check:kinds"]
+depends = ["test:sensenova:intern"]
+
+[tasks."test:sensenova:intern"]
+run = "node --experimental-strip-types test/sensenova-intern-ai-check.ts"
+
+[tasks."check:misc"]
+depends = ["test:verify"]
+
+[tasks."test:verify"]
+run = "node --experimental-strip-types test/verify-changes-check.ts"
+`;
+
+const incidentScripts: Record<string, string> = {
+  // 静态、动态、side-effect 三种 import 都在这条规则里。
+  "test/sensenova-intern-ai-check.ts": [
+    'import { x } from "../lib/sensenova/quota.ts";',
+    'const { senseNovaCatalogModels } = await import("../lib/router/catalog.ts");',
+  ].join("\n"),
+  "test/verify-changes-check.ts": 'import { planTasks } from "../tools/verify-changes.ts";',
+};
+
+function incidentPlan(files: string[]) {
+  return analyzePlan(files, incidentToml, (script) => incidentScripts[script] ?? "");
+}
+
+const incident = incidentPlan(["lib/router/catalog.ts"]);
+check(
+  "lib/router/catalog.ts → check:kinds（昨天漏掉的 case）",
+  incident.tasks.includes("check:kinds"),
+  incident.tasks.join(", ")
+);
+check(
+  "来路说清是哪个脚本直接 import 了它",
+  incident.imports.some(
+    (hit) =>
+      hit.task === "check:kinds" &&
+      hit.source === "lib/router/catalog.ts" &&
+      hit.script === "test/sensenova-intern-ai-check.ts"
+  ),
+  JSON.stringify(incident.imports)
+);
+
+const noImport = incidentPlan(["lib/router/never-imported-by-a-test.ts"]);
+check(
+  "没有任何测试直接 import 的文件只按路径规则选组，不被反向依赖污染",
+  sameTasks(noImport.tasks, ["check:routing"]) && noImport.imports.length === 0,
+  noImport.tasks.join(", ")
+);
+
+const broken = analyzePlan(["lib/router/catalog.ts"], "[tasks.\"check:kinds\"]\ndepends = [\"nope\"]", () => "");
+check(
+  "mise.toml 解析不出测试脚本 → 退回全量 check（不当成没有依赖）",
+  sameTasks(broken.tasks, ["check"]) && broken.failClosed !== "",
+  JSON.stringify(broken)
+);
+check(
+  "一个门禁都没解析出来也算解析失败",
+  sameTasks(
+    analyzePlan(["lib/router/catalog.ts"], "[tasks.test]\nrun = \"x\"", () => "").tasks,
+    ["check"]
+  )
+);
+let parseThrew = false;
+try {
+  parseGateTests("not toml at all", () => "");
+} catch {
+  parseThrew = true;
+}
+check("解析函数本身对坏输入抛错，而不是返回空图", parseThrew);
+
+const realCatalogOutput = planOutput(["lib/router/handle.ts"]);
+check(
+  "真实 mise.toml 的计划里有 import → 门禁的来路说明",
+  /import → check:[a-z]+\s+\[[^\]]+ 被 test\/[^ ]+ 直接 import\]/.test(realCatalogOutput),
+  realCatalogOutput.trim()
+);
 
 console.log("");
 if (fail === 0) {

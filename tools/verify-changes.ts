@@ -22,6 +22,7 @@
 // check:kinds 这种形式打印；不出现本机绝对路径。
 
 import { spawnSync, execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -228,6 +229,137 @@ export interface RuleHit {
   files: string[];
 }
 
+/** 一条反向依赖：哪个源文件被哪个测试脚本直接 import。 */
+export interface ImportHit {
+  /** 命中的门禁。 */
+  task: string;
+  /** 改动的源文件（仓库相对路径）。 */
+  source: string;
+  /** 直接 import 它的测试脚本（仓库相对路径）。 */
+  script: string;
+}
+
+/** 一个门禁组里的测试脚本，以及它直接 import 的源文件。 */
+interface GateTest {
+  task: string;
+  script: string;
+  imports: Set<string>;
+}
+
+/** mise.toml 里的任务块 `key = { depends = [...] }` / `run`。 */
+interface TomlTask {
+  name: string;
+  depends: string[];
+  run: string;
+}
+
+/**
+ * 从 mise.toml 的文本里读出所有 `[tasks."..."]` 块。
+ *
+ * 只认这里用到的两种字段（depends 里的字符串数组、run 里的单行字符串）。
+ * TOML 是外部输入，宁可解析不出来让调用方从严，也不猜一个半成品清单。
+ */
+export function parseTomlTasks(text: string): TomlTask[] {
+  const tasks: TomlTask[] = [];
+  let current: TomlTask | undefined;
+  const flush = (): void => {
+    if (current) tasks.push(current);
+    current = undefined;
+  };
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    const header = /^\[tasks\."([^"]+)"\]\s*$/.exec(line);
+    if (header) {
+      flush();
+      current = { name: header[1], depends: [], run: "" };
+      continue;
+    }
+    if (!current) continue;
+    if (line === "" || line.startsWith("#")) continue;
+    const depends = /^depends\s*=\s*\[([^\]]*)\]/.exec(line);
+    if (depends) {
+      current.depends = Array.from(depends[1].matchAll(/"([^"]+)"/g), (m) => m[1]);
+      continue;
+    }
+    const run = /^run\s*=\s*"([^"\n]*)"\s*$/.exec(line);
+    if (run) current.run = run[1];
+  }
+  flush();
+  return tasks;
+}
+
+/**
+ * 从一条 `run` 命令里取出脚本路径。
+ *
+ * 形如 `node --experimental-strip-types test/foo-check.ts`；只认以 test/ 开头
+ * 的 .ts 脚本，别的任务（python、mise 子任务）不进 import 图。
+ */
+function scriptFromRun(run: string): string | undefined {
+  const match = /(^|\s)((?:test\/)[^\s]+\.ts)(?=\s|$)/.exec(run);
+  return match ? match[2] : undefined;
+}
+
+/** 从脚本正文里抽直接 import 的相对模块路径，解析成仓库相对路径。 */
+function importedSources(script: string, body: string): string[] {
+  const found = new Set<string>();
+  const dir = path.posix.dirname(script);
+  // 静态 import / export from、side-effect import、动态 import() 都算一跳。
+  // 一跳是已知上限：传递依赖（脚本 import 的模块又 import 了改动文件）
+  // 不做，否则这张图会滚雪球，误报的门禁比漏报的多。
+  const patterns = [
+    // [^;]*? 把匹配限制在一条语句里，免得跨语句捞到一个碰巧出现的路径字面量。
+    /(?:^|[^\w$])(?:import|export)\s+[^;]*?\bfrom\s+["']([^"']+)["']/g,
+    /(?:^|[^\w$])import\s+["']([^"']+)["']/g,
+    /(?:^|[^\w$])import\s*\(\s*["']([^"']+)["']\s*\)/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of body.matchAll(pattern)) {
+      const spec = match[1];
+      if (!spec.startsWith(".")) continue;
+      const absolute = path.resolve(ROOT, dir, spec);
+      const relative = path.relative(ROOT, absolute);
+      if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) continue;
+      found.add(relative.split(path.sep).join("/"));
+    }
+  }
+  return [...found];
+}
+
+/** 由 mise.toml 的文本建「门禁 → 测试脚本 → 直接 import 的源文件」。 */
+export function parseGateTests(text: string, readScript: (script: string) => string): GateTest[] {
+  const tasks = parseTomlTasks(text);
+  const byName = new Map(tasks.map((task) => [task.name, task]));
+  const gates = tasks.filter((task) => task.name.startsWith("check:"));
+  if (gates.length === 0) throw new Error("mise.toml 里没解析出任何 check:* 门禁");
+  const gatesOut: GateTest[] = [];
+  for (const gate of gates) {
+    for (const testName of gate.depends) {
+      // 有些 test:* 名字在表里没有 run（比如依赖另一个任务），跳过。
+      const test = byName.get(testName);
+      if (!test) continue;
+      const script = scriptFromRun(test.run);
+      if (!script) continue;
+      // 仓库根的 tests/** 是面板 e2e：它们打 HTTP，不 import 服务端模块。
+      if (script.startsWith("tests/")) continue;
+      gatesOut.push({ task: gate.name, script, imports: new Set(importedSources(script, readScript(script))) });
+    }
+  }
+  if (gatesOut.length === 0) throw new Error("mise.toml 里没解析出任何带脚本的测试任务");
+  return gatesOut;
+}
+
+/** 改动的源文件被哪些测试脚本直接 import。 */
+export function matchImports(files: string[], gates: GateTest[]): ImportHit[] {
+  const changed = new Set(files);
+  const hits: ImportHit[] = [];
+  for (const gate of gates) {
+    for (const source of gate.imports) {
+      if (changed.has(source)) hits.push({ task: gate.task, source, script: gate.script });
+    }
+  }
+  return hits;
+}
+
 /**
  * 路径 → 命中的规则。
  *
@@ -265,17 +397,46 @@ export function matchRules(files: string[]): RuleHit[] {
   return hits;
 }
 
+/** 一次分析的完整结果：任务、反向依赖来路、解析失败的原因。 */
+export interface PlanResult {
+  tasks: string[];
+  imports: ImportHit[];
+  failClosed: string;
+}
+
 /**
  * 改动文件 → 要跑的门禁（有序）。
  *
+ * 路径规则之外还要看反向依赖：测试脚本直接 import 了改动文件，那个脚本所属
+ * 的门禁组也必须跑（tsconfig 不查 test/**，路径规则又按目录写，两头都想不到）。
+ * 图解析不出来就退回全量 check —— 宁可慢，不可漏。
+ *
  * 命中「全量 check」时只留它：check 已经包含其余各组。
  */
-export function planTasks(files: string[]): string[] {
+export function analyzePlan(
+  files: string[],
+  toml: string,
+  readScript: (script: string) => string
+): PlanResult {
   const hits = matchRules(files);
   const tasks = new Set<string>();
   for (const hit of hits) for (const task of hit.rule.tasks) tasks.add(task);
-  if (tasks.has("check")) return ["check"];
-  return ORDER.filter((task) => tasks.has(task));
+  if (tasks.has("check")) return { tasks: ["check"], imports: [], failClosed: "" };
+  let gates: GateTest[];
+  try {
+    gates = parseGateTests(toml, readScript);
+  } catch (e) {
+    return { tasks: ["check"], imports: [], failClosed: (e as Error).message || String(e) };
+  }
+  const imports = matchImports(files, gates);
+  for (const hit of imports) tasks.add(hit.task);
+  return { tasks: ORDER.filter((task) => tasks.has(task)), imports, failClosed: "" };
+}
+
+/** 生产入口：从工作树读 mise.toml，解析不出来自从严。 */
+export function planTasks(files: string[]): string[] {
+  const toml = readFileSync(path.join(ROOT, "mise.toml"), "utf8");
+  return analyzePlan(files, toml, (script) => readFileSync(path.join(ROOT, script), "utf8")).tasks;
 }
 
 /** 跑一条 git 命令，拿 stdout。失败就抛。 */
@@ -342,7 +503,13 @@ export function changedFiles(base: string): string[] {
 }
 
 /** 打印计划。返回打印出来的文本（测试要读它）。 */
-function printPlan(files: string[], tasks: string[], hits: RuleHit[]): string {
+function printPlan(
+  files: string[],
+  tasks: string[],
+  hits: RuleHit[],
+  imports: ImportHit[],
+  failClosed: string
+): string {
   const lines: string[] = [];
   lines.push("改动 " + files.length + " 个文件：");
   for (const file of files.slice(0, 20)) lines.push("  " + file);
@@ -354,6 +521,16 @@ function printPlan(files: string[], tasks: string[], hits: RuleHit[]): string {
     const more = hit.files.length > 3 ? " …（共 " + hit.files.length + " 个）" : "";
     lines.push("  " + hit.rule.id + " → " + hit.rule.tasks.join(" + ") + "  [" + shown + more + "]");
     lines.push("      为什么：" + hit.rule.why);
+  }
+  if (failClosed !== "") {
+    lines.push("  import → 全量 check  [import 图解析失败：" + failClosed + "]");
+  } else if (imports.length > 0) {
+    lines.push("命中的反向依赖：");
+    for (const hit of imports) {
+      lines.push(
+        "  import → " + hit.task + "  [" + hit.source + " 被 " + hit.script + " 直接 import]"
+      );
+    }
   }
   lines.push("");
   if (tasks.length === 0) {
@@ -439,16 +616,22 @@ async function main(argv: string[]): Promise<number> {
   }
 
   const hits = matchRules(files);
-  const tasks = planTasks(files);
-  printPlan(files, tasks, hits);
+  let result: PlanResult;
+  try {
+    const toml = readFileSync(path.join(ROOT, "mise.toml"), "utf8");
+    result = analyzePlan(files, toml, (script) => readFileSync(path.join(ROOT, script), "utf8"));
+  } catch (e) {
+    result = { tasks: ["check"], imports: [], failClosed: (e as Error).message || String(e) };
+  }
+  printPlan(files, result.tasks, hits, result.imports, result.failClosed);
 
   if (plan) return 0;
-  if (tasks.length === 0) {
+  if (result.tasks.length === 0) {
     console.log("");
     console.log("没有要跑的门禁。");
     return 0;
   }
-  return runTasks(tasks);
+  return runTasks(result.tasks);
 }
 
 const invokedDirectly =
