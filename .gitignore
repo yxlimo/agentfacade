@@ -48,6 +48,11 @@ tools/*
 !tools/probes/
 !tools/probes/*
 
+# pi 的模型清单插件同样是仓库的一部分：`test/pi-models-plugin-check.ts`
+# 从 check:misc 里跑它，录制的 gateway 响应也在它下面。不可忽略。
+!tools/pi-models-plugin/
+!tools/pi-models-plugin/*
+
 # The panel's dependencies and build output
 web/node_modules/
 web/dist/

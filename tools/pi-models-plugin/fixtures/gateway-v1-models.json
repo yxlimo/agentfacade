@@ -1,0 +1,281 @@
+{
+  "data": [
+    {
+      "id": "coder-a",
+      "type": "model",
+      "display_name": "Coder A",
+      "created_at": 1795061290,
+      "reasoning": true,
+      "tool_call": true,
+      "context_window": 1000000,
+      "max_output_tokens": 384000,
+      "effort_options": [
+        "off",
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "id": "coder-b",
+      "type": "model",
+      "display_name": "Coder B",
+      "created_at": 1795061290,
+      "reasoning": true,
+      "tool_call": true,
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "effort_options": [
+        "off",
+        "default",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "id": "coder-c",
+      "type": "model",
+      "display_name": "Coder C",
+      "created_at": 1795061290,
+      "reasoning": true,
+      "tool_call": true,
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "effort_options": [
+        "off",
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "id": "coder-d",
+      "type": "model",
+      "display_name": "Coder D",
+      "created_at": 1795061290,
+      "reasoning": true,
+      "tool_call": true,
+      "context_window": 1048576,
+      "max_output_tokens": 65536,
+      "effort_options": [
+        "off",
+        "none",
+        "high"
+      ]
+    },
+    {
+      "id": "coder-e",
+      "type": "model",
+      "display_name": "Coder E",
+      "created_at": 1795061290,
+      "reasoning": true,
+      "tool_call": true,
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "effort_options": [
+        "off",
+        "low",
+        "midium",
+        "high"
+      ]
+    },
+    {
+      "id": "coder-f",
+      "type": "model",
+      "display_name": "Coder F",
+      "created_at": 1795061290,
+      "reasoning": true,
+      "tool_call": true,
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "effort_options": [
+        "off",
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "id": "coder-main",
+      "type": "model",
+      "display_name": "Manager",
+      "created_at": 1795061290,
+      "reasoning": true,
+      "tool_call": true,
+      "context_window": 1000000,
+      "max_output_tokens": 384000,
+      "effort_options": [
+        "off",
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "id": "dsh-manager",
+      "type": "model",
+      "display_name": "Deepseek Harness Manager",
+      "created_at": 1795061290,
+      "reasoning": true,
+      "tool_call": true,
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "effort_options": [
+        "off",
+        "default",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "id": "magic-context-dreamer",
+      "type": "model",
+      "display_name": "MagicContext Dreamer Model",
+      "created_at": 1795061290,
+      "reasoning": true,
+      "tool_call": false,
+      "context_window": 131072,
+      "max_output_tokens": 32768,
+      "effort_options": [
+        "off",
+        "low",
+        "high"
+      ]
+    },
+    {
+      "id": "magic-context-historian",
+      "type": "model",
+      "display_name": "MagicContext Historian Model",
+      "created_at": 1795061290,
+      "reasoning": true,
+      "tool_call": false,
+      "context_window": 131072,
+      "max_output_tokens": 65536,
+      "effort_options": [
+        "off",
+        "low",
+        "high"
+      ]
+    },
+    {
+      "id": "reviewer-a",
+      "type": "model",
+      "display_name": "Reviewer A",
+      "created_at": 1795061290,
+      "reasoning": true,
+      "tool_call": true,
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "effort_options": [
+        "off",
+        "default",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    {
+      "id": "reviewer-b",
+      "type": "model",
+      "display_name": "Reviewer B",
+      "created_at": 1795061290,
+      "reasoning": true,
+      "tool_call": true,
+      "context_window": 1048576,
+      "max_output_tokens": 65536,
+      "effort_options": [
+        "off",
+        "none",
+        "high"
+      ]
+    },
+    {
+      "id": "reviewer-c",
+      "type": "model",
+      "display_name": "Reviewer C",
+      "created_at": 1795061290,
+      "reasoning": true,
+      "tool_call": true,
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "effort_options": [
+        "off",
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "id": "reviewer-d",
+      "type": "model",
+      "display_name": "Reviewer D",
+      "created_at": 1795061290,
+      "reasoning": true,
+      "tool_call": true,
+      "context_window": 1000000,
+      "max_output_tokens": 262144,
+      "effort_options": [
+        "off"
+      ]
+    },
+    {
+      "id": "reviewer-e",
+      "type": "model",
+      "display_name": "Reviewer E",
+      "created_at": 1795061290,
+      "reasoning": true,
+      "tool_call": true,
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "effort_options": [
+        "off",
+        "low",
+        "midium",
+        "high"
+      ]
+    },
+    {
+      "id": "reviewer-f",
+      "type": "model",
+      "display_name": "Reviewer F",
+      "created_at": 1795061290,
+      "reasoning": true,
+      "tool_call": true,
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "effort_options": [
+        "off",
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "id": "tester",
+      "type": "model",
+      "display_name": "Tester",
+      "created_at": 1795061290,
+      "reasoning": true,
+      "tool_call": true,
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "effort_options": [
+        "off",
+        "low",
+        "high",
+        "max"
+      ]
+    }
+  ],
+  "has_more": false,
+  "first_id": "coder-a",
+  "last_id": "tester"
+}

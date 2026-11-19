@@ -1,0 +1,214 @@
+// 网关的 /v1/models 响应 → pi 的 provider 配置。纯函数，不碰网络、不读环境变量，
+// 单测直接对着录制下来的响应跑。
+//
+// 这一层为什么必须与 helper/buddy_sync.py 的 pi_provider() 逐字一致：那份脚本是
+// 现在唯一在写 ~/.pi/agent/models.json 的东西，插件接管之后两条路都会有人走
+// （插件、或者退回脚本），两边算出来的档位映射不一样就会出现「同一条模型，靠
+// 插件时的思考档位和靠脚本时不同」这种查不动的问题。parity 用例拿 Python 的
+// 输出当期望值，就是为了钉住这件事。
+//
+// 照抄的逻辑有几处看着像 bug，但**不许顺手改**：改了就是两条路漂移。
+// 例如网关报的档位里有 "default" 时 rank 里查不到，排在最后，于是 pi 的 max
+// 会映到 "default"（见 fixtures/expected-provider-config.json 里的 coder-b）。
+// 要改就得两边一起改，那是另一个任务。
+
+/** pi 的思考档位，从浅到深。顺序即强弱，字母序会把 high 排到 low 前面 */
+export const PI_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+export type PiLevel = (typeof PI_LEVELS)[number];
+
+/** 上游「四档齐全」的那一组。判定齐全那一支走固定映射 */
+const FULL_EFFORTS = ["low", "medium", "high", "max"];
+
+/** 网关没说上下文/输出上限时的兜底，与 pi_provider() 的 DEFAULT_* 一致 */
+export const DEFAULT_CONTEXT = 200000;
+export const DEFAULT_OUTPUT = 4096;
+
+/** 网关 /v1/models 的一条 data 项：字段全都可缺（老网关不发 effort_options），
+ *  所以这一层一律从 unknown 收，不做类型断言。 */
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+}
+
+/** pi 的一条模型定义 */
+export interface PiModelEntry {
+  id: string;
+  name: string;
+  reasoning: boolean;
+  input: ("text" | "image")[];
+  contextWindow: number;
+  maxTokens: number;
+  thinkingLevelMap: Record<PiLevel, string | null>;
+}
+
+/** pi 的 provider 配置（legacy 形式；refreshModels 由 index.ts 加） */
+export interface PiProviderConfig {
+  name: string;
+  baseUrl: string;
+  api: string;
+  apiKey: string;
+  compat: { forceAdaptiveThinking: boolean; sendSessionAffinityHeaders: boolean };
+  models: PiModelEntry[];
+}
+
+/** 档位按强弱排，未知档位（default / none / midium 这种）排在已知的后面 */
+export function sortEfforts(efforts: readonly string[]): string[] {
+  const rank = new Map<string, number>(PI_LEVELS.map((level, i) => [level, i]));
+  return [...efforts].sort((a, b) => {
+    const ra = rank.get(a) ?? PI_LEVELS.length;
+    const rb = rank.get(b) ?? PI_LEVELS.length;
+    return ra === rb ? (a < b ? -1 : a > b ? 1 : 0) : ra - rb;
+  });
+}
+
+/**
+ * pi 的思考档位 → 上游真有的档位。往下取，不往上取。
+ *
+ * 往下取的原因（照抄脚本里的注释，因为理由一样）：档位是成本与延迟的旋钮，
+ * pi 默认 medium，往上取等于把「配置里没写档位」变成「思考拉满」。
+ *
+ * off 是阶梯最浅的一档，不是布尔开关：
+ *   - 只有 off 一档 → 每个 pi 档位都映到 off（没有别的能发）。off 那格必须是
+ *     "off" 而不是 null，pi 靠 map.off !== null 才允许 thinkingEnabled: false
+ *   - off 与其它档并存 → off 只映 off，其它档照常往下取，且没有思考档被映到 off
+ *   - 没有 off → 关不掉思考（off 那格是 null）
+ */
+export function levelMap(efforts: readonly string[] | null): Record<PiLevel, string | null> {
+  const all = () => blankMap(null);
+  if (!efforts || efforts.length === 0) return all();
+  if (efforts.includes("off")) {
+    const rest = efforts.filter((e) => e !== "off");
+    if (rest.length === 0) return blankMap("off");
+    const mapping = levelMapWithoutOff(rest);
+    mapping.off = "off";
+    return mapping;
+  }
+  return levelMapWithoutOff(efforts);
+}
+
+function blankMap(value: string | null): Record<PiLevel, string | null> {
+  const out = {} as Record<PiLevel, string | null>;
+  for (const level of PI_LEVELS) out[level] = value;
+  return out;
+}
+
+/** off 之外的档位怎么映。四档齐全时是一张定表（顺序与 rank 排序不同，别合并） */
+function levelMapWithoutOff(efforts: readonly string[]): Record<PiLevel, string | null> {
+  const sortedGiven = [...efforts].sort();
+  const sortedFull = [...FULL_EFFORTS].sort();
+  if (sortedGiven.length === sortedFull.length && sortedGiven.every((e, i) => e === sortedFull[i])) {
+    return {
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "high",
+      max: "max",
+    };
+  }
+
+  const rank = new Map<string, number>(PI_LEVELS.map((level, i) => [level, i]));
+  const ordered = sortEfforts(efforts);
+  const lowest = ordered[0];
+  const highest = ordered[ordered.length - 1];
+
+  // 不高于 level 的最近一档；上游连更低的一档都没有时只能往上取最低那档
+  const atOrBelow = (level: PiLevel): string => {
+    const limit = rank.get(level) ?? PI_LEVELS.length;
+    const below = ordered.filter((e) => (rank.get(e) ?? PI_LEVELS.length) <= limit);
+    return below.length > 0 ? below[below.length - 1] : lowest;
+  };
+
+  return {
+    off: null,
+    minimal: lowest,
+    low: lowest,
+    medium: atOrBelow("medium"),
+    high: atOrBelow("high"),
+    xhigh: atOrBelow("xhigh"),
+    max: highest,
+  };
+}
+
+/**
+ * 网关给的档位 + 「这个模型支不支持思考」→ 实际可用的档位。
+ *
+ * 网关说没有思考能力（reasoning === false）却没给档位时兜底成 ["off"]：宁可多给
+ * 一档，也不要把「不知道」当成「不支持」。网关给了档位就照它给的来，不看 reasoning
+ * —— 档位是更具体的信息。
+ */
+export function effectiveEfforts(efforts: readonly string[] | null, reasoning: boolean | null): string[] {
+  if (efforts && efforts.length > 0) return [...efforts];
+  if (reasoning === false) return ["off"];
+  return [];
+}
+/** 网关那一格可能是任意 JSON：不是非空字符串数组就当「没有这一格」 */
+export function normalizeEfforts(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item === "string" && item.length > 0) out.push(item);
+  }
+  return out.length > 0 ? out : null;
+}
+
+/** 不是布尔就当「不知道」——不能当成 false，不知道就按支持思考处理 */
+export function normalizeReasoning(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+/** 与脚本的 `int(m.get(...) or DEFAULT)` 同义：0 和缺失都算默认 */
+function positiveIntOr(value: unknown, fallback: number): number {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) && n !== 0 ? Math.trunc(n) : fallback;
+}
+
+/** 一条网关模型 → 一条 pi 模型 */
+export function toPiModel(raw: unknown): PiModelEntry {
+  const fields = asRecord(raw);
+  const id = typeof fields.id === "string" ? fields.id : "";
+  const display =
+    typeof fields.display_name === "string" && fields.display_name.length > 0 ? fields.display_name : id;
+  const efforts = normalizeEfforts(fields.effort_options);
+  const reasoning = normalizeReasoning(fields.reasoning);
+  return {
+    id,
+    name: display,
+    // 支不支持思考按网关说的来；没说就按支持（不知道不等于不支持）
+    reasoning: reasoning === null ? true : reasoning,
+    input: ["text", "image"],
+    contextWindow: positiveIntOr(fields.context_window, DEFAULT_CONTEXT),
+    maxTokens: positiveIntOr(fields.max_output_tokens, DEFAULT_OUTPUT),
+    thinkingLevelMap: levelMap(effectiveEfforts(efforts, reasoning)),
+  };
+}
+
+/** /v1/models 的 data → provider 的 models。没有 id 的项跳过（脚本也跳过） */
+export function modelsFromPayload(rawModels: readonly unknown[]): PiModelEntry[] {
+  const out: PiModelEntry[] = [];
+  for (const raw of rawModels) {
+    const model = toPiModel(raw);
+    if (model.id === "") continue;
+    out.push(model);
+  }
+  return out;
+}
+
+/**
+ * provider 配置。baseUrl 是**根地址**：pi 走 Anthropic 方言，自己拼 /v1/messages
+ * （opencode 那一份才带 /v1，那份归脚本管）
+ */
+export function toProviderConfig(gateway: string, apiKey: string, models: readonly PiModelEntry[]): PiProviderConfig {
+  return {
+    name: "Buddy (main route)",
+    baseUrl: gateway,
+    api: "anthropic-messages",
+    apiKey,
+    // forceAdaptiveThinking：让 pi 发 output_config.effort（档位原样），而不是把档位
+    // 压成一个预算数字 —— 压成数字的话顶档（max）在 Anthropic 方言里分不出来
+    // sendSessionAffinityHeaders：pi 把会话 id 放进 x-session-id，网关靠它认会话
+    compat: { forceAdaptiveThinking: true, sendSessionAffinityHeaders: true },
+    models: [...models],
+  };
+}

@@ -58,8 +58,18 @@ python3 helper/buddy_sync.py --check       # 只比对：有差异退出码 1，
     random-work max_output_tokens: 网关 65536 / 本地 131072
 ```
 
-网关地址默认 `http://127.0.0.1:6450`（连不上就试局域网里网关所在机器那份地址），
-`--gateway` 或环境变量 `FACADE_GATEWAY` 可以指定。
+### pi 那一条现在有插件分担
+
+`~/.pi/agent/models.json` 仍然归本脚本管，但 pi 可以不靠它：`tools/pi-models-plugin`
+是 pi 的扩展，启动时自己去拉网关的模型清单，网关改了也不用手工重跑脚本（见
+`tools/pi-models-plugin/README.md`）。两者同时在时插件赢，所以 models.json 那条对
+pi 来说退化成「插件拉不到网关时的备份」—— 不用删，也不用为它跑脚本。opencode
+那两份仍然只能靠本脚本。
+
+网关地址没有默认值：`--gateway`、环境变量 `FACADE_GATEWAY` 或
+`~/.config/buddy-helper/config.json` 三者给一个，都没有就报错退出（不会去猜端口，
+也不会去扫局域网）。pi 的插件那一路是唯一的例外，它默认试 `http://127.0.0.1:6450`，
+见 `tools/pi-models-plugin/README.md`。
 
 ## 盯额度 + 发消息
 
