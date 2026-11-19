@@ -75,7 +75,7 @@ export async function refreshWorkBuddyCatalog(force = false): Promise<void> {
  * 「能服务」是开着**而且**有可用凭据：账号建了但没填 key、没登录的，算不上。
  * 额度与冷却不管 —— 那两个说的是「现在接不了这个请求」。
  */
-export function enabledAccounts(platform: string) {
+function enabledAccounts(platform: string) {
   return platformAvailability(platform).serving;
 }
 

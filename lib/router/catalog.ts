@@ -23,17 +23,7 @@ import {
 } from "./catalog-entry.ts";
 import "../kinds/index.ts";
 
-export { createdOf, type CatalogDialect } from "./catalog-entry.ts";
-
-export type { CatalogModel };
-export {
-  internAiCatalogModels,
-  minimaxCatalogModels,
-  qoderCatalogModels,
-  senseNovaCatalogModels,
-  workbuddyCatalogModels,
-  zcodeCatalogModels,
-} from "../catalog-models.ts";
+export type { CatalogDialect } from "./catalog-entry.ts";
 
 /**
  * A group is an upstream: one row of the provider table.

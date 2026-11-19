@@ -15,7 +15,7 @@ import type Koa from "koa";
 import { CredentialState } from "./gen/agentfacade/admin/v1/admin_pb.ts";
 import type { Json } from "./json.ts";
 import type { ProviderPolicy, ProviderRow } from "./providers.ts";
-import type { CatalogModel } from "./router/catalog.ts";
+import type { CatalogModel } from "./catalog-models.ts";
 import type { Dialect } from "./router/deliver.ts";
 import type { Route } from "./router/routes.ts";
 // 只为快照里那一桶的类型：额度插件问回来的结论。
