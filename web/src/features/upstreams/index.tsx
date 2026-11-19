@@ -464,6 +464,7 @@ export function UpstreamsPage() {
                               />
                               <ProviderAccounts
                                 access={accessOf(upstream)}
+                                platform={upstream.id}
                                 accounts={upstream.accounts}
                                 loggingIn={login.pending}
                                 busyAccountId={busyAccountId}

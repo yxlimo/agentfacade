@@ -19,6 +19,7 @@ import {
   useTestCredential,
 } from '@/features/accounts/api'
 import { ProviderAliasCell } from '@/features/upstreams/provider-alias'
+import { ClaimButton } from '@/features/upstreams/claim-button'
 import type { ProviderKeyAccess } from '@/features/accounts/provider-key-fields'
 import { QuotaSummary } from '@/features/balance/quota'
 import { formatDateTime, formatLocalMoment } from '@/lib/format'
@@ -84,6 +85,7 @@ function accessHint(access: ProviderKeyAccess): string | undefined {
  */
 export function ProviderAccounts({
   access,
+  platform,
   accounts,
   loggingIn,
   busyAccountId,
@@ -97,6 +99,8 @@ export function ProviderAccounts({
 }: {
   /** 这一类平台的凭据入口：能不能填、不能填的时候为什么（判据在 provider-key-fields 那一层）。 */
   access: ProviderKeyAccess
+  /** 平台 id：领取按钮只给 zcode 名下的账号。 */
+  platform: string
   /** 这个平台名下的账号，按创建先后排（也就是权重次序）。 */
   accounts: Account[]
   /** 正在发起登录。 */
@@ -297,6 +301,14 @@ export function ProviderAccounts({
                       ) : null}
                     </span>
                   ) : null}
+                  {/* 活动额度的领取：只有 zcode 账号、且后端说有可领的投放
+                      与验证码配置时才出现。状态问不到时什么都不显示 ——
+                      「不知道」不是「没有」。 */}
+                  <ClaimButton
+                    account={account}
+                    platform={platform}
+                    enabled={!refreshing}
+                  />
                   {/* 登录一直在：登录会覆盖这个账号的旧会话，不需要先注销。 */}
                   <Button
                     size='sm'

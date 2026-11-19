@@ -221,6 +221,7 @@ export function QuotaPluginsPage() {
                                 </span>
                               </div>                              <ProviderAccounts
                                 access={accessOf(upstream)}
+                                platform={upstream.id}
                                 accounts={upstream.accounts}
                                 loggingIn={login.pending}
                                 busyAccountId={
