@@ -268,10 +268,10 @@ export function parseTomlTasks(text: string): TomlTask[] {
   };
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
-    const header = /^\[tasks\."([^"]+)"\]\s*$/.exec(line);
-    if (header) {
+    if (line.startsWith("[")) {
       flush();
-      current = { name: header[1], depends: [], run: "" };
+      const header = /^\[tasks\."([^"]+)"\]\s*$/.exec(line);
+      current = header ? { name: header[1], depends: [], run: "" } : undefined;
       continue;
     }
     if (!current) continue;

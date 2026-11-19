@@ -23,5 +23,14 @@
 - `test:verify` 32 项全过，typecheck 过。
 - 反证真做过：临时让 `matchImports` 返回空，事故 case 真红（28 过 4 没过），
   已还原。
-- 待跑：`mise run verify --plan --base 0009c6c`。
+- 已跑：`mise run verify --plan --base 0009c6c`（当前区间里有未识别的
+  lib/gen/**，从严落全量 check，符合设计）；按事故当次的三个文件
+  `--files lib/router/catalog.ts,lib/router/catalog-routes.ts,lib/provider-kinds.ts`
+  跑，计划变成 admin + routing + kinds + misc —— kinds 就是新规则抓到的。
+- `mise run privacy`：0 条命中。
+- 注意：事故当时 sensenova 测试 import 的是 `../lib/router/catalog.ts`，
+  当前 HEAD 里已经改成 `../lib/catalog-models.ts`，所以单看当下的
+  catalog.ts 只有 admin + routing 的直接 import；测试里用合成 mise.toml
+  固定住事故当时的形状，不手抄清单到生产代码。
+
 
