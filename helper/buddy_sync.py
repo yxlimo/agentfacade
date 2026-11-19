@@ -414,6 +414,19 @@ def pi_provider(models: list, name: str, label: str) -> dict:
             "contextWindow": context,
             "maxTokens": output,
             "thinkingLevelMap": level_map(efforts),
+            # cost 与 compat 为什么写在**每条模型**上，而不是只写在 provider 上：
+            # pi 归一化 models.json 时会自己补这两样（modelFromJson 给 cost 默认值、
+            # applyModelsJson 把 provider 级 compat 并进每条模型），但「扩展注册」那条
+            # 路（extensionModelFromDefinition）只是把每条定义展开，provider 级的这两样
+            # 它一个都不下发。同一个 provider 名被扩展接管之后，models.json 那份就整条
+            # 不生效了，所以模型条目本身必须自带，否则：
+            #   · 没有 cost → 请求在第一个 SSE 事件上抛
+            #     Cannot read properties of undefined (reading 'tiers')
+            #   · 没有 compat → 不发 x-session-id，网关认不出会话
+            # 两处都在 pi 1.5.2 上实测过。provider 级那份留着：models.json 那一路照旧
+            # 需要它，mergeCompat 让 model 级与 provider 级取同一个值。
+            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+            "compat": {"forceAdaptiveThinking": True, "sendSessionAffinityHeaders": True},
         }
         entries.append(entry)
     return {

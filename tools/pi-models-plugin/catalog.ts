@@ -9,7 +9,7 @@
 //
 // 照抄的逻辑有几处看着像 bug，但**不许顺手改**：改了就是两条路漂移。
 // 例如网关报的档位里有 "default" 时 rank 里查不到，排在最后，于是 pi 的 max
-// 会映到 "default"（见 fixtures/expected-provider-config.json 里的 coder-b）。
+// 会映到 "default"（见 fixtures/expected-provider-config.json 里的 model-02）。
 // 要改就得两边一起改，那是另一个任务。
 
 /** pi 的思考档位，从浅到深。顺序即强弱，字母序会把 high 排到 low 前面 */
@@ -23,6 +23,16 @@ const FULL_EFFORTS = ["low", "medium", "high", "max"];
 /** 网关没说上下文/输出上限时的兜底，与 pi_provider() 的 DEFAULT_* 一致 */
 export const DEFAULT_CONTEXT = 200000;
 export const DEFAULT_OUTPUT = 4096;
+
+/**
+ * 每条模型都要带的两样，与 pi_provider() 里那两格逐字一致。
+ *
+ * cost 全 0：网关不报价，pi 只拿它算「花了多少钱」的统计，0 表示不计价（与
+ * models.json 那一路 pi 自己补的默认值相同）。
+ * compat：两项都必须下发到模型级 —— 扩展注册路径不读 provider 级的那份。
+ */
+const COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+const COMPAT = { forceAdaptiveThinking: true, sendSessionAffinityHeaders: true };
 
 /** 网关 /v1/models 的一条 data 项：字段全都可缺（老网关不发 effort_options），
  *  所以这一层一律从 unknown 收，不做类型断言。 */
@@ -39,6 +49,24 @@ export interface PiModelEntry {
   contextWindow: number;
   maxTokens: number;
   thinkingLevelMap: Record<PiLevel, string | null>;
+  /**
+   * 每条模型都自带 cost 与 compat，不能只写在 provider 上。
+   *
+   * pi 对两条注册路做归一化的程度不一样（1.5.2，dist/core/provider-composer.js）：
+   *   · models.json：`modelFromJson()` 补 cost 默认值（`definition.cost ?? {…}`），
+   *     `applyModelsJson()` 再把 provider 级 compat 并进每条模型（`mergeCompat`）；
+   *   · 扩展注册：`extensionModelFromDefinition()` 只是把定义展开，provider 级的
+   *     cost / compat 一个都不下发。
+   *
+   * 同一个 provider 名一旦被扩展接管，models.json 那份就整条不生效，于是「靠 pi 补」
+   * 这条路也没了。缺了会怎样（都在 pi 1.5.2 上实测）：
+   *   · 没有 cost → 请求在第一个 SSE 事件上抛
+   *     `Cannot read properties of undefined (reading 'tiers')`（calculateCost 读 model.cost.tiers）
+   *   · 没有 compat → 不发 x-session-id，网关认不出会话（`502 upstream HTTP 400 MissingSessionID`），
+   *     而且 forceAdaptiveThinking 一起没了 —— 算出来的 thinkingLevelMap 整条被绕过。
+   */
+  cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  compat: { forceAdaptiveThinking: boolean; sendSessionAffinityHeaders: boolean };
 }
 
 /** pi 的 provider 配置（legacy 形式；refreshModels 由 index.ts 加） */
@@ -181,6 +209,8 @@ export function toPiModel(raw: unknown): PiModelEntry {
     contextWindow: positiveIntOr(fields.context_window, DEFAULT_CONTEXT),
     maxTokens: positiveIntOr(fields.max_output_tokens, DEFAULT_OUTPUT),
     thinkingLevelMap: levelMap(effectiveEfforts(efforts, reasoning)),
+    cost: { ...COST },
+    compat: { ...COMPAT },
   };
 }
 
@@ -205,10 +235,10 @@ export function toProviderConfig(gateway: string, apiKey: string, models: readon
     baseUrl: gateway,
     api: "anthropic-messages",
     apiKey,
-    // forceAdaptiveThinking：让 pi 发 output_config.effort（档位原样），而不是把档位
-    // 压成一个预算数字 —— 压成数字的话顶档（max）在 Anthropic 方言里分不出来
-    // sendSessionAffinityHeaders：pi 把会话 id 放进 x-session-id，网关靠它认会话
-    compat: { forceAdaptiveThinking: true, sendSessionAffinityHeaders: true },
+    // provider 级 compat 留着，但**不能只靠它**：pi 的扩展注册路径不下发 provider 级
+    // compat（每条模型上那份才生效，见 PiModelEntry 的注释）。models.json 那一路照旧
+    // 需要 provider 级这一份。
+    compat: { ...COMPAT },
     models: [...models],
   };
 }

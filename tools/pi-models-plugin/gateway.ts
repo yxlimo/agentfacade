@@ -70,7 +70,6 @@ export function readGatewayConfig(home: string = os.homedir()): string {
 }
 
 /**
-/**
  * 这次要用的网关地址。四级：PI_BUDDY_GATEWAY → FACADE_GATEWAY → 配置文件 →
  * `DEFAULT_GATEWAY`。前三级写错了（不是 http(s)）就报错，不悄悄换成默认值 ——
  * 写错地址的人需要知道写错了，拿默认值顶上去只会让他以为配置生效了。

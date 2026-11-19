@@ -20,7 +20,7 @@ import {
   type PiModelEntry,
   type PiProviderConfig,
 } from "./catalog.ts";
-import { fetchModelList, resolveGateway, type FetchOptions } from "./gateway.ts";
+import { NO_GATEWAY_HINT, fetchModelList, resolveGateway, type FetchOptions } from "./gateway.ts";
 
 /** 客户端里的 provider 名，与脚本写进 models.json 的那个一致 */
 export const PROVIDER_NAME = "buddy";
@@ -35,7 +35,7 @@ export const API_KEY = "public";
  * pi.registerProvider / pi.registerCommand。
  */
 export interface PiExtensionApi {
-  registerProvider(name: string, config: PiProviderConfig & { refreshModels?: unknown }): void;
+  registerProvider(name: string, config: PiProviderConfig & { refreshModels?: RefreshModels }): void;
   registerCommand(
     name: string,
     options: {
@@ -54,6 +54,12 @@ export interface CommandContext {
 export interface RefreshContext {
   signal?: AbortSignal;
 }
+
+/**
+ * refreshModels 的形状：pi 需要刷新目录时调它，**返回值整体替换**已注册的模型。
+ * 所以这里永远交回一份非空清单（失败时交回上一次成功的），不交 []。
+ */
+export type RefreshModels = (context: RefreshContext) => Promise<PiModelEntry[]>;
 
 /** 插件的运行时状态。一份扩展实例一份，命令与 refreshModels 都读它 */
 export interface PluginState {
@@ -182,8 +188,13 @@ export default async function buddyModels(pi: PiExtensionApi, options: PluginOpt
     pi.registerProvider(PROVIDER_NAME, configFor(state, refreshModels));
     state.registered = true;
   } else if (!start.cancelled) {
-    // 不注册：此时 models.json 里那条旧清单（如果有）继续生效，pi 照常能用
-    warn(`${start.error} — not registering provider "${PROVIDER_NAME}"; any models.json entry keeps working`);
+    // 不注册：此时 models.json 里那条旧清单（如果有）继续生效，pi 照常能用。
+    // 踩的是默认地址时多说一句「怎么指别处」—— 否则用户只看到一句 ECONNREFUSED，
+    // 不知道默认地址是从哪来的、也不知道有环境变量和配置文件这两个旋钮
+    const hint = state.from === "default" ? ` ${NO_GATEWAY_HINT}` : "";
+    warn(
+      `${start.error} — not registering provider "${PROVIDER_NAME}"; any models.json entry keeps working.${hint}`,
+    );
   } else {
     warn(`the first fetch was cancelled before it answered — not registering provider "${PROVIDER_NAME}"`);
   }

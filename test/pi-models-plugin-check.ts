@@ -359,7 +359,7 @@ const gateway = await startFakeUpstream((req) =>
   check("可达时没有警告", warnings.length === 0, JSON.stringify(warnings));
   check(
     "打的是 /v1/models",
-    gateway.requests.every((r) => r.url === "/v1/models"),
+    gateway.requests.length === 1 && gateway.requests[0].url === "/v1/models",
     JSON.stringify(gateway.requests.map((r) => r.url)),
   );
 }
@@ -428,8 +428,8 @@ const gateway = await startFakeUpstream((req) =>
   check("什么都没配时去试默认网关 127.0.0.1:6450", seen.length === 1 && seen[0] === "http://127.0.0.1:6450/v1/models", JSON.stringify(seen));
   check("默认网关连不上 → 不注册（models.json 继续生效）", pi.provider === null);
   check(
-    "警告里带默认地址，告诉用户怎么改",
-    warnings.some((w) => w.includes("127.0.0.1:6450") && w.includes("not registering")),
+    "默认地址连不上时，警告里带地址与「怎么改」（环境变量名）",
+    warnings.some((w) => w.includes("127.0.0.1:6450") && w.includes("not registering") && w.includes("PI_BUDDY_GATEWAY")),
     JSON.stringify(warnings),
   );
 }
@@ -445,8 +445,10 @@ console.log("超时（注入一个永不响应的 fetch）");
       init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
     });
   const started = Date.now();
-  const result = await fetchModelList("http://gw.example:6450", { timeoutMs: 150, fetchImpl: hangFetch });  const elapsed = Date.now() - started;
-  check("永不响应的网关按超时返回失败", !result.ok && result.error.includes("timed out"), JSON.stringify(result));  check(`超时时间被遵守（${elapsed}ms，上限 150ms + 余量）`, elapsed >= 140 && elapsed < 800, `${elapsed}ms`);
+  const result = await fetchModelList("http://gw.example:6450", { timeoutMs: 150, fetchImpl: hangFetch });
+  const elapsed = Date.now() - started;
+  check("永不响应的网关按超时返回失败", !result.ok && result.error.includes("timed out"), JSON.stringify(result));
+  check(`超时时间被遵守（${elapsed}ms，上限 150ms + 余量）`, elapsed >= 140 && elapsed < 800, `${elapsed}ms`);
 }
 
 {
@@ -477,7 +479,26 @@ console.log("refreshModels 与 /buddy-models");
   body = { data: RECORDED.data.slice(0, 3) };
   const after = await refreshModels({});
   check("refreshModels 重新拉网关（清单变短也跟着变）", after.length === 3, String(after.length));
-  check("refreshModels 把新清单也写进了 provider 状态", pi.provider !== null);
+  check(
+    "refreshModels 把新清单也写进了 provider 状态",
+    after[0]?.id === RECORDED.data[0].id && after.every((m) => m.id !== RECORDED.data[3].id),
+    `${after[0]?.id} … ${after.map((m) => m.id).join(",")}`,
+  );
+
+  // 网关这次回空清单：绝不能拿空清单去替换（legacy 形式的返回值是整条替换，
+  // 交回 [] 就是把用户的模型清空）。必须退回上一份非空清单
+  body = { data: [] };
+  const emptied = await refreshModels({});
+  check(
+    "网关回空清单时交回上一份，而不是空数组",
+    emptied.length === 3 && emptied[0]?.id === RECORDED.data[0].id,
+    `${emptied.length} 条`,
+  );
+  check(
+    "网关回空清单时报告失败原因",
+    warnings.some((w) => w.includes("listed no models")),
+    JSON.stringify(warnings),
+  );
 
   // 拉不到时交回上一次的清单，而不是空数组
   await live.close();
@@ -523,7 +544,8 @@ console.log("refreshModels 与 /buddy-models");
 
 {
   // 启动时拉不到，之后 /buddy-models refresh 把 provider 补注册上
-  const flaky = await startFakeUpstream((req) => (req.url === "/v1/models" ? { body: RECORDED } : undefined));
+  let served: unknown = RECORDED;
+  const flaky = await startFakeUpstream((req) => (req.url === "/v1/models" ? { body: served } : undefined));
   const dead = await startFakeUpstream();
   const deadUrl = dead.url;
   await dead.close();
@@ -543,7 +565,36 @@ console.log("refreshModels 与 /buddy-models");
     seen.join("\n").includes(`${RECORDED.data.length} registered`),
     seen.join("\n"),
   );
+
+  // 再刷一次，这次网关回空清单：不许拿空清单重新注册（legacy 的返回值是整条替换）
+  served = { data: [] };
+  seen.length = 0;
+  await pi.command!.handler("refresh", { ui: { notify: (t: string) => seen.push(t) } });
+  check(
+    "网关回空清单时 refresh 不拿空清单重注册，provider 还是原来那些模型",
+    pi.provider?.config.models.length === RECORDED.data.length,
+    `${pi.provider?.config.models.length} 条`,
+  );
+  check(
+    "网关回空清单时命令把那句失败原因摆出来",
+    seen.join("\n").includes("listed no models"),
+    seen.join("\n"),
+  );
   await flaky.close();
+}
+
+// ── 地址非法：工厂不注册、给一条带原因的警告 ────────────────────────────
+
+{
+  const { pi, warnings, options } = runFactory({ PI_BUDDY_GATEWAY: "ftp://nope" }, tempHome());
+  await buddyModels(pi, options);
+  check("地址不是 http(s) 时工厂不注册", pi.provider === null);
+  check(
+    "地址不是 http(s) 时警告点名是哪个变量写错了",
+    warnings.some((w) => w.includes("PI_BUDDY_GATEWAY") && w.includes("http(s)")),
+    JSON.stringify(warnings),
+  );
+  check("地址非法时仍然注册了 /buddy-models 好让用户能修", pi.command?.name === "buddy-models", String(pi.command?.name));
 }
 
 // ── state 的显示（未注册那一路） ────────────────────────────────────────

@@ -38,15 +38,15 @@ home-manager / nix 之类的 wrapper 启动的，那个 wrapper 通常每次启�
 1. `PI_BUDDY_GATEWAY`
 2. `FACADE_GATEWAY`
 3. `~/.config/buddy-helper/config.json` 的 `gateway` 字段
-4. `http://127.0.0.1:6450` —— `helper/README.md` 里写的默认地址（网关一般就在本机）。
+4. `http://127.0.0.1:6450` —— 本插件自己的兜底（网关一般就跑在本机）。
 
 ```json
 { "gateway": "http://gateway.example:6450" }
 ```
 
-没有第四级的话，一台没设环境变量、也没写过配置文件的机器上插件会静默什么都不做，
-而 `helper/README.md` 说默认就该是 `127.0.0.1:6450` —— 两边对不上。只试这一个地址，
-不做局域网扫描：扫描要花时间且没把握，而扩展工厂在 pi 的启动路径上被 await。
+前三级都没有时就用第四级，插件开箱能用。只试这一个地址，不做局域网扫描：扫描要花时间
+且没把握，而扩展工厂在 pi 的启动路径上被 await。`helper/buddy_sync.py` 没有这级兜底
+（不给地址直接报错退出），所以「脚本能跑」并不代表「地址配好了」——反过来说也一样。
 
 默认值连不上就打一行警告（带地址）、不注册 provider，models.json 那条继续生效。
 环境变量或配置文件里的地址写错成非 http(s) 也**不注册**、直接报错 —— 拿去请求只会得到
@@ -80,13 +80,36 @@ home-manager / nix 之类的 wrapper 启动的，那个 wrapper 通常每次启�
 | `models[].contextWindow` | `context_window`，缺了 200000 |
 | `models[].maxTokens` | `max_output_tokens`，缺了 4096 |
 | `models[].thinkingLevelMap` | `effort_options` 按 `level_map()` 的规则（往下取，不往上取；只有 `off` 的模型每一格都是 `off`） |
+| `models[].cost` | 固定全 0（网关不报价），**每条都要有**，见下一节 |
+| `models[].compat` | 固定两项都开，**每条都要有**，见下一节 |
 
 两条路算出来的东西必须一样，否则「靠插件」和「靠脚本」的思考档位会对不上。
 测试拿 `buddy_sync.pi_provider()` 的输出当期望值钉住这件事。
 
 **已知的照抄行为**：网关报的档位里出现 `default`（pi 没有这一档）时，它排在已知
-档位之后，于是 pi 的 `max` 会映到 `default`（录制里的 `coder-b` 就是这样）。这不是
+档位之后，于是 pi 的 `max` 会映到 `default`（录制里的 `model-02` 就是这样）。这不是
 插件的选择，是脚本现在就这么算的 —— 要改得两边一起改。
+
+## `cost` 与 `compat` 为什么写在每条模型上
+
+不是啰嗦：pi 对两条注册路的归一化程度不一样（1.5.2，`dist/core/provider-composer.js`）。
+
+- `models.json` 那一路：`modelFromJson()` 补 `cost` 默认值，`applyModelsJson()` 再用
+  `mergeCompat` 把 provider 级 `compat` 并进每条模型。
+- 扩展注册那一路：`extensionModelFromDefinition()` 只是把定义展开，provider 级的
+  `cost`/`compat` 一个都不下发。
+
+同一个 provider 名一旦被插件接管，models.json 那份就整条不生效了 —— 于是「靠 pi 补上」
+这条路也没了。缺了会怎样（都在 pi 1.5.2 上实测）：
+
+| 缺什么 | 现象 |
+| --- | --- |
+| `cost` | 请求在第一个 SSE 事件上抛 `Cannot read properties of undefined (reading 'tiers')`（`calculateCost` 读 `model.cost.tiers`），每次请求必炸 |
+| `compat.sendSessionAffinityHeaders` | 不发 `x-session-id`，网关认不出会话：`502 upstream HTTP 400 MissingSessionID` |
+| `compat.forceAdaptiveThinking` | pi 不发 `output_config.effort`，改发 `thinking.budget_tokens` —— 上面那张 `thinkingLevelMap` 整条被绕过 |
+
+所以 `pi_provider()` 与 `toPiModel()` 都给每条模型写上这两格（`cost` 全 0 = 不计价，
+与 pi 自己补的默认值相同）。parity 用例把它们也纳入逐字比对：删掉任一条就会红。
 
 ## 命令
 
@@ -102,7 +125,16 @@ home-manager / nix 之类的 wrapper 启动的，那个 wrapper 通常每次启�
 
 所有请求带超时：默认 1500ms（`DEFAULT_TIMEOUT_MS`），失败就放弃本次注册。pi 的扩展
 工厂是 async 且被启动路径 await，所以这个数字直接等于「网关挂掉时 pi 多等多久」。
-1500ms 留了余量，实测见下。
+实测（本机，pi 启动基线 1352ms）：
+
+| 情况 | 墙钟 | 结果 |
+| --- | --- | --- |
+| 网关可达 | 1573ms | 注册 17 条 |
+| 网关不可达（关着的端口） | 1347ms | 不注册，退回 models.json 那 16 条 |
+| 网关黑洞（不回包） | 1500ms 后放弃 | 不注册 |
+
+不可达那两行分别走两条路：连接被拒是立即返回的（不等超时），只有「连得上但不回话」才
+会吃满 1500ms。所以最坏情况是 pi 启动多等 1.5 秒，正常情况几乎不增加开销。
 
 ## 测
 
@@ -111,9 +143,13 @@ mise run test:pi-models
 ```
 
 离线：假网关是 `test/fake-upstream.ts` 起的 127.0.0.1 随机端口，响应是
-`fixtures/gateway-v1-models.json`（2026-11-19 从真网关录的一次 `/v1/models`）。
+`fixtures/gateway-v1-models.json`（2026-11-19 从真网关录的一次 `/v1/models`，**id 与
+显示名已换成合成的 `model-NN`/`Model NN`**：真实目录属于内部信息，而这个公开仓库只需要
+那 17 条的**形状** —— `off` 单独一档、四档齐全但夹着 `default`/`none`、`midium` 这种
+拼错的档位、只有 `off` 的模型，这些组合才是映射逻辑要覆盖的东西）。
 `fixtures/expected-provider-config.json` 是 `buddy_sync.pi_provider()` 对同一份录制
-算出来的期望配置，parity 用例逐字比对。
+算出来的期望配置，parity 用例逐字比对 —— 所以录制里那两条 `cost`/`compat` 也在比对范围内，
+删掉任何一条 parity 就红。
 
 重新录 / 重新生成期望值（需要网关可达；期望值那份要 Python）：
 

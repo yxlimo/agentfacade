@@ -9,8 +9,8 @@
   },
   "models": [
     {
-      "id": "coder-a",
-      "name": "Coder A",
+      "id": "model-01",
+      "name": "Model 01",
       "reasoning": true,
       "input": [
         "text",
@@ -26,11 +26,21 @@
         "high": "high",
         "xhigh": "high",
         "max": "max"
+      },
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "sendSessionAffinityHeaders": true
       }
     },
     {
-      "id": "coder-b",
-      "name": "Coder B",
+      "id": "model-02",
+      "name": "Model 02",
       "reasoning": true,
       "input": [
         "text",
@@ -46,11 +56,21 @@
         "high": "high",
         "xhigh": "xhigh",
         "max": "default"
+      },
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "sendSessionAffinityHeaders": true
       }
     },
     {
-      "id": "coder-c",
-      "name": "Coder C",
+      "id": "model-03",
+      "name": "Model 03",
       "reasoning": true,
       "input": [
         "text",
@@ -66,11 +86,21 @@
         "high": "high",
         "xhigh": "high",
         "max": "max"
+      },
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "sendSessionAffinityHeaders": true
       }
     },
     {
-      "id": "coder-d",
-      "name": "Coder D",
+      "id": "model-04",
+      "name": "Model 04",
       "reasoning": true,
       "input": [
         "text",
@@ -86,11 +116,21 @@
         "high": "high",
         "xhigh": "high",
         "max": "none"
+      },
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "sendSessionAffinityHeaders": true
       }
     },
     {
-      "id": "coder-e",
-      "name": "Coder E",
+      "id": "model-05",
+      "name": "Model 05",
       "reasoning": true,
       "input": [
         "text",
@@ -106,11 +146,21 @@
         "high": "high",
         "xhigh": "high",
         "max": "midium"
+      },
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "sendSessionAffinityHeaders": true
       }
     },
     {
-      "id": "coder-f",
-      "name": "Coder F",
+      "id": "model-06",
+      "name": "Model 06",
       "reasoning": true,
       "input": [
         "text",
@@ -126,11 +176,21 @@
         "high": "high",
         "xhigh": "high",
         "max": "max"
+      },
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "sendSessionAffinityHeaders": true
       }
     },
     {
-      "id": "coder-main",
-      "name": "Manager",
+      "id": "model-07",
+      "name": "Model 07",
       "reasoning": true,
       "input": [
         "text",
@@ -146,11 +206,21 @@
         "high": "high",
         "xhigh": "high",
         "max": "max"
+      },
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "sendSessionAffinityHeaders": true
       }
     },
     {
-      "id": "dsh-manager",
-      "name": "Deepseek Harness Manager",
+      "id": "model-08",
+      "name": "Model 08",
       "reasoning": true,
       "input": [
         "text",
@@ -166,11 +236,21 @@
         "high": "high",
         "xhigh": "xhigh",
         "max": "default"
+      },
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "sendSessionAffinityHeaders": true
       }
     },
     {
-      "id": "magic-context-dreamer",
-      "name": "MagicContext Dreamer Model",
+      "id": "model-09",
+      "name": "Model 09",
       "reasoning": true,
       "input": [
         "text",
@@ -186,11 +266,21 @@
         "high": "high",
         "xhigh": "high",
         "max": "high"
+      },
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "sendSessionAffinityHeaders": true
       }
     },
     {
-      "id": "magic-context-historian",
-      "name": "MagicContext Historian Model",
+      "id": "model-10",
+      "name": "Model 10",
       "reasoning": true,
       "input": [
         "text",
@@ -206,11 +296,21 @@
         "high": "high",
         "xhigh": "high",
         "max": "high"
+      },
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "sendSessionAffinityHeaders": true
       }
     },
     {
-      "id": "reviewer-a",
-      "name": "Reviewer A",
+      "id": "model-11",
+      "name": "Model 11",
       "reasoning": true,
       "input": [
         "text",
@@ -226,11 +326,21 @@
         "high": "high",
         "xhigh": "xhigh",
         "max": "default"
+      },
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "sendSessionAffinityHeaders": true
       }
     },
     {
-      "id": "reviewer-b",
-      "name": "Reviewer B",
+      "id": "model-12",
+      "name": "Model 12",
       "reasoning": true,
       "input": [
         "text",
@@ -246,11 +356,21 @@
         "high": "high",
         "xhigh": "high",
         "max": "none"
+      },
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "sendSessionAffinityHeaders": true
       }
     },
     {
-      "id": "reviewer-c",
-      "name": "Reviewer C",
+      "id": "model-13",
+      "name": "Model 13",
       "reasoning": true,
       "input": [
         "text",
@@ -266,11 +386,21 @@
         "high": "high",
         "xhigh": "high",
         "max": "max"
+      },
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "sendSessionAffinityHeaders": true
       }
     },
     {
-      "id": "reviewer-d",
-      "name": "Reviewer D",
+      "id": "model-14",
+      "name": "Model 14",
       "reasoning": true,
       "input": [
         "text",
@@ -286,11 +416,21 @@
         "high": "off",
         "xhigh": "off",
         "max": "off"
+      },
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "sendSessionAffinityHeaders": true
       }
     },
     {
-      "id": "reviewer-e",
-      "name": "Reviewer E",
+      "id": "model-15",
+      "name": "Model 15",
       "reasoning": true,
       "input": [
         "text",
@@ -306,11 +446,21 @@
         "high": "high",
         "xhigh": "high",
         "max": "midium"
+      },
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "sendSessionAffinityHeaders": true
       }
     },
     {
-      "id": "reviewer-f",
-      "name": "Reviewer F",
+      "id": "model-16",
+      "name": "Model 16",
       "reasoning": true,
       "input": [
         "text",
@@ -326,11 +476,21 @@
         "high": "high",
         "xhigh": "high",
         "max": "max"
+      },
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "sendSessionAffinityHeaders": true
       }
     },
     {
-      "id": "tester",
-      "name": "Tester",
+      "id": "model-17",
+      "name": "Model 17",
       "reasoning": true,
       "input": [
         "text",
@@ -346,6 +506,16 @@
         "high": "high",
         "xhigh": "high",
         "max": "max"
+      },
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "sendSessionAffinityHeaders": true
       }
     }
   ]

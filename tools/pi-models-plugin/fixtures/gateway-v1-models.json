@@ -1,9 +1,9 @@
 {
   "data": [
     {
-      "id": "coder-a",
+      "id": "model-01",
       "type": "model",
-      "display_name": "Coder A",
+      "display_name": "Model 01",
       "created_at": 1795061290,
       "reasoning": true,
       "tool_call": true,
@@ -17,9 +17,9 @@
       ]
     },
     {
-      "id": "coder-b",
+      "id": "model-02",
       "type": "model",
-      "display_name": "Coder B",
+      "display_name": "Model 02",
       "created_at": 1795061290,
       "reasoning": true,
       "tool_call": true,
@@ -36,9 +36,9 @@
       ]
     },
     {
-      "id": "coder-c",
+      "id": "model-03",
       "type": "model",
-      "display_name": "Coder C",
+      "display_name": "Model 03",
       "created_at": 1795061290,
       "reasoning": true,
       "tool_call": true,
@@ -52,9 +52,9 @@
       ]
     },
     {
-      "id": "coder-d",
+      "id": "model-04",
       "type": "model",
-      "display_name": "Coder D",
+      "display_name": "Model 04",
       "created_at": 1795061290,
       "reasoning": true,
       "tool_call": true,
@@ -67,9 +67,9 @@
       ]
     },
     {
-      "id": "coder-e",
+      "id": "model-05",
       "type": "model",
-      "display_name": "Coder E",
+      "display_name": "Model 05",
       "created_at": 1795061290,
       "reasoning": true,
       "tool_call": true,
@@ -83,9 +83,9 @@
       ]
     },
     {
-      "id": "coder-f",
+      "id": "model-06",
       "type": "model",
-      "display_name": "Coder F",
+      "display_name": "Model 06",
       "created_at": 1795061290,
       "reasoning": true,
       "tool_call": true,
@@ -99,9 +99,9 @@
       ]
     },
     {
-      "id": "coder-main",
+      "id": "model-07",
       "type": "model",
-      "display_name": "Manager",
+      "display_name": "Model 07",
       "created_at": 1795061290,
       "reasoning": true,
       "tool_call": true,
@@ -115,9 +115,9 @@
       ]
     },
     {
-      "id": "dsh-manager",
+      "id": "model-08",
       "type": "model",
-      "display_name": "Deepseek Harness Manager",
+      "display_name": "Model 08",
       "created_at": 1795061290,
       "reasoning": true,
       "tool_call": true,
@@ -134,9 +134,9 @@
       ]
     },
     {
-      "id": "magic-context-dreamer",
+      "id": "model-09",
       "type": "model",
-      "display_name": "MagicContext Dreamer Model",
+      "display_name": "Model 09",
       "created_at": 1795061290,
       "reasoning": true,
       "tool_call": false,
@@ -149,9 +149,9 @@
       ]
     },
     {
-      "id": "magic-context-historian",
+      "id": "model-10",
       "type": "model",
-      "display_name": "MagicContext Historian Model",
+      "display_name": "Model 10",
       "created_at": 1795061290,
       "reasoning": true,
       "tool_call": false,
@@ -164,9 +164,9 @@
       ]
     },
     {
-      "id": "reviewer-a",
+      "id": "model-11",
       "type": "model",
-      "display_name": "Reviewer A",
+      "display_name": "Model 11",
       "created_at": 1795061290,
       "reasoning": true,
       "tool_call": true,
@@ -183,9 +183,9 @@
       ]
     },
     {
-      "id": "reviewer-b",
+      "id": "model-12",
       "type": "model",
-      "display_name": "Reviewer B",
+      "display_name": "Model 12",
       "created_at": 1795061290,
       "reasoning": true,
       "tool_call": true,
@@ -198,9 +198,9 @@
       ]
     },
     {
-      "id": "reviewer-c",
+      "id": "model-13",
       "type": "model",
-      "display_name": "Reviewer C",
+      "display_name": "Model 13",
       "created_at": 1795061290,
       "reasoning": true,
       "tool_call": true,
@@ -214,9 +214,9 @@
       ]
     },
     {
-      "id": "reviewer-d",
+      "id": "model-14",
       "type": "model",
-      "display_name": "Reviewer D",
+      "display_name": "Model 14",
       "created_at": 1795061290,
       "reasoning": true,
       "tool_call": true,
@@ -227,9 +227,9 @@
       ]
     },
     {
-      "id": "reviewer-e",
+      "id": "model-15",
       "type": "model",
-      "display_name": "Reviewer E",
+      "display_name": "Model 15",
       "created_at": 1795061290,
       "reasoning": true,
       "tool_call": true,
@@ -243,9 +243,9 @@
       ]
     },
     {
-      "id": "reviewer-f",
+      "id": "model-16",
       "type": "model",
-      "display_name": "Reviewer F",
+      "display_name": "Model 16",
       "created_at": 1795061290,
       "reasoning": true,
       "tool_call": true,
@@ -259,9 +259,9 @@
       ]
     },
     {
-      "id": "tester",
+      "id": "model-17",
       "type": "model",
-      "display_name": "Tester",
+      "display_name": "Model 17",
       "created_at": 1795061290,
       "reasoning": true,
       "tool_call": true,
@@ -276,6 +276,6 @@
     }
   ],
   "has_more": false,
-  "first_id": "coder-a",
-  "last_id": "tester"
+  "first_id": "model-01",
+  "last_id": "model-17"
 }
