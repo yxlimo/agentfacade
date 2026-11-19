@@ -1,15 +1,12 @@
-// pi 插件：让 pi 自己从网关拿模型清单，不再靠手工跑 helper/buddy_sync.py 改
-// ~/.pi/agent/models.json。
+// pi 插件：让 pi 自己在启动时从 AgentFacade 网关拿模型清单，不用手工改 models.json。
 //
-// 为什么是插件而不是继续写 models.json：写文件是「谁跑脚本谁才更新」，而网关
+// 为什么是插件而不是继续写 models.json：写文件是「谁跑过谁才更新」，而网关
 // 的模型清单是活的（面板上改一下主路由就变了）。插件在 pi 启动时拉一次，之后
 // pi 需要刷新目录时再拉（refreshModels），用户不用记得跑任何命令。
 //
-// 与 models.json 的关系（实测，2026-11-19）：同一个 provider 名 "buddy" 同时出现在
-// models.json 和 legacy 形式的 registerProvider 里时，**插件赢**，而且赢的是整个
-// provider —— 模型清单与 baseUrl 都取插件的值，models.json 那份整条不生效。所以
-// 这里不要求用户删 models.json 里的条目，那份退化成「插件说不出话时的备份」：
-// 网关拉不到时本插件**不注册**，pi 就继续用 models.json 里的旧清单。
+// 与 models.json 的关系：这是**替代**，不是并存 —— 模型清单由插件负责，pi 这一侧
+// 不再需要人跑命令或手工改 models.json。provider 名独立（agentfacade），不与
+// models.json 里可能存在的条目撞名；网关拉不到时本插件不注册，pi 继续用原有清单。
 //
 // 绝不注册空清单：legacy 形式的 models 是替换语义，注册一个空数组会把用户已有的
 // 模型清空，那比「列表过期」糟得多。
@@ -22,10 +19,10 @@ import {
 } from "./catalog.ts";
 import { NO_GATEWAY_HINT, fetchModelList, resolveGateway, type FetchOptions } from "./gateway.ts";
 
-/** 客户端里的 provider 名，与脚本写进 models.json 的那个一致 */
-export const PROVIDER_NAME = "buddy";
+/** provider 名：独立名字，不与 models.json 里可能存在的条目撞名 */
+export const PROVIDER_NAME = "agentfacade";
 
-/** 网关跑 public 模式时不校验 key，脚本里也是这个常量 */
+/** 网关跑 public 模式时不校验 key */
 export const API_KEY = "public";
 
 /**
@@ -82,7 +79,7 @@ export interface PluginOptions {
   warn?: (message: string) => void;
 }
 
-const PREFIX = "[buddy-models]";
+const PREFIX = "[facade-models]";
 
 /** refresh() 的结果。cancelled 与失败分开：前者是 pi 自己不要了，不是网关的错 */
 export type RefreshResult =
@@ -137,19 +134,19 @@ function configFor(state: PluginState, refreshModels: (context: RefreshContext) 
   return { ...toProviderConfig(state.gateway, API_KEY, state.models), refreshModels };
 }
 
-/** 给 /buddy-models 用的那几行。英文：用户可见 */
+/** 给 /facade-models 用的那几行。英文：用户可见 */
 export function describe(state: PluginState): string[] {
   if (!state.registered) {
     const reason = state.lastError ?? "not registered yet";
     return [
-      `Buddy provider is NOT registered: ${reason}`,
+      `AgentFacade provider is NOT registered: ${reason}`,
       `Gateway: ${state.gateway || "(none)"}${state.from ? ` (from ${state.from})` : ""}`,
-      "Fix the gateway address or start the gateway, then run /buddy-models refresh",
+      "Fix the gateway address or start the gateway, then run /facade-models refresh",
     ];
   }
   const when = state.lastRefresh === null ? "never" : new Date(state.lastRefresh).toISOString();
   const lines = [
-    `Buddy models: ${state.models.length} registered under provider "${PROVIDER_NAME}"`,
+    `AgentFacade models: ${state.models.length} registered under provider "${PROVIDER_NAME}"`,
     `Gateway: ${state.gateway} (from ${state.from})`,
     `Last refresh: ${when}`,
   ];
@@ -161,7 +158,7 @@ export function describe(state: PluginState): string[] {
  * 扩展工厂。async：pi 会等它返回再继续启动，所以这里拉到的模型对启动时的模型
  * 选择和 `pi --list-models` 都有效（docs/extensions.md 的 async factory 一节）。
  */
-export default async function buddyModels(pi: PiExtensionApi, options: PluginOptions = {}): Promise<void> {
+export default async function facadeModels(pi: PiExtensionApi, options: PluginOptions = {}): Promise<void> {
   const warn = options.warn ?? ((message: string) => console.warn(`${PREFIX} ${message}`));
   const state: PluginState = {
     gateway: "",
@@ -199,8 +196,8 @@ export default async function buddyModels(pi: PiExtensionApi, options: PluginOpt
     warn(`the first fetch was cancelled before it answered — not registering provider "${PROVIDER_NAME}"`);
   }
 
-  pi.registerCommand("buddy-models", {
-    description: "Show the Buddy gateway model catalog; /buddy-models refresh re-fetches it",
+  pi.registerCommand("facade-models", {
+    description: "Show the AgentFacade gateway model catalog; /facade-models refresh re-fetches it",
     handler: async (args, ctx) => {
       if (args.trim().toLowerCase() === "refresh") {
         const result = await refresh(state, options);

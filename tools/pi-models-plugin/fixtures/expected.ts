@@ -1,12 +1,16 @@
-{
-  "name": "Buddy (main route)",
+// 期望的 provider 配置：**手写快照**，不由任何程序生成。
+//
+// 改 catalog.ts 的映射就要同步改这里 —— 两边一起动是刻意的，否则「映射改了但
+// 测试还绿」。要重录：对着 fixtures/gateway-v1-models.json 那份录制，按新映射
+// 逐条改，不许再写脚本自动生成。
+
+import type { PiProviderConfig } from "../catalog.ts";
+
+export const EXPECTED: PiProviderConfig = {
+  "name": "AgentFacade (main route)",
   "baseUrl": "http://gateway.example:6450",
   "api": "anthropic-messages",
   "apiKey": "public",
-  "compat": {
-    "forceAdaptiveThinking": true,
-    "sendSessionAffinityHeaders": true
-  },
   "models": [
     {
       "id": "model-01",
@@ -519,4 +523,4 @@
       }
     }
   ]
-}
+};

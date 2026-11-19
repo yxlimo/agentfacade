@@ -1,16 +1,13 @@
 // 网关的 /v1/models 响应 → pi 的 provider 配置。纯函数，不碰网络、不读环境变量，
 // 单测直接对着录制下来的响应跑。
 //
-// 这一层为什么必须与 helper/buddy_sync.py 的 pi_provider() 逐字一致：那份脚本是
-// 现在唯一在写 ~/.pi/agent/models.json 的东西，插件接管之后两条路都会有人走
-// （插件、或者退回脚本），两边算出来的档位映射不一样就会出现「同一条模型，靠
-// 插件时的思考档位和靠脚本时不同」这种查不动的问题。parity 用例拿 Python 的
-// 输出当期望值，就是为了钉住这件事。
+// 映射规则是这一层自己的约定：档位怎么折、缺值怎么补都写在这里，期望值写死在测试里
+// （test/pi-models-plugin-check.ts 的 EXPECTED），改这里就要同步改期望值 —— 两边一起
+// 动是刻意的，避免「改了映射但测试还绿」。
 //
-// 照抄的逻辑有几处看着像 bug，但**不许顺手改**：改了就是两条路漂移。
-// 例如网关报的档位里有 "default" 时 rank 里查不到，排在最后，于是 pi 的 max
-// 会映到 "default"（见 fixtures/expected-provider-config.json 里的 model-02）。
-// 要改就得两边一起改，那是另一个任务。
+// 有几处看着像 bug，但**不许顺手改**：网关报的档位里有 "default" 时 rank 里查不到，
+// 排在最后，于是 pi 的 max 会映到 "default"（见 fixtures/gateway-v1-models.json 里的
+// model-02）。那是上游报出来的真实形状，改掉就与网关对不上了。
 
 /** pi 的思考档位，从浅到深。顺序即强弱，字母序会把 high 排到 low 前面 */
 export const PI_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -25,7 +22,7 @@ export const DEFAULT_CONTEXT = 200000;
 export const DEFAULT_OUTPUT = 4096;
 
 /**
- * 每条模型都要带的两样，与 pi_provider() 里那两格逐字一致。
+ * 每条模型都要带的两样：pi 不会替扩展注册的 provider 补它们。
  *
  * cost 全 0：网关不报价，pi 只拿它算「花了多少钱」的统计，0 表示不计价（与
  * models.json 那一路 pi 自己补的默认值相同）。
@@ -58,8 +55,7 @@ export interface PiModelEntry {
    *   · 扩展注册：`extensionModelFromDefinition()` 只是把定义展开，provider 级的
    *     cost / compat 一个都不下发。
    *
-   * 同一个 provider 名一旦被扩展接管，models.json 那份就整条不生效，于是「靠 pi 补」
-   * 这条路也没了。缺了会怎样（都在 pi 1.5.2 上实测）：
+   * 缺了会怎样（都在 pi 1.5.2 上实测）：
    *   · 没有 cost → 请求在第一个 SSE 事件上抛
    *     `Cannot read properties of undefined (reading 'tiers')`（calculateCost 读 model.cost.tiers）
    *   · 没有 compat → 不发 x-session-id，网关认不出会话（`502 upstream HTTP 400 MissingSessionID`），
@@ -75,7 +71,8 @@ export interface PiProviderConfig {
   baseUrl: string;
   api: string;
   apiKey: string;
-  compat: { forceAdaptiveThinking: boolean; sendSessionAffinityHeaders: boolean };
+  /** provider 级 compat 可选：扩展注册路径不读它，只有 models.json 那一路需要 */
+  compat?: { forceAdaptiveThinking: boolean; sendSessionAffinityHeaders: boolean };
   models: PiModelEntry[];
 }
 
@@ -92,7 +89,7 @@ export function sortEfforts(efforts: readonly string[]): string[] {
 /**
  * pi 的思考档位 → 上游真有的档位。往下取，不往上取。
  *
- * 往下取的原因（照抄脚本里的注释，因为理由一样）：档位是成本与延迟的旋钮，
+ * 往下取的原因：档位是成本与延迟的旋钮，
  * pi 默认 medium，往上取等于把「配置里没写档位」变成「思考拉满」。
  *
  * off 是阶梯最浅的一档，不是布尔开关：
@@ -186,7 +183,7 @@ export function normalizeReasoning(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
 
-/** 与脚本的 `int(m.get(...) or DEFAULT)` 同义：0 和缺失都算默认 */
+/** 0 和缺失都算默认 */
 function positiveIntOr(value: unknown, fallback: number): number {
   const n = typeof value === "number" ? value : Number(value);
   return Number.isFinite(n) && n !== 0 ? Math.trunc(n) : fallback;
@@ -214,7 +211,7 @@ export function toPiModel(raw: unknown): PiModelEntry {
   };
 }
 
-/** /v1/models 的 data → provider 的 models。没有 id 的项跳过（脚本也跳过） */
+/** /v1/models 的 data → provider 的 models。没有 id 的项跳过 */
 export function modelsFromPayload(rawModels: readonly unknown[]): PiModelEntry[] {
   const out: PiModelEntry[] = [];
   for (const raw of rawModels) {
@@ -226,19 +223,16 @@ export function modelsFromPayload(rawModels: readonly unknown[]): PiModelEntry[]
 }
 
 /**
- * provider 配置。baseUrl 是**根地址**：pi 走 Anthropic 方言，自己拼 /v1/messages
- * （opencode 那一份才带 /v1，那份归脚本管）
+ * provider 配置。baseUrl 是**根地址**（不带 /v1）：pi 走 Anthropic 方言，自己拼
+ * /v1/messages。
  */
 export function toProviderConfig(gateway: string, apiKey: string, models: readonly PiModelEntry[]): PiProviderConfig {
   return {
-    name: "Buddy (main route)",
+    name: "AgentFacade (main route)",
     baseUrl: gateway,
     api: "anthropic-messages",
     apiKey,
-    // provider 级 compat 留着，但**不能只靠它**：pi 的扩展注册路径不下发 provider 级
-    // compat（每条模型上那份才生效，见 PiModelEntry 的注释）。models.json 那一路照旧
-    // 需要 provider 级这一份。
-    compat: { ...COMPAT },
+    // 不写 provider 级 compat：扩展注册路径不读它，每条模型上那份才生效
     models: [...models],
   };
 }

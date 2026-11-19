@@ -4,13 +4,12 @@
 //
 // 覆盖四块：
 //   · 字段映射：网关的 /v1/models 响应 → pi 的 provider 配置。期望值里的档位映射
-//     是 helper/buddy_sync.py 的 pi_provider() 算出来的（见 fixtures 的生成方式），
-//     插件与脚本两条路必须算出同一份东西
-//   · 网关地址解析：PI_BUDDY_GATEWAY > FACADE_GATEWAY > 配置文件
+//     的期望值写在 fixtures/expected.ts 里 —— 手写快照，不由任何程序生成
+//   · 网关地址解析：PI_FACADE_GATEWAY > FACADE_GATEWAY > 配置文件
 //   · 真实网络：起一个 127.0.0.1 的假网关（startFakeUpstream），走真的 fetch；
 //     可达时注册的模型数等于 /v1/models 的 data 长度，不可达时**不注册**且不抛
 //   · 刷新与命令：refreshModels 重新拉、拉不到时交回上一次的清单而不是空数组、
-//     /buddy-models 显示的几个数字
+//     /facade-models 显示的几个数字
 //
 // 全部离线：假网关在本机、录制的响应在 fixtures 里，不碰真网关也不花额度。
 
@@ -19,7 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import buddyModels, { describe, refresh, type PiExtensionApi, type PluginOptions } from "../tools/pi-models-plugin/index.ts";
+import facadeModels, { describe, refresh, type PiExtensionApi, type PluginOptions } from "../tools/pi-models-plugin/index.ts";
 import {
   effectiveEfforts,
   levelMap,
@@ -30,6 +29,7 @@ import {
   type PiProviderConfig,
 } from "../tools/pi-models-plugin/catalog.ts";
 import { fetchModelList, modelsUrl, resolveGateway } from "../tools/pi-models-plugin/gateway.ts";
+import { EXPECTED as EXPECTED_SNAPSHOT } from "../tools/pi-models-plugin/fixtures/expected.ts";
 import { startFakeUpstream } from "./fake-upstream.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -37,9 +37,7 @@ const FIXTURES = path.join(HERE, "..", "tools", "pi-models-plugin", "fixtures");
 const RECORDED = JSON.parse(fs.readFileSync(path.join(FIXTURES, "gateway-v1-models.json"), "utf8")) as {
   data: unknown[];
 };
-const EXPECTED = JSON.parse(
-  fs.readFileSync(path.join(FIXTURES, "expected-provider-config.json"), "utf8"),
-) as PiProviderConfig;
+const EXPECTED = EXPECTED_SNAPSHOT;
 
 let pass = 0;
 let fail = 0;
@@ -64,9 +62,9 @@ function tempHome(): string {
 }
 
 // ── 档位映射 ─────────────────────────────────────────────────────────────
-// 每一条的期望值都是 buddy_sync.py 的 level_map() 的实测输出
+// 每一条的期望值都手写在这份测试里：改映射就要改它们
 
-console.log("levelMap（期望值取自 buddy_sync.py 的 level_map）");
+console.log("levelMap（期望值手写）");
 
 check(
   "off+low+high+max：往下取，xhigh 映 high",
@@ -167,7 +165,7 @@ check(
 );
 
 check(
-  "带 default 的齐全集合：max 映到 default（与脚本一致，别顺手改）",
+  "带 default 的齐全集合：max 映到 default（看着像 bug，别顺手改）",
   levelMap(["off", "default", "low", "medium", "high", "xhigh", "max"]).max === "default",
   JSON.stringify(levelMap(["off", "default", "low", "medium", "high", "xhigh", "max"])),
 );
@@ -218,7 +216,7 @@ check(
 
 const zeroLimits = toPiModel({ id: "zeros", context_window: 0, max_output_tokens: 0 });
 check(
-  "上下文/输出上限是 0 也算「没说」（与脚本的 `or DEFAULT` 同义）",
+  "上下文/输出上限是 0 也算「没说」",
   zeroLimits.contextWindow === 200000 && zeroLimits.maxTokens === 4096,
   `${zeroLimits.contextWindow}/${zeroLimits.maxTokens}`,
 );
@@ -235,15 +233,15 @@ check(
   JSON.stringify(modelsFromPayload([{ id: "" }, { display_name: "no id" }, { id: "kept" }]).map((m) => m.id)),
 );
 
-// ── 与脚本的 parity：整份配置逐字相同 ──────────────────────────────────
+// ── 整份配置的快照比对 ────────────────────────────────────────────────
 
 console.log("");
-console.log("parity（期望值由 buddy_sync.pi_provider() 生成）");
+console.log("整份 provider 配置");
 
 const fromFixture = modelsFromPayload(RECORDED.data);
 check("录制的响应有 17 条模型", fromFixture.length === 17, String(fromFixture.length));
 check(
-  "provider 配置与脚本算出来的逐字相同",
+  "provider 配置与快照逐字相同",
   same(toProviderConfig("http://gateway.example:6450", "public", fromFixture), EXPECTED),
   JSON.stringify(toProviderConfig("http://gateway.example:6450", "public", fromFixture)).slice(0, 200),
 );
@@ -257,16 +255,16 @@ const home = tempHome();
 fs.mkdirSync(path.join(home, ".config", "buddy-helper"), { recursive: true });
 fs.writeFileSync(path.join(home, ".config", "buddy-helper", "config.json"), '{"gateway":"http://from-config.example:6450/"}');
 
-const both = resolveGateway({ PI_BUDDY_GATEWAY: "http://pi.example:6450", FACADE_GATEWAY: "http://facade.example:6450" }, home);
+const both = resolveGateway({ PI_FACADE_GATEWAY: "http://pi.example:6450", FACADE_GATEWAY: "http://facade.example:6450" }, home);
 check(
-  "PI_BUDDY_GATEWAY 赢过 FACADE_GATEWAY 与配置文件",
-  both.ok && both.gateway === "http://pi.example:6450" && both.from === "PI_BUDDY_GATEWAY",
+  "PI_FACADE_GATEWAY 赢过 FACADE_GATEWAY 与配置文件",
+  both.ok && both.gateway === "http://pi.example:6450" && both.from === "PI_FACADE_GATEWAY",
   JSON.stringify(both),
 );
 
 const facade = resolveGateway({ FACADE_GATEWAY: "http://facade.example:6450" }, home);
 check(
-  "没有 PI_BUDDY_GATEWAY 时 FACADE_GATEWAY 赢过配置文件",
+  "没有 PI_FACADE_GATEWAY 时 FACADE_GATEWAY 赢过配置文件",
   facade.ok && facade.gateway === "http://facade.example:6450" && facade.from === "FACADE_GATEWAY",
   JSON.stringify(facade),
 );
@@ -286,7 +284,7 @@ check(
   JSON.stringify(nowhere),
 );
 
-const badScheme = resolveGateway({ PI_BUDDY_GATEWAY: "ftp://nope" }, emptyHome);
+const badScheme = resolveGateway({ PI_FACADE_GATEWAY: "ftp://nope" }, emptyHome);
 check("不是 http(s) 地址 → 报错而不是拿去请求", !badScheme.ok && badScheme.error.includes("http(s)"), JSON.stringify(badScheme));
 
 const brokenConfigHome = tempHome();
@@ -336,11 +334,11 @@ const gateway = await startFakeUpstream((req) =>
 );
 
 {
-  const { pi, warnings, options } = runFactory({ PI_BUDDY_GATEWAY: gateway.url }, tempHome());
-  await buddyModels(pi, options);
+  const { pi, warnings, options } = runFactory({ PI_FACADE_GATEWAY: gateway.url }, tempHome());
+  await facadeModels(pi, options);
 
   const expected = EXPECTED.models.length;
-  check("可达时注册了 provider buddy", pi.provider?.name === "buddy", JSON.stringify(pi.provider?.name));
+  check("可达时注册了 provider agentfacade", pi.provider?.name === "agentfacade", JSON.stringify(pi.provider?.name));
   check(
     `注册的模型数等于 /v1/models 的 data 长度（${RECORDED.data.length}）`,
     pi.provider?.config.models.length === RECORDED.data.length && RECORDED.data.length === expected,
@@ -348,14 +346,18 @@ const gateway = await startFakeUpstream((req) =>
   );
   check("baseUrl 是网关根地址（不带 /v1）", pi.provider?.config.baseUrl === gateway.url, String(pi.provider?.config.baseUrl));
   check("方言是 anthropic-messages", pi.provider?.config.api === "anthropic-messages", String(pi.provider?.config.api));
+  // provider 级不写 compat（pi 的扩展注册路径不读它），每条模型上必须有，否则网关
+  // 认不出会话（实测 502 MissingSessionID）
   check(
-    "compat 两个标志照抄",
-    pi.provider?.config.compat.forceAdaptiveThinking === true &&
-      pi.provider?.config.compat.sendSessionAffinityHeaders === true,
-    JSON.stringify(pi.provider?.config.compat),
+    "compat 两个标志在每条模型上",
+    pi.provider!.config.models.every(
+      (m) =>
+        m.compat.forceAdaptiveThinking === true && m.compat.sendSessionAffinityHeaders === true,
+    ),
+    JSON.stringify(pi.provider!.config.models[0]?.compat),
   );
   check("注册了一个 refreshModels", typeof pi.provider?.config.refreshModels === "function");
-  check("注册了 /buddy-models 命令", pi.command?.name === "buddy-models", String(pi.command?.name));
+  check("注册了 /facade-models 命令", pi.command?.name === "facade-models", String(pi.command?.name));
   check("可达时没有警告", warnings.length === 0, JSON.stringify(warnings));
   check(
     "打的是 /v1/models",
@@ -370,19 +372,26 @@ const gateway = await startFakeUpstream((req) =>
   const deadUrl = dead.url;
   await dead.close();
 
-  const { pi, warnings, options } = runFactory({ PI_BUDDY_GATEWAY: deadUrl }, tempHome());
+  const { pi, warnings, options } = runFactory({ PI_FACADE_GATEWAY: deadUrl }, tempHome());
   let threw = false;
   try {
-    await buddyModels(pi, options);
+    await facadeModels(pi, options);
   } catch {
     threw = true;
   }
   check("网关不可达时工厂不抛异常", !threw);
   check("网关不可达时**不注册**（空清单会把用户的模型清空）", pi.provider === null, JSON.stringify(pi.provider));
-  check("不可达时仍然注册 /buddy-models（让用户能自己刷新）", pi.command?.name === "buddy-models");
+  check("不可达时仍然注册 /facade-models（让用户能自己刷新）", pi.command?.name === "facade-models");
   check(
     "警告里写明原因与「没注册」",
     warnings.some((w) => w.includes("not registering")),
+    JSON.stringify(warnings),
+  );
+  // 反向：地址是用户显式给的，不该再劝「去设 PI_FACADE_GATEWAY」—— 那句 hint 只对
+  // 「踩默认地址」成立。少了这条，守卫去掉以后全套测试仍然全绿
+  check(
+    "显式设了网关时警告不出现默认地址那句",
+    !warnings.some((w) => w.includes("no gateway configured")),
     JSON.stringify(warnings),
   );
 }
@@ -390,8 +399,8 @@ const gateway = await startFakeUpstream((req) =>
 {
   // 一个 HTTP 200 但 data 是空的清单：同样不能注册
   const empty = await startFakeUpstream(() => ({ body: { data: [] } }));
-  const { pi, warnings, options } = runFactory({ PI_BUDDY_GATEWAY: empty.url }, tempHome());
-  await buddyModels(pi, options);
+  const { pi, warnings, options } = runFactory({ PI_FACADE_GATEWAY: empty.url }, tempHome());
+  await facadeModels(pi, options);
   check("清单为空时不注册", pi.provider === null);
   check("清单为空时警告说明是空清单", warnings.some((w) => w.includes("no models")), JSON.stringify(warnings));
   await empty.close();
@@ -424,12 +433,12 @@ const gateway = await startFakeUpstream((req) =>
     throw new Error("connect ECONNREFUSED");
   }) as unknown as typeof fetch;
   const { pi, warnings, options } = runFactory({}, tempHome(), { fetchOptions: { fetchImpl: failingFetch } });
-  await buddyModels(pi, options);
+  await facadeModels(pi, options);
   check("什么都没配时去试默认网关 127.0.0.1:6450", seen.length === 1 && seen[0] === "http://127.0.0.1:6450/v1/models", JSON.stringify(seen));
   check("默认网关连不上 → 不注册（models.json 继续生效）", pi.provider === null);
   check(
     "默认地址连不上时，警告里带地址与「怎么改」（环境变量名）",
-    warnings.some((w) => w.includes("127.0.0.1:6450") && w.includes("not registering") && w.includes("PI_BUDDY_GATEWAY")),
+    warnings.some((w) => w.includes("127.0.0.1:6450") && w.includes("not registering") && w.includes("PI_FACADE_GATEWAY")),
     JSON.stringify(warnings),
   );
 }
@@ -467,13 +476,13 @@ console.log("超时（注入一个永不响应的 fetch）");
 // ── refreshModels 与命令 ────────────────────────────────────────────────
 
 console.log("");
-console.log("refreshModels 与 /buddy-models");
+console.log("refreshModels 与 /facade-models");
 
 {
   let body: unknown = RECORDED;
   const live = await startFakeUpstream(() => ({ body }));
-  const { pi, warnings, options } = runFactory({ PI_BUDDY_GATEWAY: live.url }, tempHome());
-  await buddyModels(pi, options);
+  const { pi, warnings, options } = runFactory({ PI_FACADE_GATEWAY: live.url }, tempHome());
+  await facadeModels(pi, options);
 
   const refreshModels = pi.provider!.config.refreshModels!;
   body = { data: RECORDED.data.slice(0, 3) };
@@ -515,8 +524,8 @@ console.log("refreshModels 与 /buddy-models");
   // pi 每次注册/凭据变化都会重刷 provider，新的刷新会把旧的那次 abort。
   // 这种取消不能当成「网关出错」，否则每次正常启动都会多一条吓人的警告
   const live = await startFakeUpstream(() => ({ body: RECORDED }));
-  const { pi, warnings, options } = runFactory({ PI_BUDDY_GATEWAY: live.url }, tempHome());
-  await buddyModels(pi, options);
+  const { pi, warnings, options } = runFactory({ PI_FACADE_GATEWAY: live.url }, tempHome());
+  await facadeModels(pi, options);
   const before = warnings.length;
 
   const controller = new AbortController();
@@ -529,37 +538,37 @@ console.log("refreshModels 与 /buddy-models");
 
 {
   const live = await startFakeUpstream((req) => (req.url === "/v1/models" ? { body: RECORDED } : undefined));
-  const { pi, options } = runFactory({ PI_BUDDY_GATEWAY: live.url }, tempHome());
-  await buddyModels(pi, options);
+  const { pi, options } = runFactory({ PI_FACADE_GATEWAY: live.url }, tempHome());
+  await facadeModels(pi, options);
 
   const seen: string[] = [];
   const ctx = { ui: { notify: (text: string) => seen.push(text) } };
   await pi.command!.handler("", ctx);
   const text = seen.join("\n");
   check("命令显示注册了多少条模型", text.includes(`${RECORDED.data.length} registered`), text);
-  check("命令显示网关地址与来源", text.includes(live.url) && text.includes("PI_BUDDY_GATEWAY"), text);
+  check("命令显示网关地址与来源", text.includes(live.url) && text.includes("PI_FACADE_GATEWAY"), text);
   check("命令显示最后一次刷新时间", /Last refresh: \d{4}-/.test(text), text);
   await live.close();
 }
 
 {
-  // 启动时拉不到，之后 /buddy-models refresh 把 provider 补注册上
+  // 启动时拉不到，之后 /facade-models refresh 把 provider 补注册上
   let served: unknown = RECORDED;
   const flaky = await startFakeUpstream((req) => (req.url === "/v1/models" ? { body: served } : undefined));
   const dead = await startFakeUpstream();
   const deadUrl = dead.url;
   await dead.close();
 
-  const { pi, options } = runFactory({ PI_BUDDY_GATEWAY: deadUrl }, tempHome());
-  await buddyModels(pi, options);
+  const { pi, options } = runFactory({ PI_FACADE_GATEWAY: deadUrl }, tempHome());
+  await facadeModels(pi, options);
   check("（前置）启动时确实没注册", pi.provider === null);
 
   // 同一个扩展实例，把网关指向活的假上游：refresh 要用同一份 env 对象，
   // 所以这里换 env 而不是换实例
-  options.env!.PI_BUDDY_GATEWAY = flaky.url;
+  options.env!.PI_FACADE_GATEWAY = flaky.url;
   const seen: string[] = [];
   await pi.command!.handler("refresh", { ui: { notify: (t: string) => seen.push(t) } });
-  check("refresh 之后补注册了 provider", pi.provider?.name === "buddy", JSON.stringify(pi.provider?.name));
+  check("refresh 之后补注册了 provider", pi.provider?.name === "agentfacade", JSON.stringify(pi.provider?.name));
   check(
     "refresh 之后命令报告已注册",
     seen.join("\n").includes(`${RECORDED.data.length} registered`),
@@ -586,15 +595,15 @@ console.log("refreshModels 与 /buddy-models");
 // ── 地址非法：工厂不注册、给一条带原因的警告 ────────────────────────────
 
 {
-  const { pi, warnings, options } = runFactory({ PI_BUDDY_GATEWAY: "ftp://nope" }, tempHome());
-  await buddyModels(pi, options);
+  const { pi, warnings, options } = runFactory({ PI_FACADE_GATEWAY: "ftp://nope" }, tempHome());
+  await facadeModels(pi, options);
   check("地址不是 http(s) 时工厂不注册", pi.provider === null);
   check(
     "地址不是 http(s) 时警告点名是哪个变量写错了",
-    warnings.some((w) => w.includes("PI_BUDDY_GATEWAY") && w.includes("http(s)")),
+    warnings.some((w) => w.includes("PI_FACADE_GATEWAY") && w.includes("http(s)")),
     JSON.stringify(warnings),
   );
-  check("地址非法时仍然注册了 /buddy-models 好让用户能修", pi.command?.name === "buddy-models", String(pi.command?.name));
+  check("地址非法时仍然注册了 /facade-models 好让用户能修", pi.command?.name === "facade-models", String(pi.command?.name));
 }
 
 // ── state 的显示（未注册那一路） ────────────────────────────────────────
@@ -602,7 +611,7 @@ console.log("refreshModels 与 /buddy-models");
 {
   const state = { gateway: "", from: "", models: [], lastRefresh: null, lastError: "boom", registered: false };
   const lines = describe(state).join("\n");
-  check("未注册时 describe 说 NOT registered 并给下一步", lines.includes("NOT registered") && lines.includes("/buddy-models refresh"), lines);
+  check("未注册时 describe 说 NOT registered 并给下一步", lines.includes("NOT registered") && lines.includes("/facade-models refresh"), lines);
 
   const okState = { gateway: "http://gw.example:6450", from: "config file", models: [toPiModel({ id: "a" })], lastRefresh: Date.now(), lastError: null, registered: true };
   check("已注册时 describe 报模型数与网关", describe(okState).join("\n").includes("1 registered"), describe(okState).join("\n"));
@@ -613,14 +622,14 @@ console.log("refreshModels 与 /buddy-models");
 {
   const live = await startFakeUpstream(() => ({ body: RECORDED }));
   const state = { gateway: "", from: "", models: [] as PiModelEntry[], lastRefresh: null as number | null, lastError: "old failure" as string | null, registered: false };
-  const result = await refresh(state, { env: { PI_BUDDY_GATEWAY: live.url }, home: tempHome() });
+  const result = await refresh(state, { env: { PI_FACADE_GATEWAY: live.url }, home: tempHome() });
   check("refresh 成功后清掉 lastError", result.ok && state.lastError === null, JSON.stringify(state.lastError));
   check("refresh 成功后记下时间戳", state.lastRefresh !== null);
 
   // 取消不应该被记成错误（也不能清掉上一次的真实错误以外的东西）
   const controller = new AbortController();
   controller.abort();
-  const cancelled = await refresh(state, { env: { PI_BUDDY_GATEWAY: live.url }, home: tempHome() }, controller.signal);
+  const cancelled = await refresh(state, { env: { PI_FACADE_GATEWAY: live.url }, home: tempHome() }, controller.signal);
   check("取消时 refresh 报 cancelled 而不是失败", !cancelled.ok && cancelled.cancelled === true, JSON.stringify(cancelled));
   check("取消时不动 lastError", state.lastError === null, JSON.stringify(state.lastError));
   await live.close();

@@ -1,10 +1,8 @@
 // 网关地址从哪来、/v1/models 怎么拉。网络与文件系统都在这一层，方便测试注入。
 //
-// 地址的解析顺序与 helper/common.py 的 resolve_gateway() 一致（脚本里是
-// --gateway > FACADE_GATEWAY > 配置文件，插件没有命令行参数，所以从环境变量
-// 起）：PI_BUDDY_GATEWAY > FACADE_GATEWAY > ~/.config/buddy-helper/config.json
-// 的 gateway 字段。**不内置默认地址**：猜错（127.0.0.1 还是 NAS 上那份）等于
-// 对着错的网关取模型清单，报出来的东西没意义。
+// 地址的解析顺序：PI_FACADE_GATEWAY > FACADE_GATEWAY > ~/.config/buddy-helper/config.json
+// 的 gateway 字段 > DEFAULT_GATEWAY。前三级写错了（不是 http(s)）就报错，不悄悄换成
+// 默认值 —— 写错地址的人需要知道写错了。配置文件的路径与键名沿用既有约定。
 
 import fs from "node:fs";
 import os from "node:os";
@@ -12,18 +10,18 @@ import path from "node:path";
 
 /**
  * 三级都没配时试这个。不是猜的：`helper/README.md` 把 `http://127.0.0.1:6450`
- * 写成默认地址（网关通常就跑在本机），脚本的用户手册也这么讲。实测本机
+ * 写成默认地址（网关通常就跑在本机）。实测本机
  * 127.0.0.1:6450 与局域网那份地址返回同一份 17 条清单。
  *
  * 只试这一个，不做局域网扫描：扫描要花时间、结果不确定，而 pi 的扩展工厂在启动
  * 路径上被 await —— 拿启动延迟换一次没把握的发现不划算。用户要指别处，写配置文件
- * （`buddy_sync.py --set-gateway`）或设环境变量。
+ * （配置文件里的 `gateway` 字段就是它）或设环境变量。
  */
 export const DEFAULT_GATEWAY = "http://127.0.0.1:6450";
 
 /** 默认值也连不上时的提示：既说清怎么指别处，也说明这不是 fatal */
 export const NO_GATEWAY_HINT =
-  `no gateway configured and the default ${DEFAULT_GATEWAY} is unreachable: set PI_BUDDY_GATEWAY, ` +
+  `no gateway configured and the default ${DEFAULT_GATEWAY} is unreachable: set PI_FACADE_GATEWAY, ` +
   'or FACADE_GATEWAY, or write {"gateway": "http://gateway.example:6450"} ' +
   "to ~/.config/buddy-helper/config.json";
 
@@ -34,12 +32,12 @@ export const NO_GATEWAY_HINT =
  */
 export const DEFAULT_TIMEOUT_MS = 1500;
 
-/** 配置文件名与键名照抄脚本，两边读同一份文件 */
+/** 配置文件路径与键名 */
 const CONFIG_DIR = [".config", "buddy-helper"];
 const CONFIG_FILE = "config.json";
 
 export type ResolvedGateway =
-  | { ok: true; gateway: string; from: "PI_BUDDY_GATEWAY" | "FACADE_GATEWAY" | "config file" | "default" }
+  | { ok: true; gateway: string; from: "PI_FACADE_GATEWAY" | "FACADE_GATEWAY" | "config file" | "default" }
   | { ok: false; error: string };
 
 /** 末尾的斜杠一律去掉：后面统一拼 `/v1/models` */
@@ -70,7 +68,7 @@ export function readGatewayConfig(home: string = os.homedir()): string {
 }
 
 /**
- * 这次要用的网关地址。四级：PI_BUDDY_GATEWAY → FACADE_GATEWAY → 配置文件 →
+ * 这次要用的网关地址。四级：PI_FACADE_GATEWAY → FACADE_GATEWAY → 配置文件 →
  * `DEFAULT_GATEWAY`。前三级写错了（不是 http(s)）就报错，不悄悄换成默认值 ——
  * 写错地址的人需要知道写错了，拿默认值顶上去只会让他以为配置生效了。
  *
@@ -80,8 +78,8 @@ export function resolveGateway(
   env: NodeJS.ProcessEnv = process.env,
   home: string = os.homedir(),
 ): ResolvedGateway {
-  const candidates: Array<[string, "PI_BUDDY_GATEWAY" | "FACADE_GATEWAY"]> = [
-    ["PI_BUDDY_GATEWAY", "PI_BUDDY_GATEWAY"],
+  const candidates: Array<[string, "PI_FACADE_GATEWAY" | "FACADE_GATEWAY"]> = [
+    ["PI_FACADE_GATEWAY", "PI_FACADE_GATEWAY"],
     ["FACADE_GATEWAY", "FACADE_GATEWAY"],
   ];
   for (const [name, from] of candidates) {
