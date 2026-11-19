@@ -85,9 +85,14 @@ async function panelModel(id: string): Promise<any> {
   return (listed.body?.models ?? []).find((m: any) => m.id === id);
 }
 
-/** The root route's view of one published model. */
+/**
+ * The root route's view of one published model.
+ *
+ * 显式要 Anthropic 形状：这里比的是 `context_window` / `display_name` 这些
+ * Anthropic 形状的平铺字段（默认形状是 OpenAI 的，那里没有它们）。
+ */
 async function rootModel(id: string): Promise<any> {
-  const body = await (await fetch(`${BASE}/v1/models`)).json();
+  const body = await (await fetch(`${BASE}/v1/models?dialect=anthropic`)).json();
   return (body.data ?? []).find((m: any) => m.id === id);
 }
 

@@ -226,8 +226,32 @@ curl http://localhost:6450/v1/messages \
 | `GET` | `/{platform}/v1/models` | one platform's own catalogue, with the plain model ids |
 | `GET` | `/health` | the state of every enabled platform |
 
-`/v1/models` takes `?dialect=openai` for the OpenAI shape; the default is the
-Anthropic one.
+`/v1/models` answers in the **OpenAI shape by default** — that is what most
+clients ask for. `?dialect=anthropic` switches it to the Anthropic shape,
+`?dialect=openai` says the same as the default, and any other value is a 400
+(nothing is silently answered in another shape). Without a query the request
+headers decide: an Anthropic client — one that sends `anthropic-version` or
+`anthropic-beta`, or an `x-api-key` without an `authorization` — gets the
+Anthropic shape, everybody else the OpenAI one.
+
+Both shapes carry more than the ids:
+
+- the Anthropic shape has `created_at` as an RFC 3339 date-time **string** (the
+  Anthropic spec's `format: date-time`), plus the flat `reasoning`,
+  `tool_call`, `context_window`, `max_output_tokens` and `effort_options` the
+  clients read. Its `capabilities` is `null`: the spec wants every key inside
+  that object, and we know only a part of them, so we say nothing rather than
+  half an object (or a `{supported: false}` that would mean "does not" where we
+  mean "we do not know");
+- the OpenAI shape has `limit` (`context`, `output`), `capabilities` (`tools`,
+  `reasoning` with its `effort` levels), `modalities` and `cost` — the fields
+  opencode-go's own catalogue carries. Each of them is only there when we know
+  it: a missing key means "nobody said", so no `0`, no `false` and no empty
+  array is ever sent in their place.
+
+`created` / `created_at` is the moment the platform's catalogue was fetched (the
+process start when there is no such moment) — never "now", so the same
+catalogue does not look newly published on every request.
 
 The root route publishes exactly what the panel publishes: a model you publish
 on the 主路由模型 page is served there, with the name you gave it. A model that
@@ -305,7 +329,7 @@ not usage and is not counted; it shows up in the request log instead.
 
 | Method | Path | Format |
 |--------|------|--------|
-| `GET` | `/v1/models` | the models on the root route (`?dialect=openai` for the OpenAI shape) |
+| `GET` | `/v1/models` | the models on the root route (OpenAI shape by default, `?dialect=anthropic` for the Anthropic one) |
 | `GET` | `/{platform}/v1/models` | one platform's own catalogue |
 | `POST` | `/v1/chat/completions` | OpenAI chat (stream supported) |
 | `POST` | `/{platform}/v1/chat/completions` | the same, addressed to one platform |

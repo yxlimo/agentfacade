@@ -58,8 +58,22 @@ done
 # Every model in the list carries the metadata a client needs: how much it
 # reads and how much it may answer. A model the gateway says nothing about
 # the context window of has no context window here either.
+#
+# 两种形状都验：默认是 OpenAI 的（窗口与输出上限在 `limit` 下面），显式要的
+# Anthropic 形状把它们平铺开。同一件事，两个客户端看的是两份答复。
 for group in qoder qoder-cn workbuddy-cn minimax; do
   got=$(curl -s --noproxy '*' -m 20 "$BASE/$group/v1/models" | python3 -c '
+import json,sys
+data = json.load(sys.stdin)["data"]
+bad = [m.get("id") for m in data
+       if not (m.get("limit") or {}).get("output")
+       or ((m.get("limit") or {}).get("context") is not None
+           and (m.get("limit") or {}).get("context") <= 0)]
+print("ok" if data and not bad else "bad: " + ", ".join(map(str, bad[:3])))
+' 2>/dev/null)
+  report "models $group metadata (openai)" "ok" "$got"
+
+  got=$(curl -s --noproxy '*' -m 20 "$BASE/$group/v1/models?dialect=anthropic" | python3 -c '
 import json,sys
 data = json.load(sys.stdin)["data"]
 bad = [m.get("id") for m in data
@@ -67,7 +81,7 @@ bad = [m.get("id") for m in data
        or (m.get("context_window") is not None and m.get("context_window") <= 0)]
 print("ok" if data and not bad else "bad: " + ", ".join(map(str, bad[:3])))
 ' 2>/dev/null)
-  report "models $group metadata" "ok" "$got"
+  report "models $group metadata (anthropic)" "ok" "$got"
 done
 
 # One request per upstream and dialect.
