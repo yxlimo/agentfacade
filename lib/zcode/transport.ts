@@ -21,6 +21,17 @@ import { toolNamesOf, zcodeSystem } from "./system.ts";
 /** 模型端点。 */
 export const ZCODE_MESSAGES_URL = `${ZCODE_BASE}/api/v1/zcode-plan/anthropic/v1/messages`;
 
+/**
+ * 账单域（领取、投放、客户端配置）报的那一版。
+ *
+ * 与模型请求的版本分开：那个是**模型请求**的指纹（动了会被上游当异常活动），
+ * 这个是账单计划接口的版本。实测这几个端点认的是 3.18.2。
+ *
+ * 放在这一处而不是 claim.ts：领取的头要用它，而头在这里 —— 反过来导入会成环
+ * （claim.ts 已经导入这一层了）。claim.ts 仍然导出它（从那儿导入的旧调用不变）。
+ */
+export const ZCODE_CLAIM_APP_VERSION = configString("ZCODE_CLAIM_APP_VERSION", "3.18.2");
+
 /** 客户端报的用户代理。 */
 const USER_AGENT = `ZCode/${ZCODE_VERSION}`;
 
@@ -137,6 +148,56 @@ export function zcodePlatformHeaders(
     ...zcodeHeaders(session, opts),
     "X-Device-Mid": session.deviceId ?? "",
   };
+}
+
+/**
+ * 平台 API（billing/claim、client/configs）用的头。
+ *
+ * 与模型请求的头**不是**一套：官方客户端发这些请求时一个模型请求的头都不带
+ * （x-api-key、anthropic-version、X-ZCode-Agent、x-zcode-session-type、
+ * x-zcode-trace-id、x-query-id、x-zcode-query-source）—— 那套是模型请求
+ * （glm 原生 agent / source server）专用的归因头，平台 API 走另一套基础头。
+ *
+ * 模型请求那边**一个都不能少**（少了上游回 3012），所以这里另起一个函数，
+ * 不去动 zcodeHeaders()。
+ *
+ * 头的内容照官方客户端的请求逐项对齐：Bearer 一份（不叠 x-api-key，叠了上游
+ * 回 401 空正文）、身份头那一套、还有设备标识（X-Device-Mid）。
+ *
+ * 验证码那两个头由调用方给：浏览器里跑出来的阿里云无感校验结果（一次性）
+ * 与它自己的地域。上游没要求验证码时就不给这两个头。
+ */
+export function zcodePlatformApiHeaders(
+  session: ZcodeSession,
+  opts: { captchaVerifyParam?: string; captchaRegion?: string } = {},
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    // 鉴权只有这一个头：官方客户端的 claim 请求只有 Bearer（没有 x-api-key）。
+    authorization: `Bearer ${session.token}`,
+    "content-type": "application/json",
+    "HTTP-Referer": ZCODE_BASE,
+    // 客户端报的版本是账单域那一版（模型请求那一版是另一个指纹）。
+    "user-agent": `ZCode/${ZCODE_CLAIM_APP_VERSION}`,
+    "X-ZCode-App-Version": ZCODE_CLAIM_APP_VERSION,
+    "X-Title": CLIENT.title,
+    "X-Release-Channel": "production",
+    "X-Client-Language": ZCODE_CLIENT_LANGUAGE,
+    "X-Client-Timezone": TIMEZONE,
+    "X-Platform": CLIENT.platform,
+    "X-Os-Category": CLIENT.osCategory,
+    "X-Os-Version": CLIENT.osVersion,
+    "x-request-id": crypto.randomUUID(),
+  };
+  // 设备标识：没有的会话不带这个头（官方那时候也不带）。
+  const deviceId = session.deviceId ?? "";
+  if (deviceId) headers["X-Device-Mid"] = deviceId;
+  const param = String(opts.captchaVerifyParam ?? "").trim();
+  if (param) {
+    headers["X-Aliyun-Captcha-Verify-Param"] = param;
+    const region = String(opts.captchaRegion ?? "").trim();
+    if (region) headers["X-Aliyun-Captcha-Verify-Region"] = region;
+  }
+  return headers;
 }
 
 /**

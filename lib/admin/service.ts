@@ -183,6 +183,7 @@ import { policyEnum, policyErrorText, policyFromEnum } from "./policy.ts";
 import { usageEvents, usageSummary, type UsageTotals } from "./usage.ts";
 import { tailLog } from "./log.ts";
 import { benefits, platformHasBenefits } from "./benefits.ts";
+import { claimZcodePlan, getZcodeClaimStatus } from "./zcode-claim.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1521,6 +1522,22 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
     return create(RunBenefitNowResponseSchema, {
       ok: outcomes.length > 0 && outcomes.every((o) => o.ok),
       lines: outcomes.flatMap((o) => [`[${o.upstream}] ${o.report.join("；")}`]),
+    });
+  },
+
+  /* ---------------- ZCode 的活动额度领取 ---------------- */
+
+  async getZcodeClaimStatus(request) {
+    return getZcodeClaimStatus(String(request.providerId ?? ""));
+  },
+
+  async claimZcodePlan(request) {
+    return claimZcodePlan({
+      accountId: String(request.providerId ?? ""),
+      planId: String(request.planId ?? ""),
+      campaignId: String(request.campaignId ?? ""),
+      captchaVerifyParam: String(request.captchaVerifyParam ?? ""),
+      captchaRegion: String(request.captchaRegion ?? ""),
     });
   },
 

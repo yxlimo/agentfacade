@@ -27,18 +27,21 @@
 // 领取与每日签到是两件事：这里只有领取。定时器那一步也单开（lib/periodic.ts
 // 的 `claim` 步进），不塞进 benefits —— 签到页不该说成签到。
 
-import { configNumber, configString } from "../config.ts";
+import { configNumber } from "../config.ts";
 import { scrubForLog } from "../log-scrub.ts";
 import { ZCODE_BASE, loadSession } from "./auth.ts";
-import { zcodePlatformHeaders } from "./transport.ts";
+import { ZCODE_CLAIM_APP_VERSION, zcodePlatformApiHeaders } from "./transport.ts";
 
 /**
  * 账单域（领取与投放）用的客户端版本。
  *
  * 与 ZCODE_VERSION 分开：那个是**模型请求**的指纹（动了会被上游当异常活动），
- * 这个是账单计划接口的版本。实测这两个端点报的是 3.18.2。
+ * 这个是账单计划接口的版本。实测这几个端点报的是 3.18.2。
+ *
+ * 值本身住在 transport.ts（领取的头要用它，而头在那里）。这里再导出一次：
+ * 从 claim.ts 导入的调用（marketing.ts、测试）照旧能用。
  */
-export const ZCODE_CLAIM_APP_VERSION = configString("ZCODE_CLAIM_APP_VERSION", "3.18.2");
+export { ZCODE_CLAIM_APP_VERSION };
 
 /** 问一轮就收手（毫秒）。 */
 const CLAIM_TIMEOUT_MS = configNumber("ZCODE_CLAIM_TIMEOUT_MS", 20_000);
@@ -237,16 +240,35 @@ export function describeClaimedPlan(name: string, planId: string): string {
  * 问上游
  * ------------------------------------------------------------------ */
 
+/** 领取时的可选参数。 */
+export interface ZcodeClaimOptions {
+  /**
+   * 浏览器里跑出来的阿里云无感校验结果（一次性）。
+   *
+   * 没有它上游答 3007（captcha verify failed）—— 定时那条路恒定落在那里，
+   * 手动那条路（lib/zcode/claim-manual.ts）把它带来。
+   */
+  captchaVerifyParam?: string;
+  /** 阿里云验证码的地域（上游配置里有 region 才带）。 */
+  captchaRegion?: string;
+}
+
 /**
  * 领一个计划。
  *
  * 成功：code===0 且 `data.plan` 存在。
  * 失败：把服务端的 code 与中文原话原样带回来 —— 不自己映射错误码（那一套
  * 映射是猜的，而猜错的话面板会说错原因）。
+ *
+ * 头用 zcodePlatformApiHeaders：官方客户端的 claim 请求**不带**模型请求的
+ * 那些头（x-api-key、anthropic-version、x-zcode-agent、x-zcode-session-type、
+ * x-zcode-trace-id、x-query-id、x-zcode-query-source）—— 那是模型请求专用的
+ * 归因头，平台 API 走另一套。Authorization 只有一份（叠了上游回 401 空正文）。
  */
 export async function claimPlan(
   providerId: string,
   planId: string,
+  options: ZcodeClaimOptions = {},
 ): Promise<ZcodeClaimResult> {
   const session = loadSession(providerId);
   if (!session) return { state: "missing", at: Date.now() };
@@ -255,8 +277,10 @@ export async function claimPlan(
     r = await fetch(`${ZCODE_BASE}/api/v1/zcode-plan/billing/claim`, {
       method: "POST",
       headers: {
-        ...zcodePlatformHeaders(session),
-        "content-type": "application/json",
+        ...zcodePlatformApiHeaders(session, {
+          captchaVerifyParam: options.captchaVerifyParam,
+          captchaRegion: options.captchaRegion,
+        }),
       },
       body: JSON.stringify({ plan_id: planId }),
       signal: AbortSignal.timeout(CLAIM_TIMEOUT_MS),

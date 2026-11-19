@@ -1246,6 +1246,98 @@ message ImportLoginTokenResponse {
   Credential credential = 3;
 }
 
+// ── ZCode 的活动额度：面板点一次「领取」 ───────────────────────────────────
+
+// 领取的结论。
+//
+// 六种，缺一不可（合成一个 bool 就分不出「没领成」与「领过了」）：
+enum ZcodeClaimOutcome {
+  // 零值：还没问 / 结论未知。
+  ZCODE_CLAIM_OUTCOME_UNKNOWN = 0;
+  // 领到了：上游说 code 0 且给了计划。
+  ZCODE_CLAIM_OUTCOME_CLAIMED = 1;
+  // 已经领过了 / 上游说不能再领（终态码那一组：1001–1005）。
+  ZCODE_CLAIM_OUTCOME_ALREADY = 2;
+  // 上游把验证码判成无效（业务码 3007）：浏览器跑出来的那一张不被认。
+  ZCODE_CLAIM_OUTCOME_CAPTCHA_REJECTED = 3;
+  // 此刻没有这个可领的投放：plan_id 不在上游当前的投放里，
+  // 一个领取请求都不发。
+  ZCODE_CLAIM_OUTCOME_NO_OFFER = 4;
+  // 问到了但没领成：网络、上游 5xx、其它业务码、凭据被拒。
+  ZCODE_CLAIM_OUTCOME_FAILED = 5;
+}
+
+// 上游下发的验证码配置（面板拿它初始化阿里云验证码 SDK）。
+message ZcodeCaptchaConfig {
+  // 上游有没有下发 captcha 这一段。
+  bool present = 1;
+  // 上游说这次要不要验证码。
+  bool enabled = 2;
+  // 场景 id（SDK 的 SceneId）。
+  string scene_id = 3;
+  // 前缀（SDK 的 prefix）。
+  string prefix = 4;
+  // 地域（SDK 的 region）。上游没给就是空串。
+  string region = 5;
+}
+
+// 此刻可领的一个投放（marketing/touch 里带 claim_zcode_plan 按钮的那些）。
+message ZcodeClaimOffer {
+  string campaign_id = 1;
+  string plan_id = 2;
+  // 展示名。上游没给就是空串。
+  string name = 3;
+  int32 priority = 4;
+  // 网关记得这个 campaign|plan 已经领成过（领过的不要再点一次）。
+  bool already_claimed = 5;
+}
+
+message GetZcodeClaimStatusRequest {
+  // 账号 id（provider 表里的那一行）。
+  string provider_id = 1;
+}
+
+message GetZcodeClaimStatusResponse {
+  bool ok = 1;
+  string message = 2;
+  // 上游的验证码配置（面板用它初始化 SDK）。
+  ZcodeCaptchaConfig captcha = 3;
+  // 此刻可领的投放。
+  repeated ZcodeClaimOffer offers = 4;
+  // 配置够不够跑一次无感校验：present && enabled && scene_id 非空。
+  // 面板据此决定要不要显示「领取」按钮（false 时不显示）。
+  bool captcha_available = 5;
+}
+
+message ClaimZcodePlanRequest {
+  // 账号 id（provider 表里的那一行）。
+  string provider_id = 1;
+  // 投放里的 plan_id。
+  string plan_id = 2;
+  // 投放里的 campaign_id（幂等与留痕用）。
+  string campaign_id = 3;
+  // 浏览器里跑出来的阿里云无感校验结果（一次性）。
+  string captcha_verify_param = 4;
+  // 阿里云验证码的地域。上游配置里有 region 时才带。
+  string captcha_region = 5;
+}
+
+message ClaimZcodePlanResponse {
+  bool ok = 1;
+  string message = 2;
+  ZcodeClaimOutcome outcome = 3;
+  // 上游的业务码，原样带回来（上游没给就是 0）。
+  int32 code = 4;
+  // 上游的原话（data.message），原样带回来。
+  string upstream_message = 5;
+  string plan_id = 6;
+  string campaign_id = 7;
+  // 领到的计划名（只有领到时才有）。
+  string plan_name = 8;
+  // 领到的计划什么时候开始算数（unix 毫秒；没有就是 0）。
+  int64 effective_at_ms = 9;
+}
+
 // ── 服务 ──────────────────────────────────────────────────────────────────
 
 // 失败怎么表达（只对下面列出的那八个方法）：
@@ -1322,4 +1414,10 @@ service AdminService {
   rpc LoginWithPassword(LoginWithPasswordRequest) returns (LoginWithPasswordResponse);
   rpc ExchangeLoginCode(ExchangeLoginCodeRequest) returns (ExchangeLoginCodeResponse);
   rpc ImportLoginToken(ImportLoginTokenRequest) returns (ImportLoginTokenResponse);
+
+  // ZCode 的活动额度：面板点一次「领取」。
+  // 前端先问「此刻有什么可领、验证码配置是什么」，再在浏览器里跑一次无感
+  // 校验，把结果交给 ClaimZcodePlan。
+  rpc GetZcodeClaimStatus(GetZcodeClaimStatusRequest) returns (GetZcodeClaimStatusResponse);
+  rpc ClaimZcodePlan(ClaimZcodePlanRequest) returns (ClaimZcodePlanResponse);
 }

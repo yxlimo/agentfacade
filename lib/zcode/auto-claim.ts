@@ -124,6 +124,19 @@ interface PendingClaim {
 const pendingClaims = new Map<string, PendingClaim>();
 
 /**
+ * 把一次领取结论写进现役的快照（面板读的就是那一格）。
+ *
+ * 导出来给手动领取那条路用（lib/zcode/claim-manual.ts）：面板上只有一格
+ * 可读，两边各写一份的话面板会看到两个打架的结论。
+ *
+ * 「已经领过哪些投放」在这里合并（新的结论不该把那份记忆抹掉）—— 手动
+ * 领成的那一条也记进去，于是定时那条路不会再重复领同一个投放。
+ */
+export function recordClaimSnapshot(providerId: string, snapshot: ZcodeClaimSnapshot): void {
+  record(providerId, snapshot);
+}
+
+/**
  * 把窗口里的结论并进一份刚写出来的快照。
  *
  * 谁写快照谁调它：结论是**写上游**的结果，丢了就没人知道今天领没领。
