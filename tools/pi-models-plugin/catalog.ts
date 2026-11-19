@@ -58,7 +58,8 @@ export interface PiModelEntry {
    * 缺了会怎样（都在 pi 1.5.2 上实测）：
    *   · 没有 cost → 请求在第一个 SSE 事件上抛
    *     `Cannot read properties of undefined (reading 'tiers')`（calculateCost 读 model.cost.tiers）
-   *   · 没有 compat → 不发 x-session-id，网关认不出会话（`502 upstream HTTP 400 MissingSessionID`），
+   *   · 没有 compat → 不发 `x-session-affinity`（openrouter 格式才发 `x-session-id`），网关拿不到
+   *     客户端会话 id，上游答 400 MissingSessionID，网关把它包成 502（见 README 那张表），
    *     而且 forceAdaptiveThinking 一起没了 —— 算出来的 thinkingLevelMap 整条被绕过。
    */
   cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
