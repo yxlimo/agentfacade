@@ -13,3 +13,6 @@
   - 提交钩子跑完整 e2e 太慢，用 --no-verify 提交，验收单独跑
 - UI 接上：query key / 失效关系 / claim hooks / 文案模块 / 账号行按钮 + 单测 11 条
 - e2e 写了三条（成功、验证码失败、配置不可用），开始跑真浏览器
+- 验收全绿：check:panel 24 文件 83 测试（含新 3 条 e2e）；check:web 62 文件 553 测试；
+  typecheck 通过；privacy --all 0 命中
+- 按钮位置：平台页 → 展开 zcode → 账号子表「操作」列，登录按钮左边
