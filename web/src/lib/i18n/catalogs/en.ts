@@ -236,9 +236,9 @@ export const en: Record<keyof typeof zh, string> = {
   'upstreams.policyUnset': 'Not set',
   'upstreams.policyCurrent': '{{label}} (current)',
 
-  'upstreams.claimed': 'Claimed',
-  'upstreams.claiming': 'Claiming',
-  'upstreams.claim': 'Claim',
+  'upstreams.claimed': 'Quota claimed',
+  'upstreams.claiming': 'Claiming…',
+  'upstreams.claim': 'Claim quota',
   'upstreams.interactiveNotice':
     'Traceless verification is unavailable in this browser; an interactive CAPTCHA was passed',
   'upstreams.noticeJoin': '; ',

@@ -60,6 +60,11 @@ type StatusOptions = {
   offers?: { campaignId: string; planId: string; name: string; priority: number; alreadyClaimed: boolean }[]
 }
 
+/** 领取成功后状态查询返回新的 offers，用这个句柄模拟后端那一侧变化。 */
+export type ClaimStatusControl = {
+  setOffers: (offers: StatusOptions['offers']) => void
+}
+
 function setup(options: {
   status?: StatusOptions
   claimOutcome?: ZcodeClaimOutcome
@@ -67,8 +72,23 @@ function setup(options: {
   effectiveAtMs?: bigint
   upstreamMessage?: string
   claimOk?: boolean
+  onClaim?: () => void
 } = {}) {
   const claimInputs: Record<string, unknown>[] = []
+  let currentOffers = options.status?.offers ?? [
+    {
+      campaignId: 'camp-1',
+      planId: 'plan-1',
+      name: '周积分包',
+      priority: 10,
+      alreadyClaimed: false,
+    },
+  ]
+  const statusControl: ClaimStatusControl = {
+    setOffers: (offers) => {
+      currentOffers = offers ?? []
+    },
+  }
   const client = mockAdminClient({
     ListUpstreams: () =>
       create(ListUpstreamsResponseSchema, { upstreams: [zcodePlatform()] }),
@@ -86,15 +106,7 @@ function setup(options: {
           prefix: 'prefix-TESTONLY',
           region: 'cn',
         },
-        offers: (options.status?.offers ?? [
-          {
-            campaignId: 'camp-1',
-            planId: 'plan-1',
-            name: '周积分包',
-            priority: 10,
-            alreadyClaimed: false,
-          },
-        ]).map((offer) => ({
+        offers: currentOffers.map((offer) => ({
           campaignId: offer.campaignId,
           planId: offer.planId,
           name: offer.name,
@@ -104,6 +116,7 @@ function setup(options: {
       }),
     ClaimZcodePlan: (input) => {
       claimInputs.push(input as unknown as Record<string, unknown>)
+      options.onClaim?.()
       return create(ClaimZcodePlanResponseSchema, {
         ok: options.claimOk ?? true,
         outcome: options.claimOutcome ?? ZcodeClaimOutcome.CLAIMED,
@@ -113,7 +126,7 @@ function setup(options: {
       })
     },
   })
-  return { client, claimInputs }
+  return { client, claimInputs, statusControl }
 }
 
 /** 展开 zcode 平台，让账号那一行出现在页面上。 */
@@ -164,6 +177,22 @@ describe('ZCode 账号行的领取按钮', () => {
     expect(screen.queryByRole('button', { name: '领取' })).not.toBeInTheDocument()
     await user.click(screen.getByText('领取账号'))
     expect(claimInputs).toHaveLength(0)
+  })
+
+  it('领取成功后 offer 变空：仍显示已领取额度与这次的结论，按钮不再可点', async () => {
+    const user = userEvent.setup({ delay: null })
+    runTraceless.mockResolvedValue(verification('param-TESTONLY'))
+    const { client, statusControl } = setup({
+      planName: '周积分包',
+      onClaim: () => statusControl.setOffers([]),
+    })
+    renderWithClient({ client, children: <UpstreamsPage /> })
+    await open(user)
+    await user.click(await screen.findByRole('button', { name: '领取额度' }))
+
+    expect(await screen.findByText('已领取额度')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('已领到')
+    expect(screen.queryByRole('button', { name: '领取额度' })).not.toBeInTheDocument()
   })
 
   it('多个 offer 按 priority 取第一个；按钮点下去先跑验证码，再带正确参数发领取', async () => {

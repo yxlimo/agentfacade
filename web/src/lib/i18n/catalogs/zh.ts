@@ -228,9 +228,9 @@ export const zh = {
   'upstreams.policyUnset': '未设置',
   'upstreams.policyCurrent': '{{label}}（当前）',
 
-  'upstreams.claimed': '已领取',
-  'upstreams.claiming': '领取中',
-  'upstreams.claim': '领取',
+  'upstreams.claimed': '已领取额度',
+  'upstreams.claiming': '领取额度中',
+  'upstreams.claim': '领取额度',
   'upstreams.interactiveNotice': '这台浏览器不支持无感验证，已用交互式验证码通过',
   'upstreams.noticeJoin': '；',
   'upstreams.claimUnknown': '这次领取的结果还不知道，请稍后再看',
