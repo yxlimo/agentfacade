@@ -8,7 +8,8 @@ import {
 import { toast } from 'sonner'
 import { GetBalanceRequestSchema } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { useAdminClient } from '@/features/auth/client-provider'
-import { describeError } from '@/lib/errors'
+import { describeErrorText } from '@/lib/errors'
+import i18n from '@/lib/i18n'
 import { queryKeys } from '@/lib/query-keys'
 
 /** 额度那一份的查询键。键本身在 `lib/query-keys.ts` 里。 */
@@ -68,10 +69,10 @@ export function useRefreshBalance(upstreamId: string) {
       ),
     onSuccess: (data) => {
       queryClient.setQueryData(queryKeys.balances.all(upstreamId), data)
-      toast.success('额度已刷新')
+      toast.success(i18n.t('balance.refreshed'))
     },
     onError: (error) => {
-      toast.error(describeError(error))
+      toast.error(describeErrorText(error, i18n.t))
     },
   })
 }

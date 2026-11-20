@@ -12,7 +12,7 @@ import {
 } from '@/gen/agentfacade/admin/v1/admin_pb'
 import type { ProviderPolicy } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { useAdminClient } from '@/features/auth/client-provider'
-import { assertOk, describeError } from '@/lib/errors'
+import { assertOk, describeErrorText } from '@/lib/errors'
 import { queryKeys } from '@/lib/query-keys'
 import { invalidateServerData } from '@/lib/server-data'
 import i18n from '@/lib/i18n'
@@ -73,7 +73,7 @@ export function useSetAccountEnabled() {
       return result
     },
     onError: (error) => {
-      toast.error(describeError(error))
+      toast.error(describeErrorText(error, i18n.t))
     },
     onSuccess: (result) => {
       toast.success(result.message || i18n.t('upstreams.savedAndLive'))
@@ -104,7 +104,7 @@ export function useAddAccount() {
       )
     },
     onError: (error) => {
-      toast.error(describeError(error))
+      toast.error(describeErrorText(error, i18n.t))
     },
     onSuccess: () => {
       toast.success(i18n.t('upstreams.added'))
@@ -132,7 +132,7 @@ export function useDeleteAccount() {
       return result
     },
     onError: (error) => {
-      toast.error(describeError(error))
+      toast.error(describeErrorText(error, i18n.t))
     },
     onSuccess: (result) => {
       toast.success(result.message || i18n.t('upstreams.deleted'))
@@ -167,7 +167,7 @@ export function useSetPlatformPolicy() {
       return result
     },
     onError: (error) => {
-      toast.error(describeError(error))
+      toast.error(describeErrorText(error, i18n.t))
     },
     onSuccess: (result) => {
       toast.success(result.message || i18n.t('upstreams.policySaved'))
@@ -202,7 +202,7 @@ export function useUpdateProvider() {
       return result
     },
     onError: (error) => {
-      toast.error(describeError(error))
+      toast.error(describeErrorText(error, i18n.t))
     },
     onSuccess: (result) => {
       toast.success(result.message || i18n.t('upstreams.saved'))

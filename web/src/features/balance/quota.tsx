@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import type {
   TokenPlanWindow,
   UpstreamQuota,
@@ -11,6 +12,8 @@ import {
   windowLabel,
 } from '@/features/balance/token-plan'
 import { formatDate, formatLocalMoment, formatMoney, formatPoints } from '@/lib/format'
+import i18n from '@/lib/i18n'
+import type { zh } from '@/lib/i18n/catalogs/zh'
 import { cn } from '@/lib/utils'
 
 /**
@@ -25,10 +28,10 @@ import { cn } from '@/lib/utils'
  * 显示的规矩：有套餐额度就显示套餐额度，没有才显示积分；余额有就另外显示。
  */
 const QUOTA_LABELS = {
-  tokenPlan: '套餐额度',
-  credits: '积分',
-  balance: '余额',
-} as const
+  tokenPlan: 'balance.labelTokenPlan',
+  credits: 'balance.labelCredits',
+  balance: 'balance.labelBalance',
+} as const satisfies Record<string, keyof typeof zh>
 
 type QuotaLine = {
   label: string
@@ -56,13 +59,13 @@ export function hasQuota(quota?: UpstreamQuota): boolean {
  *
  * 这里不限定有几种：服务端发什么就认得什么，认不出的原样显示（见下面）。
  */
-const QUOTA_STATE_LABELS = new Map<string, string>([
-  ['no_quota', '额度用尽'],
-  ['blocked', '平台说这个账号不能用'],
-  ['unauthorized', '凭据被拒'],
-  ['rate_limited', '被限流'],
-  ['missing', '还没填凭据'],
-  ['unknown', '未知'],
+const QUOTA_STATE_LABELS = new Map<string, keyof typeof zh>([
+  ['no_quota', 'balance.stateNoQuota'],
+  ['blocked', 'balance.stateBlocked'],
+  ['unauthorized', 'balance.stateUnauthorized'],
+  ['rate_limited', 'balance.stateRateLimited'],
+  ['missing', 'balance.stateMissing'],
+  ['unknown', 'balance.stateUnknown'],
 ])
 
 /**
@@ -82,9 +85,13 @@ export function quotaStateText(quota?: UpstreamQuota): string | null {
   if (!state || state === 'ok') return null
   // 服务端给的字符串可能是 `constructor`、`toString` 这类：查表要查自己的表，
   // 不能退到 Object 的原型上 —— 那样界面上会是一段函数体。
-  const label = QUOTA_STATE_LABELS.get(state) ?? state
+  const key = QUOTA_STATE_LABELS.get(state)
+  // 认不出的状态是插件给的原话，原样透出，不包成键。
+  const label = key ? i18n.t(key) : state
   const at = quota?.recoverAtMs ?? 0n
-  const when = at > 0n ? ` · ${formatLocalMoment(at)} 恢复` : ''
+  const when = at > 0n
+    ? i18n.t('balance.recoverAt', { time: formatLocalMoment(at) })
+    : ''
   return `${label}${when}`
 }
 
@@ -103,7 +110,7 @@ function quotaLines(quota?: UpstreamQuota): QuotaLine[] {
   if (windows.length > 0) {
     windows.forEach((window, index) => {
       lines.push({
-        label: index === 0 ? QUOTA_LABELS.tokenPlan : '',
+        label: index === 0 ? i18n.t(QUOTA_LABELS.tokenPlan) : '',
         value: tokenPlanLine(window),
       })
     })
@@ -111,15 +118,17 @@ function quotaLines(quota?: UpstreamQuota): QuotaLine[] {
     // 服务端给了这一份额度，余量是多少就摆多少。问过了就是问过了：
     // 「问不到」是压根不返回这一份额度，不是一份余量为 0 的额度。
     lines.push({
-      label: QUOTA_LABELS.credits,
-      value: `剩 ${formatPoints(quota.credits.remaining)} 点`,
+      label: i18n.t(QUOTA_LABELS.credits),
+      value: i18n.t('balance.creditRemaining', {
+        value: formatPoints(quota.credits.remaining),
+      }),
     })
   }
 
   // 余额是另外一样，有就单独显示，不跟上面那行加起来。
   if (quota.balance) {
     lines.push({
-      label: QUOTA_LABELS.balance,
+      label: i18n.t(QUOTA_LABELS.balance),
       value: formatMoney(
         quota.balance.availableCny,
         quota.balance.currency
@@ -134,8 +143,14 @@ function quotaLines(quota?: UpstreamQuota): QuotaLine[] {
 function tokenPlanLine(window: TokenPlanWindow): string {
   const name = windowLabel(window.label)
   const parts = [
-    `${INTERVAL_WINDOW_LABEL} 剩 ${window.intervalPercent}%`,
-    `${WEEKLY_WINDOW_LABEL} 剩 ${window.weeklyPercent}%`,
+    i18n.t('balance.windowRemaining', {
+      label: INTERVAL_WINDOW_LABEL(),
+      percent: window.intervalPercent,
+    }),
+    i18n.t('balance.windowRemaining', {
+      label: WEEKLY_WINDOW_LABEL(),
+      percent: window.weeklyPercent,
+    }),
   ]
   return name ? `${name}：${parts.join(' · ')}` : parts.join(' · ')
 }
@@ -194,13 +209,14 @@ export function QuotaSummary({
  * 凭据被拒、没问到、没登录、还没数据，四种都到这里来。所以只说「暂无数据」。
  */
 export function NoQuotaNotice() {
+  const { t } = useTranslation()
   return (
     <p
       role='note'
-      aria-label='暂无额度数据'
+      aria-label={t('balance.noQuotaData')}
       className='text-xs text-muted-foreground'
     >
-      暂无额度数据
+      {t('balance.noQuotaData')}
     </p>
   )
 }
@@ -214,6 +230,7 @@ export function NoQuotaNotice() {
  * 点数。真要有两样同时在（契约上它们是分开的字段），也是两段，不合并。
  */
 export function QuotaDetail({ quota }: { quota: UpstreamQuota }) {
+  const { t } = useTranslation()
   const windows = quota.tokenPlan?.windows ?? []
   const credits = quota.credits
   const balance = quota.balance
@@ -231,33 +248,35 @@ export function QuotaDetail({ quota }: { quota: UpstreamQuota }) {
       ) : null}
       {windows.length > 0 ? (
         <section className='grid gap-2'>
-          <p className='text-sm font-medium'>{QUOTA_LABELS.tokenPlan}</p>
+          <p className='text-sm font-medium'>{t(QUOTA_LABELS.tokenPlan)}</p>
           <TokenPlanPanel windows={windows} />
         </section>
       ) : null}
 
       {credits ? (
         <section className='grid gap-3'>
-          <p className='text-sm font-medium'>{QUOTA_LABELS.credits}</p>
+          <p className='text-sm font-medium'>{t(QUOTA_LABELS.credits)}</p>
           <div className='flex flex-wrap gap-x-6 gap-y-1 text-sm'>
             <span>
-              剩余{' '}
+              {t('balance.remaining')}{' '}
               <span className='font-mono'>
-                {formatPoints(credits.remaining)} 点
+                {t('balance.points', { n: formatPoints(credits.remaining) })}
               </span>
             </span>
             {/* 平台没报总额的时候不硬凑：总额和已用都是平台给的说法。 */}
             {credits.total > 0 ? (
               <>
                 <span>
-                  总额{' '}
+                  {t('balance.total')}{' '}
                   <span className='font-mono'>
-                    {formatPoints(credits.total)} 点
+                    {t('balance.points', { n: formatPoints(credits.total) })}
                   </span>
                 </span>
                 <span>
-                  已用{' '}
-                  <span className='font-mono'>{formatPoints(credits.used)} 点</span>
+                  {t('balance.used')}{' '}
+                  <span className='font-mono'>
+                    {t('balance.points', { n: formatPoints(credits.used) })}
+                  </span>
                 </span>
               </>
             ) : null}
@@ -271,20 +290,20 @@ export function QuotaDetail({ quota }: { quota: UpstreamQuota }) {
 
       {balance ? (
         <section className='grid gap-3'>
-          <p className='text-sm font-medium'>{QUOTA_LABELS.balance}</p>
+          <p className='text-sm font-medium'>{t(QUOTA_LABELS.balance)}</p>
           <div className='flex flex-wrap gap-x-6 gap-y-1 text-sm'>
             <span>
-              可用{' '}
+              {t('balance.available')}{' '}
               <span className='font-mono'>
                 {formatMoney(balance.availableCny, balance.currency)}
               </span>
             </span>
             <span>
-              最早到期{' '}
+              {t('balance.earliestExpiry')}{' '}
               <span className='font-mono'>{formatDate(balance.nextExpiryAt)}</span>
             </span>
             <span>
-              会过期的那部分{' '}
+              {t('balance.expiringPart')}{' '}
               <span className='font-mono'>
                 {formatMoney(balance.expiringCny, balance.currency)}
               </span>

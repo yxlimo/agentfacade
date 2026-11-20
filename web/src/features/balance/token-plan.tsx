@@ -1,19 +1,23 @@
+import { useTranslation } from 'react-i18next'
 import { type TokenPlanWindow } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { Progress } from '@/components/ui/progress'
 import { formatDateTime } from '@/lib/format'
+import i18n from '@/lib/i18n'
+import type { zh } from '@/lib/i18n/catalogs/zh'
 
 /** 窗口的名字。视频窗口后端已经无视（网关只服务文本模型），这里不再有它。 */
-const WINDOW_LABELS: Record<string, string> = {
-  general: '通用',
+const WINDOW_LABELS: Record<string, keyof typeof zh> = {
+  general: 'balance.windowGeneral',
 }
 
 /** 两个窗口的名字：interval 是 5 小时那个，weekly 是每周那个。 */
-export const INTERVAL_WINDOW_LABEL = '5 小时'
-export const WEEKLY_WINDOW_LABEL = '每周'
+export const INTERVAL_WINDOW_LABEL = () => i18n.t('balance.windowInterval')
+export const WEEKLY_WINDOW_LABEL = () => i18n.t('balance.windowWeekly')
 
 /** 窗口的名字给人看。认不出来就原样显示，不猜。 */
 export function windowLabel(label: string): string {
-  return WINDOW_LABELS[label] ?? label
+  const key = WINDOW_LABELS[label]
+  return key ? i18n.t(key) : label
 }
 
 /** 剩余百分比：越少越红。 */
@@ -30,13 +34,15 @@ function percentTone(percent: number): string {
  */
 export function remainingUntil(endsAt: bigint): string {
   const diff = Number(endsAt) - Date.now()
-  if (diff <= 0) return '已到时间，等待刷新'
+  if (diff <= 0) return i18n.t('balance.waitRefresh')
   const hours = Math.floor(diff / 3_600_000)
   if (hours < 1) {
-    return `剩 ${Math.max(1, Math.round(diff / 60_000))} 分`
+    return i18n.t('balance.leftMinutes', {
+      count: Math.max(1, Math.round(diff / 60_000)),
+    })
   }
   const minutes = Math.floor((diff % 3_600_000) / 60_000)
-  return `剩 ${hours} 小时 ${minutes} 分`
+  return i18n.t('balance.leftHoursMinutes', { hours, minutes })
 }
 
 /**
@@ -49,6 +55,7 @@ export function TokenPlanPanel({
 }: {
   windows: TokenPlanWindow[]
 }) {
+  const { t } = useTranslation()
   if (windows.length === 0) return null
 
   return (
@@ -65,7 +72,7 @@ export function TokenPlanPanel({
         >
           <div className='mb-3 flex items-center justify-between gap-2'>
             <span className='text-sm font-medium'>
-              {name || '额度窗口'}
+              {name || t('balance.windowFallback')}
             </span>
             <span className='text-xs text-muted-foreground'>
               {raw || '—'}
@@ -74,12 +81,12 @@ export function TokenPlanPanel({
 
           <div className='grid gap-3 sm:grid-cols-2'>
             <QuotaMeter
-              title={INTERVAL_WINDOW_LABEL}
+              title={INTERVAL_WINDOW_LABEL()}
               percent={window.intervalPercent}
               endsAt={window.intervalEndsAt}
             />
             <QuotaMeter
-              title={WEEKLY_WINDOW_LABEL}
+              title={WEEKLY_WINDOW_LABEL()}
               percent={window.weeklyPercent}
               endsAt={window.weeklyEndsAt}
             />
@@ -100,23 +107,27 @@ function QuotaMeter({
   percent: number
   endsAt: bigint
 }) {
+  const { t } = useTranslation()
   const value = Math.max(0, Math.min(100, percent))
   return (
     <div className='grid gap-1.5'>
       <div className='flex items-baseline justify-between gap-2'>
         <span className='text-xs text-muted-foreground'>{title}</span>
         <span className={`font-mono text-sm font-medium ${percentTone(value)}`}>
-          剩 {value}%
+          {t('balance.remainingShort', { value: `${value}%` })}
         </span>
       </div>
       <Progress value={value} />
       <span className='text-xs text-muted-foreground'>
         {endsAt > 0n ? (
           <>
-            重置：{formatDateTime(endsAt)}（{remainingUntil(endsAt)}）
+            {t('balance.resetAt', {
+              time: formatDateTime(endsAt),
+              left: remainingUntil(endsAt),
+            })}
           </>
         ) : (
-          '平台未给重置时间'
+          t('balance.noResetTime')
         )}
       </span>
     </div>

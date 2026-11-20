@@ -3,6 +3,8 @@ import { initReactI18next } from 'react-i18next'
 import { zh } from './catalogs/zh'
 import { en } from './catalogs/en'
 
+type TranslationKey = keyof typeof zh
+
 /**
  * 面板语言：zh（默认）/ en。
  *
@@ -33,6 +35,16 @@ void i18next.use(initReactI18next).init({
   // React 自己转义，i18next 不再转一遍。
   react: { useSuspense: false },
 })
+
+/**
+ * 错误映射给的是词条键，后端原话是普通文本。
+ *
+ * 有意为之：不认识的键原样透出，别改成兜底文案 —— 包一层「未知错误」会把
+ * 上游原话埋掉，排查时看不到事实。
+ */
+export function translateErrorValue(value: string): string {
+  return i18next.exists(value) ? i18next.t(value as TranslationKey) : value
+}
 
 /** 切语言。写 localStorage，并同步 <html lang> 与 document.title。 */
 export function setLang(lang: Lang): Promise<void> {

@@ -10,7 +10,8 @@ import {
   LoginWithPasswordRequestSchema,
 } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { useAdminClient } from '@/features/auth/client-provider'
-import { assertOk, describeError, humanMessage } from '@/lib/errors'
+import { assertOk, describeErrorText, humanMessage } from '@/lib/errors'
+import i18n from '@/lib/i18n'
 import { invalidateServerData } from '@/lib/server-data'
 
 /**
@@ -19,7 +20,7 @@ import { invalidateServerData } from '@/lib/server-data'
  * 后端的话是「中文（机器码）」，机器码是给日志看的，不甩给人。
  */
 function loginErrorText(error: unknown): string {
-  return humanMessage(describeError(error))
+  return humanMessage(describeErrorText(error, i18n.t))
 }
 
 /** 轮询的间隔：3 秒。后端在后台轮上游，面板只是问进度。 */

@@ -69,7 +69,7 @@ import {
 } from '@/features/accounts/provider-key-fields'
 import { useSetProviderKeys } from '@/features/accounts/api'
 import { formatLocalMoment } from '@/lib/format'
-import { describeError } from '@/lib/errors'
+import { describeErrorText } from '@/lib/errors'
 import {
   movePlatformOrder,
   useOrderedPlatforms,
@@ -430,7 +430,7 @@ export function UpstreamsPage() {
                                           ...prev,
                                           [upstream.id]: {
                                             ok: false,
-                                            message: describeError(error),
+                                            message: describeErrorText(error, t),
                                             models: [],
                                           },
                                         }))

@@ -6,7 +6,7 @@ import {
   RunBenefitNowRequestSchema,
 } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { useAdminClient } from '@/features/auth/client-provider'
-import { describeError } from '@/lib/errors'
+import { describeErrorText } from '@/lib/errors'
 import { queryKeys } from '@/lib/query-keys'
 import { invalidateServerData } from '@/lib/server-data'
 import i18n from '@/lib/i18n'
@@ -46,7 +46,7 @@ export function useRunBenefitNow() {
     mutationFn: async () =>
       client.runBenefitNow(create(RunBenefitNowRequestSchema)),
     onError: (error) => {
-      toast.error(describeError(error))
+      toast.error(describeErrorText(error, i18n.t))
     },
     onSuccess: (result) => {
       if (result.ok) {

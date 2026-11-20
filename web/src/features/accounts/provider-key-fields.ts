@@ -2,7 +2,8 @@ import type {
   CredentialField,
   QuotaPluginField,
 } from '@/gen/agentfacade/admin/v1/admin_pb'
-import { describeError } from '@/lib/errors'
+import { describeErrorText } from '@/lib/errors'
+import i18n from '@/lib/i18n'
 
 /**
  * 面板上填凭据的格子。
@@ -89,7 +90,7 @@ export function providerKindsFrom(query: {
 }): ProviderKinds {
   if (query.isPending) return { status: 'pending' }
   if (query.isError) {
-    return { status: 'error', message: describeError(query.error) }
+    return { status: 'error', message: describeErrorText(query.error, i18n.t) }
   }
   const byKind = new Map(
     (query.kinds ?? []).map((row) => [

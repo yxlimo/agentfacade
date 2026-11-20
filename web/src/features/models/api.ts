@@ -9,7 +9,7 @@ import {
   type PublishedModel,
 } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { useAdminClient } from '@/features/auth/client-provider'
-import { assertOk, describeError } from '@/lib/errors'
+import { assertOk, describeErrorText } from '@/lib/errors'
 import { queryKeys } from '@/lib/query-keys'
 import { invalidateServerData } from '@/lib/server-data'
 import i18n from '@/lib/i18n'
@@ -41,7 +41,7 @@ export function useSavePublishedModel() {
       )
     },
     onError: (error) => {
-      toast.error(describeError(error))
+      toast.error(describeErrorText(error, i18n.t))
     },
     onSuccess: () => {
       toast.success(i18n.t('models.saved'))
@@ -66,7 +66,7 @@ export function useDeletePublishedModel() {
       return result
     },
     onError: (error) => {
-      toast.error(describeError(error))
+      toast.error(describeErrorText(error, i18n.t))
     },
     onSuccess: (result) => {
       toast.success(result.message || i18n.t('models.deleted'))

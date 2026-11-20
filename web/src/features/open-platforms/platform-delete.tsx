@@ -16,7 +16,7 @@ import {
   useDeletePublishedModel,
   usePublishedModels,
 } from '@/features/models/api'
-import { describeError } from '@/lib/errors'
+import { describeErrorText } from '@/lib/errors'
 import type { PublishedModel, Upstream } from '@/gen/agentfacade/admin/v1/admin_pb'
 
 /**
@@ -80,7 +80,7 @@ export function DeletePlatformButton({ platform }: { platform: Upstream }) {
         await deleteModel.mutateAsync({ id: model.id })
         deleted.push(model.id)
       } catch (e) {
-        failure = describeError(e)
+        failure = describeErrorText(e, t)
         break
       }
     }
@@ -135,7 +135,7 @@ export function DeletePlatformButton({ platform }: { platform: Upstream }) {
           <span className='flex items-center gap-1'>
             <span className='max-w-64 text-xs text-destructive'>
               {t('openPlatforms.deleteScanFailed', {
-                message: describeError(published.error),
+                message: describeErrorText(published.error, t),
               })}
             </span>
             {/* 扫不到时可以再扫一次：同页上游列表取不到时也有这个入口，

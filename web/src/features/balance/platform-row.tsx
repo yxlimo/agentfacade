@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { ChevronDown, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -11,7 +12,7 @@ import {
   primaryQuota,
   type PlatformQuotas,
 } from '@/features/balance/platform-quotas'
-import { describeError } from '@/lib/errors'
+import { describeErrorText } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import type { UpstreamQuota } from '@/gen/agentfacade/admin/v1/admin_pb'
 
@@ -29,12 +30,13 @@ function accountLabel(account: UpstreamQuota, upstreamId: string): string {
 function accountSubtitle(
   account: UpstreamQuota,
   upstreamId: string,
+  t: ReturnType<typeof useTranslation>['t'],
 ): string {
   const label = accountLabel(account, upstreamId)
   // 账号 id 就是标题、或者就是平台 id（行上已经写着）的时候不再重复。
   if (!account.accountId) return ''
   if (account.accountId === label || account.accountId === upstreamId) return ''
-  return `账号 ${account.accountId}`
+  return t('balance.accountLine', { id: account.accountId })
 }
 
 /**
@@ -56,6 +58,7 @@ export function PlatformQuotaRow({
   refreshing?: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
+  const { t } = useTranslation()
   const { upstreamId, accounts } = platform
   const primary = primaryQuota(accounts)
   // 服务端给的结论（用尽 / 不能用 / 凭据被拒……）：行上跟着账号数一起写。
@@ -64,7 +67,7 @@ export function PlatformQuotaRow({
 
   return (
     <li
-      aria-label={`${upstreamId} 额度行`}
+      aria-label={t('balance.quotaRow', { id: upstreamId })}
       className='rounded-lg border'
     >
       <button
@@ -76,16 +79,18 @@ export function PlatformQuotaRow({
       >
         <span className='grid min-w-0 gap-1'>
           <span className='flex items-center gap-2 text-sm font-medium'>
-            {title || upstreamId || '未知平台'}
+            {title || upstreamId || t('balance.unknownPlatform')}
             {refreshing ? (
               <RefreshCw
                 className='size-3 animate-spin text-muted-foreground'
-                aria-label='刷新中'
+                aria-label={t('balance.refreshingShort')}
               />
             ) : null}
           </span>
           <span className='text-xs text-muted-foreground'>
-            {accounts.length > 0 ? `${accounts.length} 个账号` : '没有账号'}
+            {accounts.length > 0
+              ? t('balance.accountCount', { count: accounts.length })
+              : t('balance.noAccounts')}
             {stateText ? ` · ${stateText}` : ''}
           </span>
         </span>
@@ -94,7 +99,7 @@ export function PlatformQuotaRow({
             {primary ? (
               <QuotaSummary quota={primary} align='start' />
             ) : (
-              <span className='text-xs text-muted-foreground'>暂无额度数据</span>
+              <span className='text-xs text-muted-foreground'>{t('balance.noQuotaData')}</span>
             )}
           </span>
           <ChevronDown
@@ -111,10 +116,12 @@ export function PlatformQuotaRow({
         <div
           id={id}
           role='region'
-          aria-label={`${upstreamId || '未知平台'} 额度明细`}
+          aria-label={t('balance.quotaDetail', {
+            id: upstreamId || t('balance.unknownPlatform'),
+          })}
           className='border-t'
         >
-          <ul aria-label='账号额度' className='divide-y'>
+          <ul aria-label={t('balance.accountQuotas')} className='divide-y'>
             {accounts.length === 0 ? (
               <li className='px-6 py-4'>
                 <NoQuotaNotice />
@@ -122,11 +129,11 @@ export function PlatformQuotaRow({
             ) : (
               accounts.map((account) => {
                 const label = accountLabel(account, upstreamId)
-                const subtitle = accountSubtitle(account, upstreamId)
+                const subtitle = accountSubtitle(account, upstreamId, t)
                 return (
                   <li
                     key={`${account.upstreamId}|${account.accountId}`}
-                    aria-label={`账号 ${label} 的额度`}
+                    aria-label={t('balance.accountQuota', { label })}
                     className='grid gap-3 py-4'
                   >
                     <div className='grid gap-1 px-6'>
@@ -162,17 +169,18 @@ export function PlatformQuotaSkeleton({
   /** 行标题：平台的显示名，没有就是 id。 */
   title?: string
 }) {
+  const { t } = useTranslation()
   return (
     <li
-      aria-label={`${upstreamId} 额度行 正在读取`}
+      aria-label={t('balance.quotaRowLoading', { id: upstreamId })}
       aria-busy='true'
       className='rounded-lg border px-4 py-3'
     >
       <div className='grid gap-1'>
         <span className='text-sm font-medium'>
-          {title || upstreamId || '未知平台'}
+          {title || upstreamId || t('balance.unknownPlatform')}
         </span>
-        <span className='text-xs text-muted-foreground'>正在读取</span>
+        <span className='text-xs text-muted-foreground'>{t('balance.loadingShort')}</span>
       </div>
       <div className='mt-2 h-3 w-40 animate-pulse rounded bg-muted' />
     </li>
@@ -192,24 +200,25 @@ export function PlatformQuotaError({
   error: Error
   onRetry: () => void
 }) {
+  const { t } = useTranslation()
   return (
     <li
-      aria-label={`${upstreamId} 额度行 没问出来`}
+      aria-label={t('balance.quotaRowFailed', { id: upstreamId })}
       className='rounded-lg border border-destructive/40'
     >
       <div className='flex flex-wrap items-start justify-between gap-3 px-4 py-3'>
         <div className='grid gap-1'>
           <span className='text-sm font-medium'>
-            {title || upstreamId || '未知平台'}
+            {title || upstreamId || t('balance.unknownPlatform')}
           </span>
-          <span className='text-xs text-destructive'>没问出来</span>
+          <span className='text-xs text-destructive'>{t('balance.failedShort')}</span>
         </div>
         <div className='grid justify-items-end gap-2'>
           <span className='text-xs text-muted-foreground'>
-            {describeError(error)}
+            {describeErrorText(error, t)}
           </span>
           <Button variant='outline' size='sm' onClick={onRetry}>
-            重试
+            {t('balance.retry')}
           </Button>
         </div>
       </div>

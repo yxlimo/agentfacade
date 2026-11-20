@@ -21,7 +21,7 @@ import {
   useAdminToken,
 } from '@/features/auth/use-admin-token'
 import { GetSystemStatusRequestSchema } from '@/gen/agentfacade/admin/v1/admin_pb'
-import { describeError } from '@/lib/errors'
+import { describeErrorText } from '@/lib/errors'
 
 /**
  * 令牌闸门。面板第一次打开时没有令牌，先问一句。
@@ -56,7 +56,7 @@ export function TokenGate({ children }: { children: React.ReactNode }) {
       // 验过了才存。
       setToken(value)
     } catch (reason) {
-      setError(describeError(reason))
+      setError(describeErrorText(reason, t))
     } finally {
       setCandidateToken(null)
       setChecking(false)

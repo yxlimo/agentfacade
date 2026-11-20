@@ -23,7 +23,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { describeError } from '@/lib/errors'
+import { describeErrorText } from '@/lib/errors'
 import type { PlatformKind } from '@/gen/agentfacade/admin/v1/admin_pb'
 import {
   isSimulatedKind,
@@ -687,7 +687,7 @@ export function PlatformDialog({
 
           {error ? (
             <p role='alert' className='text-sm text-destructive'>
-              {describeError(error)}
+              {describeErrorText(error, i18n.t)}
             </p>
           ) : null}
         </div>

@@ -1,10 +1,11 @@
 import { useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { PageShell } from '@/components/layout/page-shell'
 import { ErrorState } from '@/components/async-state'
 import { Button } from '@/components/ui/button'
 import { useUpstreams } from '@/features/upstreams/api'
 import { useBenefitStatus, useRunBenefitNow } from '@/features/upstreams/benefits'
-import { describeError } from '@/lib/errors'
+import { describeErrorText } from '@/lib/errors'
 import { useOrderedPlatforms } from '@/lib/platform-order'
 import { PlatformCheckinRow } from '@/features/benefits/platform-checkin-row'
 import type { BenefitStatus, Upstream } from '@/gen/agentfacade/admin/v1/admin_pb'
@@ -29,6 +30,7 @@ export function disabledAccountIds(upstreams: Upstream[]): Set<string> {
  * 清单里取。
  */
 export function CheckinPage() {
+  const { t } = useTranslation()
   const platforms = useUpstreams()
   const status = useBenefitStatus()
   const run = useRunBenefitNow()
@@ -117,7 +119,7 @@ export function CheckinPage() {
               aria-label='签到失败'
               className='mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive'
             >
-              {describeError(run.error as Error)}
+              {describeErrorText(run.error as Error, t)}
             </p>
           ) : null}
 

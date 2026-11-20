@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
+import i18n from '@/lib/i18n'
 import {
   ADMIN_ERROR_TEXT,
   BUDDY_ERROR_HEADER,
@@ -7,13 +8,22 @@ import {
 } from '@/lib/admin-errors'
 
 describe('机器码 → 面板文案', () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage('zh')
+  })
+
+  /** 词条键翻成中文，测的是人看到的文案。 */
+  function text(code: string): string {
+    return i18n.t(ADMIN_ERROR_TEXT[code])
+  }
+
   it('每个码都有文案，没有空串', () => {
     const codes = Object.keys(ADMIN_ERROR_TEXT)
     expect(codes.length).toBeGreaterThan(0)
     for (const code of codes) {
-      const text = ADMIN_ERROR_TEXT[code]
-      expect(typeof text, code).toBe('string')
-      expect(text.trim(), code).not.toBe('')
+      const result = text(code)
+      expect(typeof result, code).toBe('string')
+      expect(result.trim(), code).not.toBe('')
     }
   })
 
@@ -26,13 +36,14 @@ describe('机器码 → 面板文案', () => {
       'PLATFORM_NOT_FOUND',
     ])
     const seen = new Map<string, string>()
-    for (const [code, text] of Object.entries(ADMIN_ERROR_TEXT)) {
-      const known = seen.get(text)
+    for (const code of Object.keys(ADMIN_ERROR_TEXT)) {
+      const result = text(code)
+      const known = seen.get(result)
       if (known) {
         expect([known, code].every((item) => shared.has(item)), code).toBe(true)
         continue
       }
-      seen.set(text, code)
+      seen.set(result, code)
     }
     expect(Object.keys(ADMIN_ERROR_TEXT).length).toBe(
       seen.size + shared.size - 1
@@ -57,13 +68,14 @@ describe('机器码 → 面板文案', () => {
       /改好/,
       /改个/,
     ]
-    for (const [code, text] of Object.entries(ADMIN_ERROR_TEXT)) {
+    for (const code of Object.keys(ADMIN_ERROR_TEXT)) {
+      const result = text(code)
       for (const word of imperatives) {
-        expect(word.test(text), `${code}: ${text}`).toBe(false)
+        expect(word.test(result), `${code}: ${result}`).toBe(false)
       }
       // 一条不超过 20 汉字（ASCII 的网址、id 不计）。
-      const han = [...text].filter((char) => /[\u4e00-\u9fff]/.test(char))
-      expect(han.length, `${code}: ${text}`).toBeLessThanOrEqual(20)
+      const han = [...result].filter((char) => /[\u4e00-\u9fff]/.test(char))
+      expect(han.length, `${code}: ${result}`).toBeLessThanOrEqual(20)
     }
   })
 

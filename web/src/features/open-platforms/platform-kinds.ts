@@ -1,5 +1,5 @@
 import type { PlatformKind } from '@/gen/agentfacade/admin/v1/admin_pb'
-import { describeError } from '@/lib/errors'
+import { describeErrorText } from '@/lib/errors'
 import i18n from '@/lib/i18n'
 
 /**
@@ -29,7 +29,7 @@ export function platformKindsFrom(query: {
 }): PlatformKindList {
   if (query.isPending) return { status: 'pending' }
   if (query.isError) {
-    return { status: 'error', message: describeError(query.error) }
+    return { status: 'error', message: describeErrorText(query.error, i18n.t) }
   }
   return { status: 'ready', kinds: query.kinds ?? [] }
 }

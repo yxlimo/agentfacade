@@ -22,7 +22,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useCatalogModels } from '@/features/models/catalog-api'
-import { describeError } from '@/lib/errors'
+import { describeErrorText } from '@/lib/errors'
 import type { ModelBilling } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { billingLine } from './model-billing'
 import {
@@ -168,14 +168,14 @@ export function PlatformModelsDialog({
         ? {
             status: 'failed',
             message: t('openPlatforms.catalogError', {
-              message: describeError(catalog.error),
+              message: describeErrorText(catalog.error, t),
             }),
           }
         : overrides.isError
           ? {
               status: 'failed',
               message: t('openPlatforms.overridesError', {
-                message: describeError(overrides.error),
+                message: describeErrorText(overrides.error, t),
               }),
             }
           : { status: 'ready' }
@@ -556,7 +556,7 @@ export function PlatformModelsDialog({
 
             {error ? (
               <p role='alert' className='text-sm text-destructive'>
-                {describeError(error)}
+                {describeErrorText(error, t)}
               </p>
             ) : null}
           </div>

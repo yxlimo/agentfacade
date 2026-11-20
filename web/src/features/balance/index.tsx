@@ -1,5 +1,6 @@
 import { RefreshCw } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQueryClient } from '@tanstack/react-query'
 import { PageShell } from '@/components/layout/page-shell'
 import { ErrorState } from '@/components/async-state'
@@ -92,6 +93,7 @@ function PlatformRowEntry({ row, refreshing }: { row: PlatformRow; refreshing: b
  * 余额、积分与套餐额度分别列示：单位不同，任何地方都不相加。
  */
 export function BalancePage() {
+  const { t } = useTranslation()
   // 平台清单：行集合由它定，次序也是它的。
   const platforms = useUpstreams()
   const refresh = useRefreshBalance('')
@@ -152,8 +154,8 @@ export function BalancePage() {
 
   return (
     <PageShell
-      title='额度'
-      description='余额、积分与套餐额度分别列示。'
+      title={t('balance.title')}
+      description={t('balance.description')}
       actions={
         <Button
           variant='outline'
@@ -164,7 +166,7 @@ export function BalancePage() {
           <RefreshCw
             className={refresh.isPending ? 'size-4 animate-spin' : 'size-4'}
           />
-          {refresh.isPending ? '正在刷新…' : '刷新额度'}
+          {t(refresh.isPending ? 'balance.refreshing' : 'balance.refresh')}
         </Button>
       }
     >
@@ -182,7 +184,7 @@ export function BalancePage() {
           {allFailed ? (
             <AllUpstreamsFailedNotice onRetry={onRetryAll} />
           ) : null}
-          <ul aria-label='平台额度' className='grid gap-3'>
+          <ul aria-label={t('balance.platformQuotas')} className='grid gap-3'>
             {visible.map((row) =>
               row.query ? (
                 <PlatformRowEntry
@@ -206,14 +208,14 @@ export function BalancePage() {
                 size='sm'
                 onClick={() => setShowAll(true)}
               >
-                展开全部 {rows.length} 个平台
+                {t('balance.expandAll', { count: rows.length })}
               </Button>
             </div>
           ) : null}
           {rows.length > ROW_LIMIT && showAll ? (
             <div className='mt-4'>
               <Button variant='outline' size='sm' onClick={() => setShowAll(false)}>
-                收起
+                {t('balance.collapse')}
               </Button>
             </div>
           ) : null}
@@ -230,11 +232,12 @@ export function BalancePage() {
  * 用户得挨个点。这里一次全部重问。
  */
 function AllUpstreamsFailedNotice({ onRetry }: { onRetry: () => void }) {
+  const { t } = useTranslation()
   return (
     <div className='mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3'>
-      <p className='text-sm text-destructive'>所有平台都没问出来</p>
+      <p className='text-sm text-destructive'>{t('balance.allFailed')}</p>
       <Button variant='outline' size='sm' onClick={onRetry}>
-        全部重试
+        {t('balance.retryAll')}
       </Button>
     </div>
   )
@@ -246,10 +249,11 @@ function AllUpstreamsFailedNotice({ onRetry }: { onRetry: () => void }) {
  * 清单到了之后每一行的骨架由 `PlatformQuotaSkeleton` 摆（那时已经知道有几家）。
  */
 function QuotaSkeletonList() {
+  const { t } = useTranslation()
   return (
     <div>
-      <p className='mb-4 text-sm text-muted-foreground'>正在读取额度…</p>
-      <ul aria-label='平台额度' className='grid gap-3'>
+      <p className='mb-4 text-sm text-muted-foreground'>{t('balance.loading')}</p>
+      <ul aria-label={t('balance.platformQuotas')} className='grid gap-3'>
         {[0, 1, 2].map((index) => (
           <li key={index} className='rounded-lg border px-4 py-3'>
             <div className='h-4 w-24 animate-pulse rounded bg-muted' />
@@ -263,10 +267,11 @@ function QuotaSkeletonList() {
 
 /** 一个平台都没有：平台清单本身是空的。 */
 function EmptyQuotaCard() {
+  const { t } = useTranslation()
   return (
     <Card>
       <CardContent className='py-12 text-center text-sm text-muted-foreground'>
-        网关没有返回任何平台
+        {t('balance.noPlatforms')}
       </CardContent>
     </Card>
   )
