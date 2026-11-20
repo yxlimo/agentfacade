@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { KeyRound } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -34,6 +35,7 @@ export function ProviderKeysDialog({
   onSubmit: (keys: string[]) => void
   pending: boolean
 }) {
+  const { t } = useTranslation()
   // 每一格的值：下标就是位置。
   const [values, setValues] = useState<string[]>([])
 
@@ -54,7 +56,9 @@ export function ProviderKeysDialog({
             <KeyRound className='size-4' />
             {layout.title}
           </DialogTitle>
-          <DialogDescription>留空的格子表示清掉那一段。</DialogDescription>
+          <DialogDescription>
+            {t('providerKeys.hint')}
+          </DialogDescription>
         </DialogHeader>
         <div className='grid gap-3'>
           {layout.fields.map((field, index) => (
@@ -83,7 +87,7 @@ export function ProviderKeysDialog({
         </div>
         <DialogFooter>
           <Button variant='outline' onClick={() => onOpenChange(false)}>
-            取消
+            {t('providerKeys.cancel')}
           </Button>
           <Button
             disabled={pending}
@@ -91,7 +95,7 @@ export function ProviderKeysDialog({
               onSubmit(layout.fields.map((_, index) => values[index] ?? ''))
             }
           >
-            保存
+            {t('providerKeys.save')}
           </Button>
         </DialogFooter>
       </DialogContent>

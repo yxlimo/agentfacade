@@ -6,9 +6,10 @@ import {
   RunBenefitNowRequestSchema,
 } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { useAdminClient } from '@/features/auth/client-provider'
-import { describeError } from '@/lib/errors'
+import { describeErrorText } from '@/lib/errors'
 import { queryKeys } from '@/lib/query-keys'
 import { invalidateServerData } from '@/lib/server-data'
+import i18n from '@/lib/i18n'
 
 /** 签到状态的查询键。键本身在 `lib/query-keys.ts` 里。 */
 export const benefitKeys = queryKeys.benefits
@@ -45,16 +46,16 @@ export function useRunBenefitNow() {
     mutationFn: async () =>
       client.runBenefitNow(create(RunBenefitNowRequestSchema)),
     onError: (error) => {
-      toast.error(describeError(error))
+      toast.error(describeErrorText(error, i18n.t))
     },
     onSuccess: (result) => {
       if (result.ok) {
-        toast.success('签到已完成')
+        toast.success(i18n.t('upstreams.checkinDone'))
         return
       }
       // 有账号没签到成功：具体是哪个账号、出了什么事，都在 lines 里，界面
       // 会把它们逐行给出来。这里只说一句结论。
-      toast.error('有账号没签到成功')
+      toast.error(i18n.t('upstreams.checkinPartial'))
     },
     onSettled: () => {
       // 签到的结果在签到状态里；签到了会拿到积分，额度那份也变了。

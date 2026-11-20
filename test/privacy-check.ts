@@ -160,12 +160,33 @@ console.log("二进制");
 console.log("");
 console.log("整条命令");
 
+/**
+ * Strip the git environment the caller may have left behind. Sandboxes can
+ * export GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE etc.; git trusts those over
+ * the cwd, so a throwaway repository built without stripping would write its
+ * commits and config into the caller's real repository (this has actually
+ * happened: throwaway commits landed on a worktree branch and core.bare was
+ * flipped on the main repo). Prefix match on purpose: it also covers
+ * GIT_CONFIG*, GIT_COMMON_DIR, GIT_OBJECT_DIRECTORY and friends.
+ */
+function cleanGitEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && !key.startsWith("GIT_")) env[key] = value;
+  }
+  return env;
+}
+
 /** Run the scanner the way a person runs it, and take the code and the output. */
 function runScanner(cwd: string, args: string[]): { code: number; out: string } {
   try {
     const out = execFileSync(process.execPath, ["--experimental-strip-types", SCANNER, ...args], {
       cwd,
       encoding: "utf8",
+      // The scanner reads git history of the repo at cwd; inherited GIT_*
+      // would point it at some other repository and the assertions below
+      // would silently check the wrong one.
+      env: cleanGitEnv(),
     });
     return { code: 0, out };
   } catch (error) {
@@ -174,9 +195,9 @@ function runScanner(cwd: string, args: string[]): { code: number; out: string } 
   }
 }
 
-/** Run git in the throwaway repository. */
+/** Run git in the throwaway repository, with no inherited git environment. */
 function gitIn(dir: string, args: string[]): void {
-  execFileSync("git", args, { cwd: dir, stdio: "ignore" });
+  execFileSync("git", args, { cwd: dir, stdio: "ignore", env: cleanGitEnv() });
 }
 
 const SCANNER = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "check-privacy.ts");
@@ -270,6 +291,54 @@ console.log("只删不改");
     check("新增的那一行是打码的", added.out.includes("sk-A***"), added.out);
     check("历史里的 token 仍不报", !added.out.includes("sk-H***"), added.out);
   } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+console.log("");
+console.log("继承的 GIT_* 环境变量");
+
+// Sentinel repository: if gitIn or the scanner ever let inherited GIT_*
+// through, commits and config meant for the throwaway repo would land here.
+{
+  const sentinel = fs.mkdtempSync(path.join(os.tmpdir(), "privacy-sentinel-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "privacy-polluted-"));
+  try {
+    execFileSync("git", ["init", "-q"], { cwd: sentinel, stdio: "ignore", env: cleanGitEnv() });
+    execFileSync("git", ["config", "user.email", "ci@example.com"], { cwd: sentinel, stdio: "ignore", env: cleanGitEnv() });
+    execFileSync("git", ["config", "user.name", "Privacy Check"], { cwd: sentinel, stdio: "ignore", env: cleanGitEnv() });
+    fs.writeFileSync(path.join(sentinel, "sentinel.txt"), "do not touch\n");
+    execFileSync("git", ["add", "-A"], { cwd: sentinel, stdio: "ignore", env: cleanGitEnv() });
+    execFileSync("git", ["commit", "-qm", "sentinel"], { cwd: sentinel, stdio: "ignore", env: cleanGitEnv() });
+    const headBefore = execFileSync("git", ["rev-parse", "HEAD"], { cwd: sentinel, encoding: "utf8", env: cleanGitEnv() }).trim();
+
+    // Poison the environment the way a sandbox does.
+    process.env.GIT_DIR = path.join(sentinel, ".git");
+    process.env.GIT_WORK_TREE = sentinel;
+    process.env.GIT_INDEX_FILE = path.join(sentinel, ".git", "index");
+
+    // Build a throwaway repository and scan it under the poisoned env.
+    gitIn(dir, ["init", "-q"]);
+    gitIn(dir, ["config", "user.email", "ci@example.com"]);
+    gitIn(dir, ["config", "user.name", "Privacy Check"]);
+    fs.writeFileSync(path.join(dir, "clean.txt"), "nothing to hide here\n");
+    gitIn(dir, ["add", "-A"]);
+    gitIn(dir, ["commit", "-qm", "init"]);
+    const scanned = runScanner(dir, []);
+    check("污染环境下扫描器认对的仓库", scanned.code === 0, `${scanned.code} ${scanned.out}`);
+
+    const headAfter = execFileSync("git", ["rev-parse", "HEAD"], { cwd: sentinel, encoding: "utf8", env: cleanGitEnv() }).trim();
+    check("哨兵仓库的 HEAD 没变", headAfter === headBefore, `${headBefore} -> ${headAfter}`);
+    const status = execFileSync("git", ["status", "--porcelain"], { cwd: sentinel, encoding: "utf8", env: cleanGitEnv() });
+    check("哨兵仓库工作树干净", status.trim() === "", JSON.stringify(status));
+    check("哨兵仓库没有多出一次性文件", !fs.existsSync(path.join(sentinel, "committed.txt")) && !fs.existsSync(path.join(sentinel, "history.txt")));
+    const bare = execFileSync("git", ["config", "--get", "core.bare"], { cwd: sentinel, encoding: "utf8", env: cleanGitEnv() }).trim();
+    check("哨兵仓库 core.bare 没被改", bare === "false", bare);
+  } finally {
+    delete process.env.GIT_DIR;
+    delete process.env.GIT_WORK_TREE;
+    delete process.env.GIT_INDEX_FILE;
+    fs.rmSync(sentinel, { recursive: true, force: true });
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }

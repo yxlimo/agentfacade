@@ -2,7 +2,8 @@ import type {
   CredentialField,
   QuotaPluginField,
 } from '@/gen/agentfacade/admin/v1/admin_pb'
-import { describeError } from '@/lib/errors'
+import { describeErrorText } from '@/lib/errors'
+import i18n from '@/lib/i18n'
 
 /**
  * 面板上填凭据的格子。
@@ -89,7 +90,7 @@ export function providerKindsFrom(query: {
 }): ProviderKinds {
   if (query.isPending) return { status: 'pending' }
   if (query.isError) {
-    return { status: 'error', message: describeError(query.error) }
+    return { status: 'error', message: describeErrorText(query.error, i18n.t) }
   }
   const byKind = new Map(
     (query.kinds ?? []).map((row) => [
@@ -151,7 +152,9 @@ export function providerKeyAccess(input: {
   if (input.kinds.status === 'error') {
     return {
       status: 'failed',
-      message: `账号类型取不到，凭据格子数不确定：${input.kinds.message}`,
+      message: i18n.t('credentialKind.kindsFailed', {
+        message: input.kinds.message,
+      }),
     }
   }
   const declared = input.kinds.of(input.kind)
@@ -197,14 +200,18 @@ function openPlatformAccess(
       // 名字只有一处产出：插件自己的声明，经契约原样过来（与凭据行上那一格
       // 同一个值）。label 空着（老答复）就显示 name 原样，面板不替它编中文。
       label: field.label || field.name,
-      hint: `额度插件「${input.quotaPluginLabel || ''}」要的一段凭据`,
+      hint: i18n.t('credentialKind.pluginHint', {
+        label: input.quotaPluginLabel || '',
+      }),
     })
   }
   return {
     status: 'ready',
     layout: {
       // 一个平台一种业务：标题用平台的名字，种类那一边只说得出「开放平台」。
-      title: `${input.platformLabel || '开放平台'}的凭据`,
+      title: i18n.t('credentialKind.title', {
+        label: input.platformLabel || i18n.t('credentialKind.openPlatform'),
+      }),
       fields,
     },
   }

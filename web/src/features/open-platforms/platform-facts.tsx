@@ -1,6 +1,7 @@
 import type { Upstream } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { hasQuota, quotaStateText, QuotaSummary } from '@/features/balance/quota'
 import { formatLocalMoment } from '@/lib/format'
+import i18n from '@/lib/i18n'
 
 /** 一次「刷新模型目录」的结果：服务端给的，面板照它显示。 */
 export type RefreshOutcome = {
@@ -43,7 +44,7 @@ export function OpenPlatformFacts({
       {hasPlugin ? quotaLine(upstream, upstream.quotaPluginLabel) : null}
       {refresh ? (
         <span className={refresh.ok ? undefined : 'text-destructive'}>
-          刷新：{refresh.message}
+          {i18n.t('openPlatforms.refreshPrefix', { message: refresh.message })}
         </span>
       ) : null}
     </div>
@@ -61,8 +62,11 @@ function modelLine(upstream: Upstream): string {
   const at =
     upstream.modelsFetchedAtMs > 0n
       ? formatLocalMoment(upstream.modelsFetchedAtMs)
-      : '没拉过'
-  return `模型目录：${upstream.models.length} 个模型 · 上次拉取：${at}`
+      : i18n.t('openPlatforms.neverFetched')
+  return i18n.t('openPlatforms.modelsLine', {
+    count: upstream.models.length,
+    at,
+  })
 }
 
 /**
@@ -89,7 +93,9 @@ function quotaLine(upstream: Upstream, pluginLabel: string) {
   // 额度结论。显示匹配到的插件名，不编数字、不写「未知」——平台有没有额度
   // 接口由 quota_plugin_id 说了算，快照没给数不等于没有接口。
   if (!quota) {
-    return <span>额度：{pluginLabel}</span>
+    return (
+      <span>{i18n.t('openPlatforms.quotaLine', { label: pluginLabel })}</span>
+    )
   }
   const state = quotaStateText(quota)
   if (state) {
@@ -105,7 +111,7 @@ function quotaLine(upstream: Upstream, pluginLabel: string) {
   if (!hasQuota(quota)) return null
   return (
     <div className='grid gap-0.5'>
-      <span>额度：{pluginLabel}</span>
+      <span>{i18n.t('openPlatforms.quotaLine', { label: pluginLabel })}</span>
       <QuotaSummary quota={quota} align='start' />
     </div>
   )

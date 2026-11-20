@@ -4,6 +4,7 @@ import { Separator } from '@/components/ui/separator'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 
 import { RefreshButton } from '@/components/layout/refresh-button'
+import { LangToggle } from '@/components/layout/lang-toggle'
 import { ThemeToggle } from '@/components/layout/theme-toggle'
 
 type HeaderProps = React.HTMLAttributes<HTMLElement> & {
@@ -46,6 +47,7 @@ export function Header({ className, fixed, children, ...props }: HeaderProps) {
         {children}
         <div className='ms-auto flex items-center gap-1'>
           <RefreshButton />
+          <LangToggle />
           <ThemeToggle />
         </div>
       </div>

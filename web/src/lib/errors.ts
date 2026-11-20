@@ -1,4 +1,5 @@
 import { Code, ConnectError } from '@connectrpc/connect'
+import type { TFunction } from 'i18next'
 import {
   BUDDY_ERROR_HEADER,
   adminErrorText,
@@ -31,7 +32,7 @@ export function assertOk(
 }
 
 /**
- * 把 Connect 的错误翻成人话。
+ * 把错误翻成人话。
  *
  * 契约里区分的几类失败：凭据过期、上游不可用、配置非法、冲突。面板上
  * 至少要让人知道是自己没填令牌，还是网关自己出问题了。
@@ -39,9 +40,13 @@ export function assertOk(
  * 三档：响应头上有机器码且面板认得 → 码表那句话（那句话已经是给人照着改的，
  * 不再拼前缀，也不带服务端的事实句）；有码但认不得 → 原样给机器码；
  * 没有码 → 按 Connect 的 Code 兜底。
+ *
+ * 由调用方传 t()：这样切语言后，页面上长期显示的错误会跟着变。toast 在 emit
+ * 时定型，属于瞬时提示，不要求跟着变。
+ * detail 是服务端原话（上游文本），故意不进词典、不翻译。
  */
-export function describeError(error: unknown): string {
-  // 业务上的失败（ok:false）原样给用户看，别再包一层。
+export function describeErrorText(error: unknown, t: TFunction): string {
+  // 业务上的失败（ok:false）是后端原话，原样给用户看，别再包一层。
   if (error instanceof ApiFailure) {
     return error.message
   }
@@ -49,35 +54,36 @@ export function describeError(error: unknown): string {
     // 机器码只在响应头上；Headers 的取值大小写不敏感，键名统一写小写。
     const machineCode = error.metadata.get(BUDDY_ERROR_HEADER)?.trim()
     if (machineCode) {
-      const text = adminErrorText(machineCode)
-      if (text) return text
-      // 后端加了码、面板还没跟：开发期要能看见，不能静默退回「内部错误」。
-      // 只打码：看码就知道是什么，不需要一句解释面板缺了什么。
-      console.warn('[errors]', machineCode)
-      return unknownAdminErrorText(machineCode)
+      const key = adminErrorText(machineCode)
+      // 认不得的码原样透出；包一层兜底文案会把机器码埋掉。
+      if (!key) {
+        console.warn('[errors]', machineCode)
+        return unknownAdminErrorText(machineCode)
+      }
+      return t(key)
     }
     const detail = error.rawMessage || error.message
     switch (error.code) {
       case Code.Unauthenticated:
-        return `鉴权未通过：${detail}。访问令牌填写错误或尚未填写`
+        return t('errors.unauthenticated', { detail })
       case Code.PermissionDenied:
-        return `权限不足：${detail}`
+        return t('errors.permissionDenied', { detail })
       case Code.NotFound:
-        return `资源不存在：${detail}`
+        return t('errors.notFound', { detail })
       case Code.InvalidArgument:
-        return `参数不合法：${detail}`
+        return t('errors.invalidArgument', { detail })
       case Code.AlreadyExists:
-        return `资源已存在：${detail}`
+        return t('errors.alreadyExists', { detail })
       case Code.Unavailable:
-        return `网关不可用：${detail}`
+        return t('errors.unavailable', { detail })
       case Code.DeadlineExceeded:
-        return `请求超时：${detail}`
+        return t('errors.deadlineExceeded', { detail })
       case Code.Unimplemented:
-        return `网关未实现该接口：${detail}`
+        return t('errors.unimplemented', { detail })
       case Code.Internal:
-        return `网关内部错误：${detail}`
+        return t('errors.internal', { detail })
       default:
-        return `请求失败（${codeLabel(error.code)}）：${detail}`
+        return t('errors.failed', { code: codeLabel(error.code, t), detail })
     }
   }
   if (error instanceof Error) {
@@ -86,40 +92,40 @@ export function describeError(error: unknown): string {
   return String(error)
 }
 
-function codeLabel(code: Code): string {
+function codeLabel(code: Code, t: TFunction): string {
   switch (code) {
     case Code.Canceled:
-      return '已取消'
+      return t('errors.code.canceled')
     case Code.Unknown:
-      return '未知'
+      return t('errors.code.unknown')
     case Code.InvalidArgument:
-      return '参数不合法'
+      return t('errors.code.invalidArgument')
     case Code.DeadlineExceeded:
-      return '超时'
+      return t('errors.code.deadlineExceeded')
     case Code.NotFound:
-      return '找不到'
+      return t('errors.code.notFound')
     case Code.AlreadyExists:
-      return '已存在'
+      return t('errors.code.alreadyExists')
     case Code.PermissionDenied:
-      return '权限不足'
+      return t('errors.code.permissionDenied')
     case Code.ResourceExhausted:
-      return '资源用尽'
+      return t('errors.code.resourceExhausted')
     case Code.FailedPrecondition:
-      return '前置条件不满足'
+      return t('errors.code.failedPrecondition')
     case Code.Aborted:
-      return '已中止'
+      return t('errors.code.aborted')
     case Code.OutOfRange:
-      return '越界'
+      return t('errors.code.outOfRange')
     case Code.Unimplemented:
-      return '未实现'
+      return t('errors.code.unimplemented')
     case Code.Internal:
-      return '内部出错'
+      return t('errors.code.internal')
     case Code.Unavailable:
-      return '不可用'
+      return t('errors.code.unavailable')
     case Code.DataLoss:
-      return '数据丢失'
+      return t('errors.code.dataLoss')
     case Code.Unauthenticated:
-      return '未鉴权'
+      return t('errors.code.unauthenticated')
     default:
       return String(code)
   }

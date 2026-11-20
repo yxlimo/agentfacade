@@ -164,7 +164,7 @@ export async function toOpenAiPlatform(
         response.body!,
         dialect,
         route.label ?? model,
-        undefined,
+        ctx.onFinish,
         ctx.onUsage,
         (e) => settle.failure(e),
       );
@@ -402,6 +402,7 @@ export async function toAnthropicPlatform(
         PING_MS,
         ctx.onUsage,
         (e) => settle.failure(e),
+        ctx.onFinish,
       );
       settle.success();
     } catch (e) {

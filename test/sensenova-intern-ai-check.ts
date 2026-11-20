@@ -54,7 +54,7 @@ function section(title: string): void {
 // 单元部分用自己的数据目录，免得跟网关抢一个库。
 process.env.FACADE_DATA_DIR = UNIT_DIR;
 
-const { senseNovaCatalogModels, internAiCatalogModels } = await import("../lib/router/catalog.ts");
+const { senseNovaCatalogModels, internAiCatalogModels } = await import("../lib/catalog-models.ts");
 const { mergeCatalogModels, hasCapability } = await import("../lib/intern-ai/models.ts");
 const { parsePoolUsage } = await import("../lib/sensenova/quota.ts");
 const { parseBalance, parseCreditPack } = await import("../lib/intern-ai/quota.ts");
@@ -763,10 +763,15 @@ check(
 
 section("模型目录");
 
-/** 等目录出来：目录是问上游要来的，要一小会儿。 */
+/**
+ * 等目录出来：目录是问上游要来的，要一小会儿。
+ *
+ * 显式要 Anthropic 形状：下面比的是 `context_window` / `tool_call` 这些
+ * Anthropic 形状的平铺字段（默认形状是 OpenAI 的，那里没有它们）。
+ */
 async function waitForModels(group: string, count: number): Promise<any[]> {
   for (let i = 0; i < 60; i++) {
-    const res = await fetch(`${base}/${group}/v1/models`);
+    const res = await fetch(`${base}/${group}/v1/models?dialect=anthropic`);
     const body = await res.json();
     const models = body?.data ?? [];
     if (models.length >= count) return models;

@@ -1,0 +1,7 @@
+{
+  "rules": {
+    "no-console-except-error": {
+      "ignorePaths": ["tools/probe.ts"]
+    }
+  }
+}

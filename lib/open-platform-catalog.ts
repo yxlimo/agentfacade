@@ -191,6 +191,9 @@ export const TRAIT_PATHS = {
   toolCall: ["supports_tools", "capabilities.tools.supported"],
   efforts: ["capabilities.reasoning.effort", "supported_efforts", "supportedEfforts"],
   defaultEffort: ["default_effort", "reasoning.effort"],
+  // 模态：只有上游自己报了 `modalities` 的平台才有这一格，别的平台没有。
+  modalitiesInput: ["modalities.input"],
+  modalitiesOutput: ["modalities.output"],
 } as const satisfies TraitPathTable;
 
 /**
@@ -293,6 +296,10 @@ export function traitsFromEntry(entry: unknown, paths: TraitPathTable = TRAIT_PA
   if (toolCall !== undefined) traits.toolCall = toolCall;
   const efforts = firstStringList(entry, paths.efforts);
   if (efforts !== undefined) traits.efforts = efforts;
+  const modalitiesInput = firstStringList(entry, paths.modalitiesInput);
+  if (modalitiesInput !== undefined) traits.modalitiesInput = modalitiesInput;
+  const modalitiesOutput = firstStringList(entry, paths.modalitiesOutput);
+  if (modalitiesOutput !== undefined) traits.modalitiesOutput = modalitiesOutput;
   const defaultEffort = firstString(entry, paths.defaultEffort);
   if (defaultEffort !== undefined) traits.defaultEffort = defaultEffort;
   return traits;

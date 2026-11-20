@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -15,7 +16,7 @@ import {
   useDeletePublishedModel,
   usePublishedModels,
 } from '@/features/models/api'
-import { describeError } from '@/lib/errors'
+import { describeErrorText } from '@/lib/errors'
 import type { PublishedModel, Upstream } from '@/gen/agentfacade/admin/v1/admin_pb'
 
 /**
@@ -29,6 +30,7 @@ import type { PublishedModel, Upstream } from '@/gen/agentfacade/admin/v1/admin_
  * 有没有模型指着它，删了就是闭着眼删。
  */
 export function DeletePlatformButton({ platform }: { platform: Upstream }) {
+  const { t } = useTranslation()
   const published = usePublishedModels()
   const deleteModel = useDeletePublishedModel()
   const deletePlatform = useDeletePlatform()
@@ -78,7 +80,7 @@ export function DeletePlatformButton({ platform }: { platform: Upstream }) {
         await deleteModel.mutateAsync({ id: model.id })
         deleted.push(model.id)
       } catch (e) {
-        failure = describeError(e)
+        failure = describeErrorText(e, t)
         break
       }
     }
@@ -92,7 +94,9 @@ export function DeletePlatformButton({ platform }: { platform: Upstream }) {
     if (failure !== null) {
       // 停在半路：平台不删（删了会留下更多接不了的模型）。
       // 已经删掉的那几个不回滚 —— 回不来，也不该回滚。
-      setError(`主路由模型删除失败，平台未删除：${failure}`)
+      setError(
+        t('openPlatforms.deleteModelFailure', { message: failure })
+      )
       setBusy(false)
       return
     }
@@ -120,17 +124,19 @@ export function DeletePlatformButton({ platform }: { platform: Upstream }) {
             setOpen(true)
           }}
         >
-          删除
+          {t('openPlatforms.delete')}
         </Button>
         {!scanned && !scanFailed ? (
           <span className='text-xs text-muted-foreground'>
-            还在查哪些主路由模型指向它
+            {t('openPlatforms.deleteScanning')}
           </span>
         ) : null}
         {scanFailed ? (
           <span className='flex items-center gap-1'>
             <span className='max-w-64 text-xs text-destructive'>
-              {`查不到主路由模型：${describeError(published.error)}`}
+              {t('openPlatforms.deleteScanFailed', {
+                message: describeErrorText(published.error, t),
+              })}
             </span>
             {/* 扫不到时可以再扫一次：同页上游列表取不到时也有这个入口，
                 这里不能只让用户刷新整页。 */}
@@ -141,7 +147,7 @@ export function DeletePlatformButton({ platform }: { platform: Upstream }) {
                 void published.refetch()
               }}
             >
-              重试
+              {t('openPlatforms.retry')}
             </Button>
           </span>
         ) : null}
@@ -156,16 +162,18 @@ export function DeletePlatformButton({ platform }: { platform: Upstream }) {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              删除 {platform.label || platform.id}
+              {t('openPlatforms.deleteTitle', {
+                name: platform.label || platform.id,
+              })}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              删除该平台会同时删除其名下的账号与凭据。额度与冷却记录一并清除，且不可恢复。客户端使用该平台的地址将无法连接。
+              {t('openPlatforms.deleteDescription')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {pending.length > 0 ? (
             <div className='grid gap-1'>
               <p className='text-sm font-medium'>
-                以下主路由模型将一并删除：
+                {t('openPlatforms.deleteModelsHeading')}
               </p>
               <ul className='grid gap-0.5'>
                 {pending.map((model) => (
@@ -183,7 +191,9 @@ export function DeletePlatformButton({ platform }: { platform: Upstream }) {
           ) : null}
           {error ? <p className='text-sm text-destructive'>{error}</p> : null}
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={busy}>取消</AlertDialogCancel>
+            <AlertDialogCancel disabled={busy}>
+              {t('openPlatforms.cancel')}
+            </AlertDialogCancel>
             {/* 确认按钮不用 AlertDialogAction：那个点了就关弹框，这一轮删到
                 哪儿、失败没有，还得留在弹框里说。 */}
             <Button
@@ -193,7 +203,7 @@ export function DeletePlatformButton({ platform }: { platform: Upstream }) {
                 void confirm()
               }}
             >
-              删除
+              {t('openPlatforms.delete')}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

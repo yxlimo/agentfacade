@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -19,6 +20,7 @@ import { CheckinState } from '@/gen/agentfacade/admin/v1/admin_pb'
  * 对面板来说是同一件事。
  */
 export function DailyCheckinPanel() {
+  const { t } = useTranslation()
   const status = useBenefitStatus()
   const run = useRunBenefitNow()
   const benefits = status.data?.benefits ?? []
@@ -33,15 +35,15 @@ export function DailyCheckinPanel() {
       <CardHeader>
         <div className='flex items-start justify-between gap-3'>
           <div className='grid gap-1'>
-            <CardTitle>每日签到</CardTitle>
-            <CardDescription>各账号最近一次签到加了多少积分</CardDescription>
+            <CardTitle>{t('benefits.dailyTitle')}</CardTitle>
+            <CardDescription>{t('benefits.dailyDescription')}</CardDescription>
           </div>
           <Button
             size='sm'
             onClick={() => run.mutate()}
             disabled={run.isPending}
           >
-            {run.isPending ? '签到中…' : '现在签到'}
+            {t(run.isPending ? 'benefits.checking' : 'benefits.checkinShort')}
           </Button>
         </div>
       </CardHeader>
@@ -58,12 +60,16 @@ export function DailyCheckinPanel() {
                 <span className='text-sm font-medium'>{benefit.accountId}</span>
                 <div className='flex items-center gap-2'>
                   {benefit.credits > 0 ? (
-                    <Badge>+{benefit.credits} 点</Badge>
+                    <Badge>
+                      {t('benefits.points', { n: benefit.credits })}
+                    </Badge>
                   ) : null}
                   {/* ok 说的是「上次签到成不成功」。从来没签过时后端也给
                       ok=false，那不是失败，只是没有记录：没有记录就不标失败。 */}
                   {!benefit.ok && benefit.checkedAt > 0n ? (
-                    <span className='text-xs text-muted-foreground'>未成功</span>
+                    <span className='text-xs text-muted-foreground'>
+                      {t('benefits.notSucceeded')}
+                    </span>
                   ) : null}
                 </div>
               </div>
@@ -72,9 +78,12 @@ export function DailyCheckinPanel() {
                   不把「不知道」说成「没有」。 */}
               {benefit.checkedAt > 0n ? (
                 <span className='text-xs text-muted-foreground'>
-                  {benefit.checkinState === CheckinState.UNKNOWN
-                    ? `上次查询 ${formatLocalMoment(benefit.checkedAt)}`
-                    : `上次签到 ${formatLocalMoment(benefit.checkedAt)}`}
+                  {t(
+                    benefit.checkinState === CheckinState.UNKNOWN
+                      ? 'benefits.lastChecked'
+                      : 'benefits.lastCheckin',
+                    { time: formatLocalMoment(benefit.checkedAt) },
+                  )}
                 </span>
               ) : null}
               {benefit.summary ? (
@@ -97,7 +106,7 @@ export function DailyCheckinPanel() {
 
         {run.data ? (
           <div className='grid gap-1 rounded-lg border p-3'>
-            <span className='text-sm font-medium'>本次签到</span>
+            <span className='text-sm font-medium'>{t('benefits.thisRun')}</span>
             {lines.length > 0 ? (
               <ul className='grid gap-0.5 text-xs text-muted-foreground'>
                 {lines.map((line, index) => (
@@ -105,7 +114,7 @@ export function DailyCheckinPanel() {
                 ))}
               </ul>
             ) : (
-              <span className='text-xs text-muted-foreground'>没有输出</span>
+              <span className='text-xs text-muted-foreground'>{t('benefits.noOutput')}</span>
             )}
           </div>
         ) : null}

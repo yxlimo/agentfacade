@@ -15,7 +15,7 @@ import type Koa from "koa";
 import { CredentialState } from "./gen/agentfacade/admin/v1/admin_pb.ts";
 import type { Json } from "./json.ts";
 import type { ProviderPolicy, ProviderRow } from "./providers.ts";
-import type { CatalogModel } from "./router/catalog.ts";
+import type { CatalogModel } from "./catalog-models.ts";
 import type { Dialect } from "./router/deliver.ts";
 import type { Route } from "./router/routes.ts";
 // 只为快照里那一桶的类型：额度插件问回来的结论。
@@ -286,6 +286,148 @@ export interface QuotaView {
   tokenPlan?: TokenPlanView;
 }
 
+/* ------------------------------------------------------------------ *
+ * 厂商探测的结论
+ * ------------------------------------------------------------------ */
+
+/**
+ * 一次厂商探测的结论。
+ *
+ * 厂商 kind（zcode / minimax / qoder / workbuddy 这些）自己问上游，回来的东
+ * 西要先落成一个结论，再往面板上写。四种结论说的是四件不同的事：
+ *
+ *   ok             上游答了，答复里有我们要的东西
+ *   unauthorized   上游明确说这把凭据不行（401/403，或业务码表明鉴权失败）。
+ *                  要人重新登录才能好 —— 所以它进的是凭据那条线，不是额度那条线
+ *   failed         问到了，没拿到答案：网络、超时、5xx、看不懂的答复。这一轮
+ *                  不知道，但不说明凭据坏了
+ *   missing        本地就没有凭据，压根没问 —— 用户还没登录
+ *
+ * 为什么不能只留「有数」与「无数」两种：面板要能回答「为什么这里没有数字」。
+ * 把「凭据被拒」「问不到」「没填凭据」折成一种，就把它们全变回「不知道」——
+ * 于是被拒的令牌在面板上显示成「凭据可用 + 额度区空白」，等于告诉用户这个账号
+ * 正常（2026-11 ZCode 的 401 就是这么静下来的）。
+ *
+ * 每一种都带 `at`（结论的时刻）：凭据的结论要与「这份会话是什么时候登录的」
+ * 比 —— 重新登录之后旧的那次拒绝必须自动作废，否则账号永远挂着一个红。
+ */
+export type VendorProbe<T> =
+  | { state: "ok"; value: T; at: number }
+  | { state: "unauthorized"; message: string; at: number }
+  | { state: "failed"; message: string; at: number }
+  | { state: "missing"; at: number };
+
+/** 结论的四种状态。 */
+export const VENDOR_PROBE_STATES = ["ok", "unauthorized", "failed", "missing"] as const;
+
+/**
+ * 这一份是不是一个认得的结论。
+ *
+ * 认不出来的那一份读成「没有结论」，而不是当成 ok —— 把一份不知道什么形状的
+ * 东西当成功读，面板上就会出现一份来源不明的数字。
+ */
+export function isVendorProbe(value: unknown): value is VendorProbe<unknown> {
+  if (!value || typeof value !== "object") return false;
+  const state = String((value as { state?: unknown }).state ?? "");
+  if (!(VENDOR_PROBE_STATES as readonly string[]).includes(state)) return false;
+  if (state === "ok") return "value" in (value as object);
+  if (state === "missing") return true;
+  return typeof (value as { message?: unknown }).message === "string";
+}
+
+/**
+ * 读快照里存的那一份结论；没有（或认不出来）就是 null。
+ *
+ * null 的意思是「没人问过」：不是「问了，什么都没有」。
+ */
+export function vendorProbeOf<T>(value: unknown): VendorProbe<T> | null {
+  return isVendorProbe(value) ? (value as VendorProbe<T>) : null;
+}
+
+/** 造一份「问到了」的结论。 */
+export function vendorOk<T>(value: T, at = Date.now()): VendorProbe<T> {
+  return { state: "ok", value, at };
+}
+
+/** 造一份「上游说凭据不行」的结论。 */
+export function vendorUnauthorized(message: string, at = Date.now()): VendorProbe<never> {
+  return { state: "unauthorized", message, at };
+}
+
+/** 造一份「问到了但没拿到答案」的结论。 */
+export function vendorFailed(message: string, at = Date.now()): VendorProbe<never> {
+  return { state: "failed", message, at };
+}
+
+/** 造一份「本地就没有凭据」的结论。 */
+export function vendorMissing(at = Date.now()): VendorProbe<never> {
+  return { state: "missing", at };
+}
+
+/**
+ * 一次活动额度领取的结论（快照里那一格）。
+ *
+ * 六种状态说的是六件不同的事，缺一不可：
+ *
+ *   claimed      领到了（计划名与生效时刻在下面两格）
+ *   already      终态：服务端说不能再领了（1001–1005 那组），本轮不再试
+ *   none         现在没有可领的（投放接口里没有可领的投放）—— 不是失败
+ *   captcha      要人工过验证码：网关过不了，人得自己去过
+ *   missing_device 这个账号没有设备标识（老会话），问不了投放接口
+ *   unauthorized 上游拒了这把凭据 —— 要人重新登录
+ *   failed       问到了但没领成：下一轮还会再试
+ */
+export interface ZcodeClaimSnapshot {
+  /** 这次尝试的时刻（毫秒）。 */
+  at: number;
+  /** 结论。 */
+  state:
+    | "claimed"
+    | "already"
+    | "none"
+    | "captcha"
+    | "missing_device"
+    | "unauthorized"
+    | "failed";
+  /** 服务端的原话。没有就空串。 */
+  message: string;
+  /**
+   * 这一轮投放里可领的投放数（问到了才记；问不到就不写这一格）。
+   *
+   * 记的是事实，不是结论 —— 从 state 倒推的话，以后新增一类提醒就会
+   * 悄悄丢掉。0 是「问到了，没有」，undefined 是「不知道」。
+   */
+  offers?: number;
+  /**
+   * 这一轮里优先级最高（priority 最小）的投放名，原样来自 marketing/touch。
+   * 没有可领就不写这一格 —— 面板的空串由平台层给。
+   */
+  offerName?: string;
+  /** offerName 那条投放的 priority（跨账号挑活动名时要用）。 */
+  offerPriority?: number;
+  /** 领到的计划名。 */
+  planName?: string;
+  /** 计划什么时候开始算数（ISO）。 */
+  effectiveAt?: string;
+  /**
+   * 这次领的计划的 plan_id。
+   *
+   * 有它才查得出「是哪一次投放没领成」—— 面板与日志都靠它对账。
+   */
+  planId?: string;
+  /** 这次投放的 campaign_id（与 plan_id 一起构成幂等键）。 */
+  campaignId?: string;
+  /** 上游给的业务码（3007 = 要人工过验证码）。 */
+  code?: number | null;
+  /**
+   * 这个账号已经领过的投放（`campaign_id|plan_id`）。
+   *
+   * 用来不再重复领同一件事：上游的投放可能一直挂着（它不会告诉我们「这个
+   * 已经领过了」）。换一个 campaign_id 或 plan_id 就不受它影响。
+   */
+  claimedKeys?: string[];
+}
+
 /**
  * /health 里的快照：各家报上来的原始数字。
  *
@@ -304,8 +446,17 @@ export interface HealthSnapshot {
       creditFallbackEnabled?: { enabled: boolean | null; at: number };
     }
   >;
-  /** ZCode 的 Start Plan 额度。 */
-  zcode: Record<string, { quota: unknown }>;
+  /**
+   * ZCode 的 Start Plan 额度。
+   *
+   * 存的是结论（VendorProbe）而不是原样答复：面板要能回答「为什么这里没有
+   * 数字」，而「凭据被拒」「问不到」「额度用完」长得完全不一样。
+   *
+   * 登录时刻不在这里：判「上游拒的是不是现在这一把令牌」要读的是**实时会话**
+   * （lib/kinds/zcode.ts 的 zcodeRefused），重登之后那个红要立刻消失，不能等
+   * 快照刷新。
+   */
+  zcode: Record<string, { quota: unknown; claim?: ZcodeClaimSnapshot }>;
   workbuddy: Record<string, { credits: unknown }>;
   /**
    * 额度插件问回来的结论：插件 id → 账号 id → 那一次的结论。

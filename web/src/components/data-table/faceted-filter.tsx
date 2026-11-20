@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { CheckIcon, PlusCircleIcon } from 'lucide-react'
 import { type Column } from '@tanstack/react-table'
 import { cn } from '@/lib/utils'
@@ -42,6 +43,7 @@ export function DataTableFacetedFilter<TData, TValue>({
   title,
   options,
 }: DataTableFacetedFilterProps<TData, TValue>) {
+  const { t } = useTranslation()
   const facets = column?.getFacetedUniqueValues()
   const selectedValues = new Set(column?.getFilterValue() as string[])
 
@@ -66,7 +68,7 @@ export function DataTableFacetedFilter<TData, TValue>({
                     variant='secondary'
                     className='rounded-sm px-1 font-normal'
                   >
-                    已选 {selectedValues.size} 项
+                    {t('table.selectedFilters', { count: selectedValues.size })}
                   </Badge>
                 ) : (
                   options
@@ -90,7 +92,7 @@ export function DataTableFacetedFilter<TData, TValue>({
         <Command>
           <CommandInput placeholder={title} />
           <CommandList>
-            <CommandEmpty>没有匹配项。</CommandEmpty>
+            <CommandEmpty>{t('table.noMatches')}</CommandEmpty>
             <CommandGroup>
               {options.map((option) => {
                 const isSelected = selectedValues.has(option.value)
@@ -140,7 +142,7 @@ export function DataTableFacetedFilter<TData, TValue>({
                     onSelect={() => column?.setFilterValue(undefined)}
                     className='justify-center text-center'
                   >
-                    清掉筛选
+                    {t('table.clearFilter')}
                   </CommandItem>
                 </CommandGroup>
               </>

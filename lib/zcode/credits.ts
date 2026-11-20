@@ -10,8 +10,20 @@
 // balances[] 每项是一个额度桶：meter、unit_type、capabilities（哪些模型能用
 // 这个桶）、total_units、used_units、remaining_units、period_start/end。
 //
+// plans[] 是账号领到的**计划**（活动免费额度之类）：一个计划带若干 entitlements，
+// 每个 entitlement 有自己的 effective_at —— 领到不等于立刻能用，要等它生效。
+// buckets 与 plans 各自独立：balances 空不等于 plans 空（见 lib/kinds/zcode.ts）。
+//
 // 依据：docs/zcode/FINDINGS.md §9。
 
+import {
+  vendorFailed,
+  vendorMissing,
+  vendorOk,
+  vendorUnauthorized,
+  type VendorProbe,
+} from "../provider-kinds.ts";
+import { configNumber } from "../config.ts";
 import { ZCODE_BASE, ZCODE_VERSION, loadSession } from "./auth.ts";
 import { setZcodeCapabilities } from "./models.ts";
 import { zcodePlatformHeaders } from "./transport.ts";
@@ -33,12 +45,58 @@ export interface ZcodeBucket {
   expiresAt: string | null;
 }
 
+/** 计划里的一项权益：哪些模型能用、给多少、什么时候开始算数。 */
+export interface ZcodePlanEntitlement {
+  entitlementId: string;
+  showName: string;
+  /** 这个权益适用哪些模型（`model:glm-5.3-flash` 这样）。 */
+  capabilities: string[];
+  /** 给了多少额度（token）。 */
+  grantUnits: number;
+  /** 计量周期：one_time / recurring 之类。 */
+  period: string;
+  /** 什么时候开始算数（unix 秒 → ISO）。null = 上游没给。 */
+  effectiveAt: string | null;
+}
+
+/** 账号领到的一个计划（活动免费额度之类）。 */
+export interface ZcodePlan {
+  userPlanId: string;
+  planId: string;
+  name: string;
+  /** active / expired / 别的。 */
+  status: string;
+  startsAt: string | null;
+  endsAt: string | null;
+  entitlements: ZcodePlanEntitlement[];
+}
+
 export interface ZcodeQuota {
   /** 额度桶。 */
   buckets: ZcodeBucket[];
-  /** 平台说的服务器时间。 */
+  /**
+   * 账号领到的计划。
+   *
+   * 与 buckets 各自独立解析：balances 空不等于 plans 空，反过来也一样。
+   * 留着它们是为了下一单（领取）能分辨「可领 / 已领待生效 / 生效中 / 已用完」，
+   * 所以别把它拆散成别的地方存。
+   */
+  plans: ZcodePlan[];
+  /** 平台说的服务器时间（ISO）。判「生效了没有」要用它，别用本机时钟。 */
   serverTime: string | null;
 }
+
+/**
+ * 问额度的那一次结论。
+ *
+ * 四种：问到了（ok）／上游说凭据不行（unauthorized）／问到了但没拿到答案
+ * （failed）／本地就没有会话（missing）。
+ *
+ * 为什么不再是一个 `ZcodeQuota | null`：null 把「上游拒了这把令牌」「问不到」
+ * 「压根没问」折成一种，于是被拒的账号在面板上显示成「凭据可用 + 额度区空白」
+ * —— 等于告诉用户这个账号正常，而下一次请求就会吃 401。
+ */
+export type ZcodeQuotaProbe = VendorProbe<ZcodeQuota>;
 
 const num = (v: unknown): number => {
   const n = Number(v);
@@ -58,24 +116,49 @@ function isoFromSeconds(value: unknown): string | null {
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
-/** 读额度。没有登录态就没有额度。 */
-export async function fetchZcodeQuota(providerId = "zcode"): Promise<ZcodeQuota | null> {
+/** 问额度等多久就收手（毫秒）。 */
+const ZCODE_QUOTA_TIMEOUT_MS = configNumber("ZCODE_QUOTA_TIMEOUT_MS", 20_000);
+
+/**
+ * 读额度，答一个结论。
+ *
+ * 没有登录态就是 `missing`（压根没问）；401/403 是 `unauthorized`（上游明确说
+ * 这把令牌不行）；网络、超时、5xx、看不懂的答复与业务码非 0 都是 `failed`。
+ *
+ * 答了 200 且 `balances: []` 是 **ok**：那是「额度用完了」，不是「不知道」——
+ * 这两件事在面板上长得一样（都没有桶），但只有前者能判成用尽。
+ * （「额度用完了」和「额度领到了但还没生效」在答复里长得一样：都是空桶。差别
+ * 在 plans 里，所以那一块也得读。）
+ */
+export async function fetchZcodeQuota(providerId = "zcode"): Promise<ZcodeQuotaProbe> {
   const session = loadSession(providerId);
-  if (!session) return null;
+  if (!session) return vendorMissing();
+  let r: Response;
   try {
-    const r = await fetch(
+    r = await fetch(
       `${ZCODE_BASE}/api/v1/zcode-plan/billing/balance?app_version=${encodeURIComponent(ZCODE_VERSION)}`,
       {
         headers: {
           ...zcodePlatformHeaders(session),
           accept: "application/json",
         },
-        signal: AbortSignal.timeout(20_000),
+        signal: AbortSignal.timeout(ZCODE_QUOTA_TIMEOUT_MS),
       },
     );
-    if (!r.ok) return null;
-    const body: any = await r.json().catch(() => null);
-    if (!body || body?.code !== 0) return null;
+  } catch (e) {
+    return vendorFailed(`问不到额度：${(e as Error)?.message ?? String(e)}`);
+  }
+  // 401/403 是上游明说「这把凭据不行」：它要人重新登录，不是额度的问题。
+  if (r.status === 401 || r.status === 403) {
+    return vendorUnauthorized(`上游拒绝了这把令牌（HTTP ${r.status}）`);
+  }
+  if (!r.ok) return vendorFailed(`上游答了 HTTP ${r.status}`);
+  const body: any = await r.json().catch(() => null);
+  if (!body) return vendorFailed("上游的答复不是 JSON");
+  if (body?.code !== 0) {
+    return vendorFailed(`上游报了业务错误 ${body?.code ?? "?"}：${String(body?.msg ?? "")}`);
+  }
+  try {
     const data = body?.data ?? {};
     const buckets: ZcodeBucket[] = (Array.isArray(data.balances) ? data.balances : []).map((row: any) => ({
       showName: String(row?.show_name ?? ""),
@@ -89,23 +172,47 @@ export async function fetchZcodeQuota(providerId = "zcode"): Promise<ZcodeQuota 
       periodEnd: isoFromSeconds(row?.period_end),
       expiresAt: isoFromSeconds(row?.expires_at),
     }));
+    // plans 与 buckets 各读各的：balances 空不代表没有计划（额度领到了、还没生效
+    // 时上游就只给 plans 不给 balances），plans 空也不代表没有桶。
+    const plans: ZcodePlan[] = (Array.isArray(data.plans) ? data.plans : []).map((row: any) => ({
+      userPlanId: String(row?.user_plan_id ?? ""),
+      planId: String(row?.plan_id ?? ""),
+      name: String(row?.name ?? ""),
+      status: String(row?.status ?? ""),
+      startsAt: isoFromSeconds(row?.starts_at),
+      endsAt: isoFromSeconds(row?.ends_at),
+      entitlements: (Array.isArray(row?.entitlements) ? row.entitlements : []).map((e: any) => ({
+        entitlementId: String(e?.entitlement_id ?? ""),
+        showName: String(e?.show_name ?? ""),
+        capabilities: (Array.isArray(e?.capabilities) ? e.capabilities : []).map((c: any) => String(c)),
+        grantUnits: num(e?.grant_units),
+        period: String(e?.period ?? ""),
+        effectiveAt: isoFromSeconds(e?.effective_at),
+      })),
+    }));
     // 平台按账号限定能用哪些模型（每个额度桶带 capabilities）。它也是
     // 公布目录的依据 —— 不在这份清单里的模型，上游回 3006 model not allowed。
     setZcodeCapabilities(buckets.flatMap((b) => b.capabilities));
-    return { buckets, serverTime: data?.server_time ?? null };
-  } catch {
-    return null;
+    // server_time 是 unix 秒。统一落成 ISO：判「生效了没有」要拿它当尺子，
+    // 而别处（快照、面板）拿的都是 ISO 字符串。
+    const rawServerTime = data?.server_time;
+    const serverTime =
+      isoFromSeconds(rawServerTime) ??
+      (typeof rawServerTime === "string" && rawServerTime ? rawServerTime : null);
+    return vendorOk({ buckets, plans, serverTime });
+  } catch (e) {
+    return vendorFailed(`读额度失败：${(e as Error)?.message ?? String(e)}`);
   }
 }
 
 /** 额度，问一次就缓存几分钟 —— 面板不该把平台问烦了。 */
-export async function zcodeQuota(maxAgeMs = 300_000, providerId = "zcode"): Promise<ZcodeQuota | null> {
+export async function zcodeQuota(maxAgeMs = 300_000, providerId = "zcode"): Promise<ZcodeQuotaProbe> {
   const cached = caches.get(providerId);
-  if (cached && Date.now() - cached.at < maxAgeMs) return cached.quota;
-  const quota = await fetchZcodeQuota(providerId);
-  caches.set(providerId, { at: Date.now(), quota });
-  return quota;
+  if (cached && Date.now() - cached.at < maxAgeMs) return cached.probe;
+  const probe = await fetchZcodeQuota(providerId);
+  caches.set(providerId, { at: Date.now(), probe });
+  return probe;
 }
 
 /** The quota of each provider, cached separately: they are different accounts. */
-const caches = new Map<string, { at: number; quota: ZcodeQuota | null }>();
+const caches = new Map<string, { at: number; probe: ZcodeQuotaProbe }>();

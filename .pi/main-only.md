@@ -122,12 +122,17 @@ bash: {
 - 不许挂载、改权限、绑定覆盖 `/data` 或 `/mnt/data`，即使在私有 mount namespace 里、即使只读。想造一个「目录写不进去」的环境，不该拿生产路径做道具。
 - 不许在主目录建库。跑可能触及默认数据目录的测试，先把 `FACADE_DATA_DIR` 指到 `/tmp` 下的临时目录，跑完删掉。
 - 测试与实验产生的一切垃圾（库、日志、临时目录、反证时拷出的旧版本文件）只能落在仓库目录或 `/tmp`，收尾清掉。
+- 假上游只有两条固定入口：测试里 import `test/fake-upstream.ts` 的 `startFakeUpstream`；手动看探针用 `mise run probe -- --dry-run` / `--fake`。不许手写服务器文件用 `&` 起后台进程再 `sleep` + `wait` —— 那条命令永不返回，看起来像卡死。
 
 教训：为了复现「默认数据目录不可写」，我挂载过 `/mnt/data`（错），后来又没挡住回落，跑修复前版本的测试时在主目录留下了 `~/.agentfacade/agentfacade.db`（也错）。复现这类缺陷不需要只读、也不需要挂载：缺陷是「库开错地方」，看那个地方有没有多出文件就够了 —— 用 `FACADE_DATA_DIR=/tmp/…` 把默认位置换掉，观察文件落在哪里。
 
 ## 在本机起第二个实例的前提
 
 可以用自己的 `FACADE_DATA_DIR` 起一个实例，前提是它不持有 NAS 那些账号的会话 —— 同一份会话被两个进程轮流用会把令牌用废（2026-10-25 的事故）。不要拿生产库的副本起第二个网关。
+
+## 排查上游不要手写探针
+
+主代理自己也一样：不要 `node -e` 拼 URL、拼头、`fetch`。手写探针很容易重复叠一个凭据头，错误长得像上游的错（2026-10-28 那次 401 误判就是这么来的）。直接 `mise run probe`（头只从白名单函数来、写操作必须 `--yes-write`），要新请求就往 `tools/probes/<platform>.json` 加一条配置（配置里只写常量名 `$const.X`，不写版本号/平台字面量，写死会与网关真实发的头/参数漂移）；不方便自己跑时派单去跑。
 
 ## steer 时不要让子代理重复跑同一条命令
 
@@ -143,3 +148,22 @@ bash: {
 ## 提交前的门禁顺序
 
 `mise run privacy` 先过（便宜，撞上就是有真东西进来了），再跑全量 `mise run check`。隐私扫描的结论要能写成可核对的事实，不是「看起来是假的」。
+
+### 让 diff 决定跑什么
+
+全量 `check` 是六分钟，多数提交只该跑一两组。`mise run verify` 从 diff 算出来该跑哪几组（`--plan` 只打印计划），规则表在 `tools/verify-changes.ts`，基线默认取与 `main` 的 merge-base，含未提交改动。
+
+```sh
+mise run verify --plan --base HEAD~5   # 看会跑什么、为什么
+mise run verify                        # 真跑
+```
+
+判据容易漏的三处，都踩过：面板 e2e 用例在仓库根的 `tests/`（不是 `web/e2e/`）；`test/**`（单数）与 `tests/**` 是两个目录，归属不同；不认识的路径一律拉全量 `check`，所以新增目录时要顺手补规则。
+
+`mise run hooks:install` 把它挂成 pre-commit（`core.hooksPath=.githooks`）。hook 在环境不可用时放行并说明原因 —— 环境坏不该拦住提交，真正的漏洞在 CI 或全量 check 暴露。绕过用 `git commit --no-verify`，只在**明知**门禁环境坏掉时用。
+
+### 子代理说「提交不了」时先看仓库本身
+
+已经发生过一次：沙箱把 `GIT_DIR` / `GIT_WORK_TREE` 传给子进程，测试里在临时目录跑 `git init` + `commit` + `config user.email` 时，git 认的是继承来的仓库 —— 一次性提交串进了子代理的分支，主仓库的 `.git/config` 被写成 `core.bare = true` 并带上 `user.email = ci@example.com`，`git status` 报「must be run in a work tree」。
+
+排查顺序：`git config --get core.bare`（必须是 `false` 或空）、`git config --get user.email`（不能是测试里的假身份）、`git status` 能不能跑。修完再核对提交作者是否被带歪（`git log --format='%an <%ae>'`），必要时用 `filter-branch` 改回。测试侧的防法写在 `CONVENTIONS.md` 的「在测试里跑 git 前先清环境」。

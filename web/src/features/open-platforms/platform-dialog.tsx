@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import i18n from '@/lib/i18n'
 import type { Upstream } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { Button } from '@/components/ui/button'
 import {
@@ -21,7 +23,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { describeError } from '@/lib/errors'
+import { describeErrorText } from '@/lib/errors'
 import type { PlatformKind } from '@/gen/agentfacade/admin/v1/admin_pb'
 import {
   isSimulatedKind,
@@ -33,7 +35,7 @@ import {
   type PlatformKindList,
 } from './platform-kinds'
 import { PLATFORM_TEMPLATES, type PlatformTemplate } from './templates'
-import { platformProblems, MISSING_TEXT, type PlatformField } from './platform-form'
+import { platformProblems, missingText, type PlatformField } from './platform-form'
 
 export type PlatformSubmit = AddPlatformSubmit | UpdatePlatformSubmit
 
@@ -121,8 +123,12 @@ function kindGroups(
   const simulated = options.filter(isSimulatedKind)
   const dialect = options.filter((item) => !isSimulatedKind(item))
   const groups: { title: string; items: PlatformKind[] }[] = []
-  if (simulated.length) groups.push({ title: '模拟客户端', items: simulated })
-  if (dialect.length) groups.push({ title: '开放平台', items: dialect })
+  if (simulated.length) {
+    groups.push({ title: i18n.t('openPlatforms.kindGroupSimulated'), items: simulated })
+  }
+  if (dialect.length) {
+    groups.push({ title: i18n.t('openPlatforms.kindGroupOpen'), items: dialect })
+  }
   return groups
 }
 
@@ -166,6 +172,7 @@ export function PlatformDialog({
   onSubmit: (input: PlatformSubmit) => void
   onOpenChange: (open: boolean) => void
 }) {
+  const { t } = useTranslation()
   const [draft, setDraft] = useState<Draft>(() => toDraft(platform))
   /**
    * 用户碰过哪几格。
@@ -288,12 +295,12 @@ export function PlatformDialog({
   const blocked = Object.keys(problems).length > 0
   /** 还差哪几格（页脚那一行用）：只说缺哪几格，不把三句「没填」在页脚再摆一遍。 */
   const missing = (['id', 'label', 'baseUrl'] as PlatformField[]).filter(
-    (field) => problems[field] === MISSING_TEXT[field]
+    (field) => problems[field] === missingText(field)
   )
   const MISSING_LABEL: Record<PlatformField, string> = {
-    id: '平台 id',
-    label: '名字',
-    baseUrl: '地址',
+    id: t('openPlatforms.missingFieldId'),
+    label: t('openPlatforms.missingFieldLabel'),
+    baseUrl: t('openPlatforms.missingFieldBaseUrl'),
   }
 
   useEffect(() => {
@@ -421,14 +428,18 @@ export function PlatformDialog({
       <DialogContent className='sm:max-w-lg'>
         <DialogHeader>
           <DialogTitle>
-            {editing ? `改平台 ${platform.label || platform.id}` : '新增平台'}
+            {editing
+              ? t('openPlatforms.editTitle', {
+                  name: platform.label || platform.id,
+                })
+              : t('openPlatforms.addTitle')}
           </DialogTitle>
           <DialogDescription>
             {simulated
-              ? '模拟客户端的 id 与地址是固定的，改不了'
+              ? t('openPlatforms.editHintSimulated')
               : editing
-                ? '地址改了以后客户端要换地址。'
-                : '先建一个空平台。id 是客户端地址里的一段。'}
+                ? t('openPlatforms.editHintAddress')
+                : t('openPlatforms.addHint')}
           </DialogDescription>
         </DialogHeader>
 
@@ -437,17 +448,22 @@ export function PlatformDialog({
             // 类型改不了（契约里 UpdatePlatform 没有这一格），只摆一行只读的。
             // kind 空着、清单没到手都说不准名字：那些时候整行不摆。
             readonlyKind ? (
-              <p className='text-sm'>{`类型：${readonlyKind}`}</p>
+              <p className='text-sm'>
+                {t('openPlatforms.kindReadout', { kind: readonlyKind })}
+              </p>
             ) : null
           ) : (
             <div className='grid gap-2'>
-              <Label htmlFor='platform-kind'>类型</Label>
+              <Label htmlFor='platform-kind'>{t('openPlatforms.kindLabel')}</Label>
               <Select
                 value={chosenKind ? platformKindValue(chosenKind) : ''}
                 disabled={kindOptions.length === 0}
                 onValueChange={chooseKind}
               >
-                <SelectTrigger id='platform-kind' aria-label='类型'>
+                <SelectTrigger
+                  id='platform-kind'
+                  aria-label={t('openPlatforms.kindLabel')}
+                >
                   <SelectValue placeholder={platformKindPlaceholder(kinds)} />
                 </SelectTrigger>
                 <SelectContent>
@@ -480,16 +496,18 @@ export function PlatformDialog({
               id 与地址由预置定，用不上这一块。 */}
           {editing || simulated ? null : (
             <div className='grid gap-2'>
-              <Label htmlFor='platform-template-search'>搜模板</Label>
+              <Label htmlFor='platform-template-search'>
+                {t('openPlatforms.templateSearchLabel')}
+              </Label>
               <Input
                 id='platform-template-search'
                 value={templateQuery}
-                placeholder='按名字或 id 搜'
+                placeholder={t('openPlatforms.templateSearchPlaceholder')}
                 onChange={(event) => setTemplateQuery(event.target.value)}
               />
               <div
                 role='group'
-                aria-label='模板列表'
+                aria-label={t('openPlatforms.templateListLabel')}
                 className='max-h-56 overflow-y-auto rounded-md border'
               >
                 {shownTemplates.length ? (
@@ -513,7 +531,7 @@ export function PlatformDialog({
                   ))
                 ) : (
                   <p className='px-3 py-2 text-sm text-muted-foreground'>
-                    没有匹配的模板
+                    {t('openPlatforms.templateNone')}
                   </p>
                 )}
               </div>
@@ -524,20 +542,24 @@ export function PlatformDialog({
             // 模拟客户端的 id 是它自己的身份（客户端路径里那一段）：只摆出来，
             // 不给改 —— 改了就认不出是哪一个客户端了。
             <div className='grid gap-2'>
-              <p className='text-sm font-medium'>平台 id</p>
+              <p className='text-sm font-medium'>
+                {t('openPlatforms.platformIdLabel')}
+              </p>
               <p className='font-mono text-sm'>{fixedId}</p>
               <p className='text-xs text-muted-foreground'>
-                {`客户端走的是 /${fixedId}/v1`}
+                {t('openPlatforms.clientPath', { id: fixedId })}
               </p>
             </div>
           ) : (
             <div className='grid gap-2'>
-              <Label htmlFor='platform-id'>平台 id</Label>
+              <Label htmlFor='platform-id'>
+                {t('openPlatforms.platformIdLabel')}
+              </Label>
               <Input
                 id='platform-id'
                 value={draft.id}
                 disabled={editing}
-                placeholder='比如 my-gateway'
+                placeholder={t('openPlatforms.platformIdPlaceholder')}
                 aria-invalid={shown('id') ? true : undefined}
                 aria-describedby={shown('id') ? 'platform-id-problem' : undefined}
                 onChange={(event) => {
@@ -555,18 +577,18 @@ export function PlatformDialog({
               ) : null}
               <p className='text-xs text-muted-foreground'>
                 {editing
-                  ? 'id 是这个平台在客户端地址里的一段，改不了'
-                  : '客户端走的是 /{id}/v1。'}
+                  ? t('openPlatforms.platformIdEditHint')
+                  : t('openPlatforms.platformIdAddHint')}
               </p>
             </div>
           )}
 
           <div className='grid gap-2'>
-            <Label htmlFor='platform-label'>名字</Label>
+            <Label htmlFor='platform-label'>{t('openPlatforms.nameLabel')}</Label>
             <Input
               id='platform-label'
               value={draft.label}
-              placeholder='比如 我的中转站'
+              placeholder={t('openPlatforms.namePlaceholder')}
               aria-invalid={shown('label') ? true : undefined}
               aria-describedby={
                 shown('label') ? 'platform-label-problem' : undefined
@@ -590,7 +612,9 @@ export function PlatformDialog({
           {/* 地址：模拟客户端的发到哪由模拟端定（库里那个是空串），不摆这一格。 */}
           {simulated ? null : (
             <div className='grid gap-2'>
-              <Label htmlFor='platform-base-url'>地址</Label>
+              <Label htmlFor='platform-base-url'>
+                {t('openPlatforms.addressLabel')}
+              </Label>
               <Input
                 id='platform-base-url'
                 value={draft.baseUrl}
@@ -625,11 +649,11 @@ export function PlatformDialog({
                   目录归代码。两族都只留一句说清，没有开关也没有文本域。 */}
               {simulated ? (
                 <p className='text-sm text-muted-foreground'>
-                  模型目录由代码提供，不能改。
+                  {t('openPlatforms.catalogCodeOnly')}
                 </p>
               ) : (
                 <p className='text-sm text-muted-foreground'>
-                  模型目录由平台提供，用刷新按钮重新拉取。
+                  {t('openPlatforms.catalogPlatform')}
                 </p>
               )}
 
@@ -650,11 +674,11 @@ export function PlatformDialog({
                       }
                     />
                     <Label htmlFor='platform-traits-from-common'>
-                      用共性表补模型参数
+                      {t('openPlatforms.traitsSwitch')}
                     </Label>
                   </div>
                   <p className='text-xs text-muted-foreground'>
-                    平台没报的能力参数按模型 id 从共性表取
+                    {t('openPlatforms.traitsHint')}
                   </p>
                 </div>
               )}
@@ -663,7 +687,7 @@ export function PlatformDialog({
 
           {error ? (
             <p role='alert' className='text-sm text-destructive'>
-              {describeError(error)}
+              {describeErrorText(error, i18n.t)}
             </p>
           ) : null}
         </div>
@@ -673,17 +697,19 @@ export function PlatformDialog({
               没有意义，这两句合到这一行里说。 */}
           {missing.length ? (
             <p className='me-auto text-xs text-muted-foreground'>
-              {`还差：${missing.map((field) => MISSING_LABEL[field]).join('、')}`}
+              {t('openPlatforms.missingFields', {
+                fields: missing.map((field) => MISSING_LABEL[field]).join('、'),
+              })}
             </p>
           ) : null}
           <Button variant='outline' onClick={() => onOpenChange(false)}>
-            取消
+            {t('openPlatforms.cancel')}
           </Button>
           <Button
             disabled={pending || (!editing && !chosenKind) || blocked}
             onClick={submit}
           >
-            {editing ? '保存' : '加上'}
+            {editing ? t('openPlatforms.save') : t('openPlatforms.add')}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -33,6 +33,16 @@ export const queryKeys = {
   benefits: {
     all: ['benefits'] as const,
   },
+  /**
+   * ZCode 的活动额度领取状态：一个账号一份。
+   *
+   * 投放与验证码配置都是这一份里的字段，不能只看 offer 就显示按钮 ——
+   * 配置拿不到时「能不能领」是不知道，不是没有。
+   */
+  zcodeClaim: {
+    all: ['zcode-claim'] as const,
+    of: (providerId: string) => ['zcode-claim', providerId] as const,
+  },
   /** 主路由模型。 */
   publishedModels: {
     all: ['published-models'] as const,

@@ -19,6 +19,8 @@ export type ServerData =
   | 'quotas'
   /** 今天的签到状态。 */
   | 'benefits'
+  /** ZCode 活动额度的领取状态：领过之后按钮要变「已领取」。 */
+  | 'zcodeClaim'
   /** 主路由模型。 */
   | 'publishedModels'
   /** 配置项。 */
@@ -64,6 +66,7 @@ const readers: Record<ServerData, readonly (readonly unknown[])[]> = {
     queryKeys.balances.root,
     queryKeys.system.status,
     queryKeys.upstreams.all,
+    queryKeys.zcodeClaim.all,
   ],
   // 自定义模型那一份是平台一级的：改完平台答复（Upstream.modelOverrides）变了、
   // 目录（ListModels 按它算）变了、人工那一份自己也变了。发布模型页的「继承后
@@ -75,6 +78,8 @@ const readers: Record<ServerData, readonly (readonly unknown[])[]> = {
     queryKeys.publishedModels.all,
   ],
   benefits: [queryKeys.benefits.all],
+  // 领取状态按账号分，但失效时一把全失效：没有谁需要只重取某一个账号。
+  zcodeClaim: [queryKeys.zcodeClaim.all],
   publishedModels: [queryKeys.publishedModels.all],
   config: [queryKeys.config.all, queryKeys.system.status],
 }

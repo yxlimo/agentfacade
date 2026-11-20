@@ -1,5 +1,8 @@
 import { useState } from 'react'
 import { create } from '@bufbuild/protobuf'
+import { useTranslation } from 'react-i18next'
+// 语言实例：测试里单点渲染时也要有 i18n（app 入口在 main.tsx 里引）。
+import '@/lib/i18n'
 import { KeyRound, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -18,7 +21,7 @@ import {
   useAdminToken,
 } from '@/features/auth/use-admin-token'
 import { GetSystemStatusRequestSchema } from '@/gen/agentfacade/admin/v1/admin_pb'
-import { describeError } from '@/lib/errors'
+import { describeErrorText } from '@/lib/errors'
 
 /**
  * 令牌闸门。面板第一次打开时没有令牌，先问一句。
@@ -30,6 +33,7 @@ import { describeError } from '@/lib/errors'
  * 对，错当场就知道，不会出现「填了 → 面板闪一下 → 又让我填」的情况。
  */
 export function TokenGate({ children }: { children: React.ReactNode }) {
+  const { t } = useTranslation()
   const token = useAdminToken()
   const client = useAdminClient()
   const [draft, setDraft] = useState('')
@@ -52,7 +56,7 @@ export function TokenGate({ children }: { children: React.ReactNode }) {
       // 验过了才存。
       setToken(value)
     } catch (reason) {
-      setError(describeError(reason))
+      setError(describeErrorText(reason, t))
     } finally {
       setCandidateToken(null)
       setChecking(false)
@@ -65,23 +69,22 @@ export function TokenGate({ children }: { children: React.ReactNode }) {
         <CardHeader>
           <CardTitle className='flex items-center gap-2'>
             <KeyRound className='size-5' />
-            输入访问令牌
+            {t('auth.tokenTitle')}
           </CardTitle>
           <CardDescription>
-            访问令牌在网关的 <code className='font-mono'>/data/admin-token</code>{' '}
-            文件里，只用于面板登录。
+            {t('auth.tokenDescription', { file: '/data/admin-token' })}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={submit} className='grid gap-4'>
             <div className='grid gap-2'>
-              <Label htmlFor='admin-token'>访问令牌</Label>
+              <Label htmlFor='admin-token'>{t('auth.tokenLabel')}</Label>
               <Input
                 id='admin-token'
                 type='password'
                 autoFocus
                 autoComplete='off'
-                placeholder='粘贴 /data/admin-token 文件中的内容'
+                placeholder={t('auth.tokenPlaceholder')}
                 value={draft}
                 aria-invalid={error ? true : undefined}
                 aria-describedby={error ? 'admin-token-error' : undefined}
@@ -101,8 +104,10 @@ export function TokenGate({ children }: { children: React.ReactNode }) {
               </p>
             ) : null}
             <Button type='submit' disabled={!draft.trim() || checking}>
-              {checking ? <Loader2 className='animate-spin' /> : null}
-              {checking ? '正在验…' : '进入面板'}
+              {checking ? (
+                <Loader2 className='animate-spin' />
+              ) : null}
+              {checking ? t('auth.checking') : t('auth.enterPanel')}
             </Button>
           </form>
         </CardContent>

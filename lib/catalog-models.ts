@@ -33,6 +33,14 @@ export interface CatalogModel {
   /** Absent when the platform does not say how much the model may answer. */
   maxOutputTokens?: number;
   /**
+   * The modalities the upstream reports (what it takes in, what it answers in).
+   *
+   * Only a side the upstream reported is here: an empty array would be read as
+   * "this model takes no text", which is a claim we cannot make. A platform
+   * that does not report modalities has none of this at all.
+   */
+  modalities?: { input?: string[]; output?: string[] };
+  /**
    * The thinking levels the model accepts, if it has a choice.
    *
    * An empty list is not the same as a missing one: it says the model has no
@@ -183,7 +191,29 @@ function withTraits(model: CatalogModel, traits: ModelTraits | undefined): Catal
   // 空档位照收：上游明确说「不能选档」，丢掉它下一层（代码表）的档位就会回来 ——
   // 客户端又被告诉这个模型有档可选。
   if (traits.efforts !== undefined) out.effortOptions = [...traits.efforts];
+  const modalities = mergeModalities(out.modalities, traits);
+  if (modalities) out.modalities = modalities;
   return out;
+}
+
+/**
+ * 把模态的两侧合起来。
+ *
+ * 只有上游报了的那一侧才有：没报的一侧不写（空数组会被读成「不支持这一种」）。
+ * 已有的一侧不被后来的层盖掉 —— 与别的字段同一个口径：先说过的算数。
+ */
+function mergeModalities(
+  current: CatalogModel["modalities"],
+  traits: ModelTraits | undefined,
+): CatalogModel["modalities"] | undefined {
+  if (!traits) return current;
+  const input = current?.input ?? traits.modalitiesInput;
+  const output = current?.output ?? traits.modalitiesOutput;
+  if (input === undefined && output === undefined) return current;
+  return {
+    ...(input !== undefined ? { input: [...input] } : {}),
+    ...(output !== undefined ? { output: [...output] } : {}),
+  };
 }
 
 /**
@@ -208,6 +238,8 @@ function withUnknownTraits(model: CatalogModel, traits: ModelTraits | undefined)
   if (out.effortOptions === undefined && traits.efforts !== undefined) {
     out.effortOptions = [...traits.efforts];
   }
+  const modalities = mergeModalities(out.modalities, traits);
+  if (modalities) out.modalities = modalities;
   return out;
 }
 

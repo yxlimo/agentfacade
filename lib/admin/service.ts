@@ -111,6 +111,8 @@ import {
   upstreamState,
   upstreamStateOf,
   upstreamCooling,
+  claimableAccounts,
+  claimableLabel,
   type HealthSnapshot,
   type QuotaView,
   type UpstreamId,
@@ -183,6 +185,7 @@ import { policyEnum, policyErrorText, policyFromEnum } from "./policy.ts";
 import { usageEvents, usageSummary, type UsageTotals } from "./usage.ts";
 import { tailLog } from "./log.ts";
 import { benefits, platformHasBenefits } from "./benefits.ts";
+import { claimZcodePlan, getZcodeClaimStatus } from "./zcode-claim.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -470,6 +473,9 @@ function platformMessage(
     policies: platformPolicies(id).map(policyEnum),
     // 名下有几个账号。面板用它判「策略有没有用」。
     accountCount: availability ? availability.accounts : upstreamAccountCount(id),
+    // 名下有几个账号有可领的活动额度。只读快照，不给上游多打一个请求。
+    claimableAccounts: claimableAccounts(rows),
+    claimableLabel: claimableLabel(rows),
     // 名下有没有开着的账号 —— 跟 enabled 同一个答案，两个名字一个是给机器判
     // 断用的、一个是给面板画开关用的，别让它们各说各话。
     hasEnabledAccount: enabled,
@@ -1521,6 +1527,22 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
     return create(RunBenefitNowResponseSchema, {
       ok: outcomes.length > 0 && outcomes.every((o) => o.ok),
       lines: outcomes.flatMap((o) => [`[${o.upstream}] ${o.report.join("；")}`]),
+    });
+  },
+
+  /* ---------------- ZCode 的活动额度领取 ---------------- */
+
+  async getZcodeClaimStatus(request) {
+    return getZcodeClaimStatus(String(request.providerId ?? ""));
+  },
+
+  async claimZcodePlan(request) {
+    return claimZcodePlan({
+      accountId: String(request.providerId ?? ""),
+      planId: String(request.planId ?? ""),
+      campaignId: String(request.campaignId ?? ""),
+      captchaVerifyParam: String(request.captchaVerifyParam ?? ""),
+      captchaRegion: String(request.captchaRegion ?? ""),
     });
   },
 

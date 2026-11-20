@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+// 语言实例：文案现在从词典取。
+import '@/lib/i18n'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { THEME_STORAGE_KEY, ThemeProvider } from '@/components/theme-provider'

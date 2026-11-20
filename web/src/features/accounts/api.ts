@@ -7,7 +7,8 @@ import {
   TestCredentialRequestSchema,
 } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { useAdminClient } from '@/features/auth/client-provider'
-import { assertOk, describeError } from '@/lib/errors'
+import { assertOk, describeErrorText } from '@/lib/errors'
+import i18n from '@/lib/i18n'
 import { queryKeys } from '@/lib/query-keys'
 import { invalidateServerData } from '@/lib/server-data'
 
@@ -41,14 +42,14 @@ export function useTestCredential() {
           credentialId: input.credentialId,
         })
       )
-      assertOk(result, '这条凭据不能用')
+      assertOk(result, i18n.t('accounts.credentialUnusable'))
       return result
     },
     onError: (error) => {
-      toast.error(describeError(error))
+      toast.error(describeErrorText(error, i18n.t))
     },
     onSuccess: (result) => {
-      toast.success(result.message || '这条凭据还能用')
+      toast.success(result.message || i18n.t('accounts.credentialStillWorks'))
     },
     onSettled: () => {
       // 试一条凭据会改它的状态（能用/不能用），账号那一行跟着变。
@@ -77,10 +78,10 @@ export function useSetProviderKeys() {
       )
     },
     onError: (error) => {
-      toast.error(describeError(error))
+      toast.error(describeErrorText(error, i18n.t))
     },
     onSuccess: () => {
-      toast.success('已写入')
+      toast.success(i18n.t('accounts.keysWritten'))
     },
     onSettled: () => {
       // 写进去的是凭据：条数、能不能用都变了，账号那一行与平台那份答复跟着变。

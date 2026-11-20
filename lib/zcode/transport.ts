@@ -11,6 +11,7 @@
 
 import type { Json } from "../json.ts";
 import crypto from "node:crypto";
+import { configString } from "../config.ts";
 import { AuthError } from "../credential.ts";
 import { scrubForClient, scrubForLog } from "../log-scrub.ts";
 import { ZCODE_BASE, ZCODE_VERSION, loadSession, type ZcodeSession } from "./auth.ts";
@@ -20,6 +21,17 @@ import { toolNamesOf, zcodeSystem } from "./system.ts";
 /** 模型端点。 */
 export const ZCODE_MESSAGES_URL = `${ZCODE_BASE}/api/v1/zcode-plan/anthropic/v1/messages`;
 
+/**
+ * 账单域（领取、投放、客户端配置）报的那一版。
+ *
+ * 与模型请求的版本分开：那个是**模型请求**的指纹（动了会被上游当异常活动），
+ * 这个是账单计划接口的版本。实测这几个端点认的是 3.18.2。
+ *
+ * 放在这一处而不是 claim.ts：领取的头要用它，而头在这里 —— 反过来导入会成环
+ * （claim.ts 已经导入这一层了）。claim.ts 仍然导出它（从那儿导入的旧调用不变）。
+ */
+export const ZCODE_CLAIM_APP_VERSION = configString("ZCODE_CLAIM_APP_VERSION", "3.18.2");
+
 /** 客户端报的用户代理。 */
 const USER_AGENT = `ZCode/${ZCODE_VERSION}`;
 
@@ -28,7 +40,18 @@ const USER_AGENT = `ZCode/${ZCODE_VERSION}`;
  * 抓包那台是 Asia/Shanghai / zh-CN。网关跑在中国区，时区也是 Asia/Shanghai。
  */
 const TIMEZONE = "Asia/Shanghai";
-const LANGUAGE = "zh-CN";
+
+/**
+ * 客户端报的语言。
+ *
+ * 来源只有一处常量：配置 ZCODE_CLIENT_LANGUAGE（进程环境变量
+ * FACADE_ZCODE_CLIENT_LANGUAGE 优先，面板里写的设置次之）。
+ *
+ * 进程的语言环境**不**参与：官方客户端只有中文界面，进程跑在什么语言环境
+ * 里都报 zh-CN —— 实测上游回的 language 也是 zh-CN，报别的语言只会让上游
+ * 换一种渲染。默认值就是 zh-CN。
+ */
+export const ZCODE_CLIENT_LANGUAGE = configString("ZCODE_CLIENT_LANGUAGE", "zh-CN");
 
 /**
  * 客户端身份：桌面端（Electron）在 Windows 上的样子。
@@ -47,6 +70,19 @@ const CLIENT = {
   osCategory: "windows",
   osVersion: "10.0.26300",
 } as const;
+
+/**
+ * 客户端报的平台标识。
+ *
+ * 导出是因为**别处也要用它**：账单那些端点把 platform 放在 query 里，而
+ * 逆向结论说「query 里的 platform 与 X-Platform 头必须一致」。两处各写一份
+ * 字面量的话，改一处另一处不动就是静默不一致 —— 上游不一定报错，只是
+ * 认不出这是同一个客户端。
+ *
+ * 这里导出的是 CLIENT.platform 本身（不是第三份副本）：改上面那个值，
+ * 头与 query 一起变。
+ */
+export const ZCODE_CLIENT_PLATFORM = CLIENT.platform;
 
 /**
  * 官方客户端发的头。
@@ -79,7 +115,7 @@ export function zcodeHeaders(
     "X-ZCode-App-Version": ZCODE_VERSION,
     "X-Title": CLIENT.title,
     "X-Release-Channel": "production",
-    "X-Client-Language": LANGUAGE,
+    "X-Client-Language": ZCODE_CLIENT_LANGUAGE,
     "X-Client-Timezone": TIMEZONE,
     "X-ZCode-Agent": "glm",
     "X-Platform": CLIENT.platform,
@@ -112,6 +148,56 @@ export function zcodePlatformHeaders(
     ...zcodeHeaders(session, opts),
     "X-Device-Mid": session.deviceId ?? "",
   };
+}
+
+/**
+ * 平台 API（billing/claim、client/configs）用的头。
+ *
+ * 与模型请求的头**不是**一套：官方客户端发这些请求时一个模型请求的头都不带
+ * （x-api-key、anthropic-version、X-ZCode-Agent、x-zcode-session-type、
+ * x-zcode-trace-id、x-query-id、x-zcode-query-source）—— 那套是模型请求
+ * （glm 原生 agent / source server）专用的归因头，平台 API 走另一套基础头。
+ *
+ * 模型请求那边**一个都不能少**（少了上游回 3012），所以这里另起一个函数，
+ * 不去动 zcodeHeaders()。
+ *
+ * 头的内容照官方客户端的请求逐项对齐：Bearer 一份（不叠 x-api-key，叠了上游
+ * 回 401 空正文）、身份头那一套、还有设备标识（X-Device-Mid）。
+ *
+ * 验证码那两个头由调用方给：浏览器里跑出来的阿里云无感校验结果（一次性）
+ * 与它自己的地域。上游没要求验证码时就不给这两个头。
+ */
+export function zcodePlatformApiHeaders(
+  session: ZcodeSession,
+  opts: { captchaVerifyParam?: string; captchaRegion?: string } = {},
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    // 鉴权只有这一个头：官方客户端的 claim 请求只有 Bearer（没有 x-api-key）。
+    authorization: `Bearer ${session.token}`,
+    "content-type": "application/json",
+    "HTTP-Referer": ZCODE_BASE,
+    // 客户端报的版本是账单域那一版（模型请求那一版是另一个指纹）。
+    "user-agent": `ZCode/${ZCODE_CLAIM_APP_VERSION}`,
+    "X-ZCode-App-Version": ZCODE_CLAIM_APP_VERSION,
+    "X-Title": CLIENT.title,
+    "X-Release-Channel": "production",
+    "X-Client-Language": ZCODE_CLIENT_LANGUAGE,
+    "X-Client-Timezone": TIMEZONE,
+    "X-Platform": CLIENT.platform,
+    "X-Os-Category": CLIENT.osCategory,
+    "X-Os-Version": CLIENT.osVersion,
+    "x-request-id": crypto.randomUUID(),
+  };
+  // 设备标识：没有的会话不带这个头（官方那时候也不带）。
+  const deviceId = session.deviceId ?? "";
+  if (deviceId) headers["X-Device-Mid"] = deviceId;
+  const param = String(opts.captchaVerifyParam ?? "").trim();
+  if (param) {
+    headers["X-Aliyun-Captcha-Verify-Param"] = param;
+    const region = String(opts.captchaRegion ?? "").trim();
+    if (region) headers["X-Aliyun-Captcha-Verify-Region"] = region;
+  }
+  return headers;
 }
 
 /**

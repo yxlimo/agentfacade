@@ -1,4 +1,6 @@
 import { StrictMode } from 'react'
+// i18n 实例要在渲染前就绪（语言从 localStorage 读，默认 zh）。
+import './lib/i18n'
 import ReactDOM from 'react-dom/client'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider } from '@tanstack/react-router'

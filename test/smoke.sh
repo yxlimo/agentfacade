@@ -112,6 +112,12 @@ fi
 
 if [ "$status" -ne 0 ]; then
   echo "--- router log ---"
-  tail -20 "$LOG_DIR/smoke-router.log"
+  # 日志文件不在时说一句，别让 tail 自己报错 —— 那样真正的失败现场会被
+  # 「文件不存在」这条噪音盖住。退出码照旧是真实失败那个。
+  if [ -f "$LOG_DIR/smoke-router.log" ]; then
+    tail -20 "$LOG_DIR/smoke-router.log"
+  else
+    echo "(router 日志不存在)"
+  fi
 fi
 exit $status

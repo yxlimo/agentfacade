@@ -2,7 +2,23 @@ import type {
   CatalogModel,
   ModelOverride,
 } from '@/gen/agentfacade/admin/v1/admin_pb'
-import { intFieldProblem } from '@/lib/int-field'
+import { intFieldProblem, MAX_INT32 } from '@/lib/int-field'
+import i18n from '@/lib/i18n'
+
+/**
+ * 整数格子的判据仍是 lib/int-field 那份；这里只把那半句话翻成面板语言。
+ * 认不出的原文原样透出（那句话不是面板写的）。
+ */
+function translatedIntProblem(text: string): string | null {
+  const problem = intFieldProblem(text)
+  if (problem === null) return null
+  if (problem === '要填整数') return i18n.t('openPlatforms.intNeedInteger')
+  if (problem === '不能是负数') return i18n.t('openPlatforms.intNotNegative')
+  if (problem === `不能超过 ${MAX_INT32}`) {
+    return i18n.t('openPlatforms.intExceedsMax', { max: MAX_INT32 })
+  }
+  return problem
+}
 
 /**
  * 「自定义模型」弹窗的纯逻辑：行怎么摆出来、保存时发什么。
@@ -662,8 +678,8 @@ function numberValue(text: string): number | undefined {
 
 /** 整数那几格：只收非负整数，超了 int32 也先拦下。判据与主路由那个弹窗同一份。 */
 function countMessage(text: string, label: string): string | null {
-  const problem = intFieldProblem(text)
-  return problem ? `${label}：${problem}` : null
+  const problem = translatedIntProblem(text)
+  return problem ? i18n.t('openPlatforms.fieldNeedInteger', { field: label, problem }) : null
 }
 
 /** 倍率：是个数就行，不能是负数；空着表示不知道。 */
@@ -671,8 +687,8 @@ function creditsMessage(text: string): string | null {
   const trimmed = text.trim()
   if (!trimmed) return null
   const value = Number(trimmed)
-  if (!Number.isFinite(value)) return '倍率：要填数字'
-  if (value < 0) return '倍率：不能是负数'
+  if (!Number.isFinite(value)) return i18n.t('openPlatforms.creditsNeedNumber')
+  if (value < 0) return i18n.t('openPlatforms.creditsNotNegative')
   return null
 }
 
@@ -681,8 +697,8 @@ function priceMessage(text: string, label: string): string | null {
   const trimmed = text.trim()
   if (!trimmed) return null
   const value = Number(trimmed)
-  if (!Number.isFinite(value)) return `${label}：要填数字`
-  if (value < 0) return `${label}：不能是负数`
+  if (!Number.isFinite(value)) return i18n.t('openPlatforms.fieldNeedNumber', { field: label })
+  if (value < 0) return i18n.t('openPlatforms.fieldNotNegative', { field: label })
   return null
 }
 
@@ -733,7 +749,7 @@ export function listProblems(rows: readonly ModelRow[]): RowProblem[] {
 
   rows.forEach((row, index) => {
     const id = row.id.trim()
-    if (id === '') add(index, 'id', '模型 id 不能空')
+    if (id === '') add(index, 'id', i18n.t('openPlatforms.modelIdEmpty'))
     else if (duplicates.includes(id.toLowerCase())) {
       // 两个 id 只差大小写：路由匹配不分大小写，存下去就是同一个模型的两条
       // 元数据在撞。两种分开说：一模一样是重名，换个写法是一模一样的另拼法。
@@ -741,13 +757,19 @@ export function listProblems(rows: readonly ModelRow[]): RowProblem[] {
         index,
         'id',
         (exact.get(id) ?? 0) > 1
-          ? '模型 id 重复'
-          : '模型 id 和另一条只差大小写'
+          ? i18n.t('openPlatforms.modelIdDuplicate')
+          : i18n.t('openPlatforms.modelIdCaseOnly')
       )
     }
-    const context = countMessage(row.text.contextWindow, '上下文')
+    const context = countMessage(
+      row.text.contextWindow,
+      i18n.t('openPlatforms.contextLabel')
+    )
     if (context) add(index, 'contextWindow', context)
-    const output = countMessage(row.text.maxOutputTokens, '输出上限')
+    const output = countMessage(
+      row.text.maxOutputTokens,
+      i18n.t('openPlatforms.maxOutputLabel')
+    )
     if (output) add(index, 'maxOutputTokens', output)
     const credits = creditsMessage(row.text.credits)
     if (credits) add(index, 'credits', credits)
@@ -755,9 +777,9 @@ export function listProblems(rows: readonly ModelRow[]): RowProblem[] {
     // 回到跟着上游），为不发的东西拦保存只会让人蒒不着头脑。
     if (row.billingMode === 'token') {
       const prices = [
-        ['billingInput', '输入单价'],
-        ['billingOutput', '输出单价'],
-        ['billingCacheRead', '缓存读单价'],
+        ['billingInput', i18n.t('openPlatforms.priceInput')],
+        ['billingOutput', i18n.t('openPlatforms.priceOutput')],
+        ['billingCacheRead', i18n.t('openPlatforms.priceCacheRead')],
       ] as const
       for (const [field, label] of prices) {
         const problem = priceMessage(row.text[field], label)
@@ -765,14 +787,17 @@ export function listProblems(rows: readonly ModelRow[]): RowProblem[] {
       }
     }
     if (row.billingMode === 'multiplier') {
-      const problem = priceMessage(row.text.billingMultiplier, '计费倍率')
+      const problem = priceMessage(
+        row.text.billingMultiplier,
+        i18n.t('openPlatforms.billingMultiplierLabel')
+      )
       if (problem) add(index, 'billingMultiplier', problem)
     }
     if (
       row.thinking === 'levels' &&
       splitLevels(row.text.effortOptions).length === 0
     ) {
-      add(index, 'effortOptions', '档位可选，就至少留一档')
+      add(index, 'effortOptions', i18n.t('openPlatforms.levelsAtLeastOne'))
     }
   })
   return out
@@ -780,7 +805,7 @@ export function listProblems(rows: readonly ModelRow[]): RowProblem[] {
 
 /** 这一行叫什么：有 id 用它，人工加的行还没填 id 就说第几行。 */
 function rowLabel(row: ModelRow, index: number): string {
-  return row.id.trim() || `新模型 ${index + 1}`
+  return row.id.trim() || i18n.t('openPlatforms.newModelRow', { index: index + 1 })
 }
 
 /**

@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import type { CreditLot } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { EmptyState } from '@/components/async-state'
 import { StatusBadge } from '@/components/status-badge'
@@ -22,6 +23,7 @@ import { formatDate, formatPoints, isFarFuture, remainingDays } from '@/lib/form
  * 表里只留还有点的批次，快用完的排前面，永不过期的排最后。
  */
 export function CreditLotsTable({ lots }: { lots: CreditLot[] }) {
+  const { t } = useTranslation()
   const visible = lots
     .filter((lot) => lot.remaining > 0)
     .sort((a, b) => {
@@ -34,7 +36,7 @@ export function CreditLotsTable({ lots }: { lots: CreditLot[] }) {
 
   if (visible.length === 0) {
     return (
-      <EmptyState title='没有积分批次' />
+      <EmptyState title={t('balance.emptyCreditLots')} />
     )
   }
 
@@ -42,12 +44,12 @@ export function CreditLotsTable({ lots }: { lots: CreditLot[] }) {
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>批次</TableHead>
-          <TableHead>来源</TableHead>
-          <TableHead className='text-right'>剩余</TableHead>
-          <TableHead>到期时间</TableHead>
-          <TableHead>倒计时</TableHead>
-          <TableHead>状态</TableHead>
+          <TableHead>{t('balance.lot')}</TableHead>
+          <TableHead>{t('balance.source')}</TableHead>
+          <TableHead className='text-right'>{t('balance.remaining')}</TableHead>
+          <TableHead>{t('balance.expiresAt')}</TableHead>
+          <TableHead>{t('balance.countdown')}</TableHead>
+          <TableHead>{t('balance.state')}</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -60,6 +62,7 @@ export function CreditLotsTable({ lots }: { lots: CreditLot[] }) {
 }
 
 function CreditLotRow({ lot }: { lot: CreditLot }) {
+  const { t } = useTranslation()
   const far = isFarFuture(lot.expiresAt)
   const days = remainingDays(lot.expiresAt)
 
@@ -70,7 +73,7 @@ function CreditLotRow({ lot }: { lot: CreditLot }) {
       </TableCell>
       <TableCell>{lot.sourceLabel || '—'}</TableCell>
       <TableCell className='text-right font-mono'>
-        {formatPoints(lot.remaining)} 点
+        {t('balance.points', { n: formatPoints(lot.remaining) })}
       </TableCell>
       <TableCell className='font-mono text-xs'>
         {formatDate(lot.expiresAt)}
@@ -79,9 +82,9 @@ function CreditLotRow({ lot }: { lot: CreditLot }) {
         {far || days === null ? (
           '—'
         ) : days === 0 ? (
-          <span className='text-destructive'>已到期</span>
+          <span className='text-destructive'>{t('balance.expired')}</span>
         ) : (
-          `${days} 天`
+          t('balance.days', { days })
         )}
       </TableCell>
       <TableCell>

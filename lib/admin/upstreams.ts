@@ -9,6 +9,7 @@
 
 import { configNumber, configString } from "../config.ts";
 import { zcodeQuota } from "../zcode/credits.ts";
+import { zcodeClaimSnapshot, mergePendingClaims } from "../zcode/auto-claim.ts";
 import { readCredential } from "../minimax/auth.ts";
 import { regionKey } from "../minimax/hosts.ts";
 import { fetchMiniMaxBalance, fetchMiniMaxTokenPlanWithSession } from "../minimax/credits.ts";
@@ -52,6 +53,7 @@ import type {
   HealthSnapshot,
   QuotaView,
   TokenPlanView,
+  ZcodeClaimSnapshot,
 } from "../provider-kinds.ts";
 
 // The panel's own view of these shapes comes from here.
@@ -80,6 +82,50 @@ function accountsFor(id: string): ProviderRow[] {
   if (isPlatform(id)) return accountsOfPlatform(id);
   const row = provider(id);
   return row ? [row] : [];
+}
+
+/**
+ * 这个平台名下有几个账号有可领的活动额度。
+ *
+ * 只读快照（自动领取循环每半小时写一次），不在这里问上游 —— 面板打开时
+ * 不能因此多打一个上游请求。快照里 offers 记的是「这一轮问到了几个可领」，
+ * 所以问不到的那一格是 undefined，不能当成 0。
+ *
+ * 已经领到（claimed）与服务端说不能再领（already）的账号不算：它们的 offers
+ * 可能是上一轮留下的，这轮再提醒只会是假的。
+ */
+export function claimableAccounts(rows: ProviderRow[]): number {
+  return claimableClaims(rows).length;
+}
+
+/**
+ * 活动名：几个账号都可领时，取 offer priority 最小的那个的名字。
+ *
+ * 名字来自快照里记下的投放名（marketing/touch 原话），不在这里编。
+ * 没有可领的账号就是空串 —— 面板据此不显示提醒。
+ */
+export function claimableLabel(rows: ProviderRow[]): string {
+  let best: ZcodeClaimSnapshot | null = null;
+  for (const claim of claimableClaims(rows)) {
+    if (!claim.offerName) continue;
+    if (!best || Number(claim.offerPriority ?? 0) < Number(best.offerPriority ?? 0)) best = claim;
+  }
+  return best?.offerName ?? "";
+}
+
+/** 快照里「还提醒得上」的那几份领取结论。 */
+function claimableClaims(rows: ProviderRow[]): ZcodeClaimSnapshot[] {
+  const live = peekHealthSnapshot<HealthSnapshot>()?.data;
+  if (!live) return [];
+  const out: ZcodeClaimSnapshot[] = [];
+  for (const row of rows) {
+    if (row.kind !== "zcode") continue;
+    const claim = live.zcode?.[row.id]?.claim;
+    if (!claim || claim.offers === undefined || claim.offers <= 0) continue;
+    if (claim.state === "claimed" || claim.state === "already") continue;
+    out.push(claim);
+  }
+  return out;
 }
 
 /** 一个上游的开关状态。 */
@@ -460,6 +506,10 @@ export async function refreshHealthSnapshot(): Promise<void> {
     applyPartial(snapshot, partial, rows);
   }
 
+  // 领取的结论：快照还没有的那段窗口里它先放在内存里（lib/zcode/auto-claim.ts
+  // 的 pending），写快照的这一刻并进来 —— 它是**写上游**的结果，丢了就没人
+  // 知道今天领没领。
+  mergePendingClaims(snapshot);
   putHealthSnapshot(snapshot);
   healthRefreshedAt = Date.now();
 }
@@ -526,9 +576,21 @@ async function refreshOne(snapshot: HealthSnapshot, row: ProviderRow): Promise<v
       };
       return;
     }
-    case "zcode":
-      snapshot.zcode[row.id] = { quota: await zcodeQuota(300_000, row.id) };
+    case "zcode": {
+      // 存的是结论（VendorProbe），不是原样答复：面板要能分清「上游拒了这把
+      // 令牌」「这一轮问不到」「额度用完了」—— 它们长得一样，后果完全不同。
+      // 登录时刻不在这里：凭据那一头读的是实时会话（判据在
+      // lib/kinds/zcode.ts 的 zcodeRefused），重登之后那个红要立刻消失，
+      // 等快照刷新太慢。
+      snapshot.zcode[row.id] = {
+        quota: await zcodeQuota(300_000, row.id),
+        // 领取的结论：成功与失败都存。面板从这一格读出「今天领了没有、为什么
+        // 没领成」。它从领取那一步的记处取（进程内存里），不是这里问来的 ——
+        // 这里再问一遍就是第二次领取。
+        claim: zcodeClaimSnapshot(row.id),
+      };
       return;
+    }
     case "workbuddy":
       // 签到状态与积分账本是两件事：一个是连签，一个是平台自己的余额。
       snapshot.workbuddy[row.id] = {
@@ -670,6 +732,7 @@ async function freshPlatformSnapshot(id: string, force = false): Promise<HealthS
         // 合并进现有快照：别的平台的桶不动。
         const merged = copySnapshot(peekHealthSnapshot<HealthSnapshot>()?.data ?? emptySnapshot());
         applyPartial(merged, partial, rows);
+        mergePendingClaims(merged);
         putHealthSnapshot(merged);
       } catch (e) {
         console.warn(`[HEALTH] ${platform} 的额度没问到：${(e as Error)?.message}`);

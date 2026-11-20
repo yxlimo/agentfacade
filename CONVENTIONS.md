@@ -18,6 +18,8 @@
 
 ## 测试只跑覆盖你改动的那一组
 
+**统一跑 `mise run verify`。** 它按 diff 算出你改了哪些路径、该跑哪几组门禁，然后顺序跑（`--plan` 只打印计划，`--base <rev>` 指定基线）。不用人记下面的表 —— 表留作案头参考，改了表格也要同步改 `tools/verify-changes.ts` 的规则。
+
 `mise run check` 是主代理提交前的全量门禁，约六分钟。开发过程中只跑覆盖你改动的那一组：
 
 | 任务 | 覆盖 |
@@ -26,11 +28,12 @@
 | `mise run check:routing` | 选号、降级、冷却、健康、用量、定时任务（`lib/router`、`lib/cooldown*`、`lib/session*`、`lib/periodic*`） |
 | `mise run check:deliver` | 响应投递：帧、背压、方言、客户端离开、日志脱敏（`lib/router/handle.ts`、`lib/dialect`、`lib/log-scrub*`） |
 | `mise run check:kinds` | 上游 kind、模拟端与开放平台（`lib/kinds`、`lib/minimax`、`lib/qoder`、`lib/workbuddy`、`lib/zcode`、`lib/tokenrhythm`、`lib/intern-ai`、`lib/qiniu`、`lib/xinghuo`、`lib/sensenova`） |
-| `mise run check:misc` | 目录一致性、清理规则、辅助脚本、隐私扫描器自身的测试、离线矩阵 |
+| `mise run check:misc` | 目录一致性、清理规则、辅助脚本、隐私扫描器自身的测试、离线矩阵（`test/`、仓库根配置如 `.gitignore`） |
 | `mise run check:web` | 面板前端，不启浏览器（`web/src`） |
-| `mise run check:panel` | 面板端到端，真浏览器（需要系统 chromium，约 90 秒） |
+| `mise run check:panel` | 面板端到端，真浏览器（仓库根的 `tests/` 用例与 `web/e2e`，需要系统 chromium，约三分钟） |
 
 改动 `proto/**` 时自己跑 `mise run proto`，两份生成物（`lib/gen` 与 `web/.gen`）都就位才算做完。
+改动了 `web/**` 里的用户可见文案或渲染条件时，`check:web` 不够：它只跑单测。文案在 e2e 里也有断言，跑一次 `mise run check:panel`（真浏览器，约三分钟），否则单测全绿、面板 e2e 红，主代理要重来一轮。
 
 你不提交，但也不要留下真实身份、凭据或内网地址 —— 主代理提交前会跑 `mise run privacy` 扫这些。
 
@@ -83,6 +86,8 @@ git stash        git checkout -- <file>        git restore <file>
 - 上游响应正文要进日志，不只是状态码。排查上游行为时，先录一次真实响应，之后对着假上游重放。
 - 面板把平台显示成绿色，必须表示「最近真的发得出去」。
 - 额度用尽、余额不足、排队是三种不同状态，不要把一种映射成另一种。
+- 拿推理模型当探针时，`max_tokens` 给 256：正文与思考共用同一份预算，给太小（32）思考就吃光了、正文是空的（`finish_reason` 也可能是 `stop`），看起来像「模型不工作」。给太大只是白花钱。
+- 排查上游**不要手写一次性脚本**（`node -e` 拼 URL、拼头、`fetch`）：手写时很容易重复叠一个凭据头，两个大小写不同的键让 `fetch` 拼成非法值，上游一律 401 —— 错误长得像「令牌过期」，其实是探针自己的错（2026-10-28 那次就是这么误判的）。用 `mise run probe`：要新请求就往 `tools/probes/<platform>.json` 加一条配置，头只从白名单函数来，写操作必须 `--yes-write`；**配置里只写常量名（`$const.X`，登记在 `tools/probe.ts` 的 `CONSTS`），不写版本号/平台字面量** —— 写死一份必与网关真实发的头/参数漂移，问出去的是另一个客户端身份的问题。
 
 ## 测试样例
 
@@ -99,6 +104,19 @@ api_key: "sk-TESTONLY0000000000", // privacy:allow — fabricated sample
 测试与实验产生的库、日志、临时目录都放在本仓库目录或 `/tmp` 下，收尾时删掉。不要在用户主目录里建任何东西。
 
 默认数据目录的回落顺序是 `FACADE_DATA_DIR` → `/data`（存在就优先）→ `$HOME/.agentfacade`。跑可能触及默认目录的测试时，先把 `FACADE_DATA_DIR` 指到 `/tmp` 下的临时目录。
+
+## 假上游只有两条固定入口
+
+- 测试里：`import { startFakeUpstream } from "./fake-upstream.ts"`（`test/fake-upstream.ts`）。端口随机、请求按序记录、`close()` 会真的关掉 keep-alive 连接。
+- 手动看探针会发什么：`mise run probe -- … --dry-run`（不发送）或 `--fake`（发到进程内假上游，打印「发出」与「收到」两侧）。
+
+**不许**在 bash 里手写服务器文件、用 `&` 起后台进程再 `sleep` + `wait`：那条命令永不返回，看起来像卡死（已经有人这么把自己挂死过几分钟）。也别自己 `http.createServer` 再起一套 —— 收口在这两个入口里，keep-alive 挂死这类坑才不用每个用例重新踩一遍。
+
+## 在测试里跑 git 前先清环境
+
+先清掉继承来的 `GIT_*` 环境变量（`GIT_DIR`、`GIT_WORK_TREE`、`GIT_INDEX_FILE`、`GIT_CONFIG*` 等）：git 认这些变量胜过 `cwd`，不清的话一次性仓库的提交与 config 会落到调用方的真仓库上 —— 已经发生过一次：一次性提交串进了别人的分支，主仓库的 `.git/config` 被改成 `core.bare = true`。本地永远绿，只在有这些变量的沙箱里炸。
+
+反过来，故意在**当前**仓库里跑 git 的脚本（比如按 diff 算门禁的那个）要**保留**继承环境，别一并清掉。
 
 ## 面板的测试用面板自己的配置跑
 

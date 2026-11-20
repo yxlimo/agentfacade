@@ -74,6 +74,8 @@ export interface UpstreamContext {
   workbuddyModel(model: string): WorkBuddyModel | null;
   /** Told what the upstream charged for the answer, if anyone is keeping score. */
   onUsage?: (usage: any) => void;
+  /** Told how the stream ended and its structural shape, for empty-answer logs. */
+  onFinish?: (finish: import("../deliver.ts").AnswerFinish) => void;
   /**
    * The usage the last upstream call reported, already counted.
    *
@@ -84,6 +86,8 @@ export interface UpstreamContext {
    * each piece is counted on its own.
    */
   lastUsage?: { promptTokens: number; completionTokens: number; reasoningTokens: number };
+  /** 上游自己报告的结束原因与片段结构，用于空答复诊断；没有任何正文内容 */
+  lastFinish?: import("../deliver.ts").AnswerFinish;
   /**
    * 这次请求实际发给上游的输出上限。
    *

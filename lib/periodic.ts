@@ -6,13 +6,15 @@
 //      时才换（见 lib/session.ts 的 RefreshMode），所以两处不会同时拿同一份
 //      refresh token 去换——那会让其中一个被平台当成重放。
 //   2. 今天没签到就签到。平台那边是幂等的，问两次会答「已经领过了」。
-//   3. 余额该扫就扫。扫完按上游的策略看「现在该用哪个账户」要不要换
+//   3. 有活动免费额度就领（ZCode 独有）。与签到分开：签到发积分，领取给活动
+//      额度，混在一起面板上的签到页就会把领取说成签到。
+//   4. 余额该扫就扫。扫完按上游的策略看「现在该用哪个账户」要不要换
 //      （余额到期优先：钱最先到期的那个账户）。
-//   4. 读一次状态：面板要的余额、额度、签到结果。
+//   5. 读一次状态：面板要的余额、额度、签到结果。
 //
 // 各步的节奏不一样：换令牌每次都看（判断只是读一次库）；签到一小时一次
-// （平台那边按周期翻）；扫余额跟钱包的缓存一样，五分钟；读状态跟健康快照的
-// 缓存一样。
+// （平台那边按周期翻）；领取半小时一次（活动名额按天放）；扫余额跟钱包的缓存
+// 一样，五分钟；读状态跟健康快照的缓存一样。
 
 import { listProviders } from "./providers.ts";
 import { platformPolicy } from "./platforms.ts";
@@ -22,6 +24,7 @@ import { kindOf } from "./provider-kinds.ts";
 import { benefits } from "./admin/benefits.ts";
 import { HEALTH_CACHE_MS, refreshHealthSnapshot } from "./admin/upstreams.ts";
 import { BENEFITS_INTERVAL_MS } from "./admin/benefits.ts";
+import { runZcodeAutoClaim, ZCODE_CLAIM_INTERVAL_MS } from "./zcode/auto-claim.ts";
 import { configFlag } from "./config.ts";
 import { sweepExpiredCooldowns } from "./cooldown.ts";
 
@@ -34,6 +37,8 @@ const lastStep = new Map<string, number>();
 /** 这一步多久做一次。 */
 const STEP_INTERVAL_MS: Record<string, number> = {
   benefits: BENEFITS_INTERVAL_MS,
+  // 领取是它自己的一步，不塞进 benefits：签到页不该说成签到。
+  claim: ZCODE_CLAIM_INTERVAL_MS,
   scan: 5 * 60_000,
   snapshot: HEALTH_CACHE_MS,
   cooldown: 5 * 60_000,
@@ -177,10 +182,22 @@ async function runOnce(): Promise<void> {
     }
   }
 
-  // 3. 重新钉「余额到期优先」的那些平台的账号。
+  // 3. 领活动免费额度（ZCode 独有的一步，与签到分开）。
+  //
+  // 开关关着时 runZcodeAutoClaim 一个请求都不发。
+  if (due("claim")) {
+    try {
+      await runZcodeAutoClaim();
+      done("claim");
+    } catch (e) {
+      noteFailure("claim", (e as Error)?.message ?? String(e));
+    }
+  }
+
+  // 4. 重新钉「余额到期优先」的那些平台的账号。
   repinBalancedPlatformsIfDue();
 
-  // 4. 读一次状态。
+  // 5. 读一次状态。
   if (due("snapshot")) {
     try {
       await refreshHealthSnapshot();
@@ -190,7 +207,7 @@ async function runOnce(): Promise<void> {
     }
   }
 
-  // 5. 清掉过期的冷却行。
+  // 6. 清掉过期的冷却行。
   //
   // 冷却的判定是惰性的（比时间就行），这一步只是让表不长毛：过期的行留着也
   // 不碍事，但看着像还有账号在冷却。

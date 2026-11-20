@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Check, ChevronDown, Loader2, Pencil } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -45,9 +46,12 @@ export function ModelPicker({
   value,
   onChange,
   id,
-  placeholder = '选一个平台模型',
+  placeholder,
   takenModelIds = [],
 }: ModelPickerProps) {
+  const { t } = useTranslation()
+  const fallbackPlaceholder = t('models.modelPlaceholder')
+  const shownPlaceholder = placeholder ?? fallbackPlaceholder
   const upstreams = useUpstreams()
   // 目录跟上游的开关有关（关着就不给模型），所以缓存键里带上状态。
   const state =
@@ -72,24 +76,26 @@ export function ModelPicker({
         <Input
           id={id}
           value={value}
-          placeholder={placeholder}
+          placeholder={shownPlaceholder}
           onChange={(event) => onChange(event.target.value)}
         />
         {groupName.trim() === '' ? (
           <p className='text-xs text-muted-foreground'>
-            先选平台组，才有模型目录可选。
+            {t('models.pickerNoGroup')}
           </p>
         ) : loading ? (
-          <p className='text-xs text-muted-foreground'>正在加载模型目录…</p>
+          <p className='text-xs text-muted-foreground'>
+            {t('models.pickerLoading')}
+          </p>
         ) : catalog.isError ? (
           <p className='text-xs text-destructive'>
-            取模型目录失败，手填一个平台模型 id。
+            {t('models.pickerLoadFailed')}
           </p>
         ) : hasCatalog ? (
           // 目录是有的，是用户自己选了手填：给他一条回去的路。
           <div className='flex items-center gap-1'>
             <p className='text-xs text-muted-foreground'>
-              这个平台有模型目录（{models.length} 个）。
+              {t('models.pickerHasCatalog', { count: models.length })}
             </p>
             <Button
               type='button'
@@ -98,12 +104,12 @@ export function ModelPicker({
               className='h-auto p-0 text-xs'
               onClick={() => setManual(false)}
             >
-              回到下拉
+              {t('models.pickerBackToList')}
             </Button>
           </div>
         ) : (
           <p className='text-xs text-muted-foreground'>
-            这个平台没有目录，手填模型 id。
+            {t('models.pickerNoCatalog')}
           </p>
         )}
       </div>
@@ -128,16 +134,17 @@ export function ModelPicker({
                 !value && 'text-muted-foreground'
               )}
             >
-              {value || (loading ? '正在加载模型目录…' : placeholder)}
+              {value ||
+                (loading ? t('models.pickerLoading') : shownPlaceholder)}
             </span>
             <ChevronDown className='size-4 opacity-50' />
           </Button>
         </PopoverTrigger>
         <PopoverContent className='w-[--radix-popover-trigger-width] p-0'>
           <Command>
-            <CommandInput placeholder='搜模型…' />
+            <CommandInput placeholder={t('models.pickerSearch')} />
             <CommandList>
-              <CommandEmpty>目录中没有匹配的模型。</CommandEmpty>
+              <CommandEmpty>{t('models.pickerNoMatch')}</CommandEmpty>
               <CommandGroup>
                 {models.map((model) => {
                   // 别的行已经用掉这个组合了：还列出来，但选不了，并说清为什么。
@@ -162,7 +169,7 @@ export function ModelPicker({
                       <span className='flex-1 truncate'>{model.id}</span>
                       {taken ? (
                         <span className='text-xs text-muted-foreground'>
-                          已经有一行
+                          {t('models.pickerTaken')}
                         </span>
                       ) : model.displayName &&
                         model.displayName !== model.id ? (
@@ -183,7 +190,7 @@ export function ModelPicker({
         {loading ? <Loader2 className='size-3 animate-spin' /> : null}
         {known ? (
           <span className='text-xs text-muted-foreground'>
-            目录里有这个模型。
+            {t('models.pickerKnown')}
           </span>
         ) : null}
         <Button
@@ -194,7 +201,7 @@ export function ModelPicker({
           onClick={() => setManual(true)}
         >
           <Pencil className='size-3' />
-          手填
+          {t('models.pickerManual')}
         </Button>
       </div>
     </div>

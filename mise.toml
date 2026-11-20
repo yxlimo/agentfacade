@@ -55,7 +55,7 @@ run = "node --experimental-strip-types test/privacy-check.ts"
 [tasks.test]
 description = "Run the offline tests (the mock upstream, no tokens spent)"
 run = "bash test/smoke.sh"
-depends = ["test:selection", "test:policy", "test:upstream:status", "test:minimax:fallback", "test:minimax:credits", "test:minimax:credits:view", "test:minimax:checkin", "test:minimax:cycle", "test:policy:e2e", "test:catalog-parity", "test:cleanup", "test:cleanup:admin", "test:account-id", "test:open-platform:admin", "test:quota:plugin", "test:quota:plugins:three", "test:quota:state", "test:open-platform:kind", "test:anthropic-platform", "test:open-platform:account", "test:admin:state", "test:credential:fault", "test:credential:plan", "test:admin:parity", "test:platform:availability", "test:admin", "test:open-platforms", "test:platform:migration", "test:platform:delete", "test:quota", "test:dead-session", "test:periodic", "test:periodic:off", "test:workbuddy:benefits", "test:workbuddy:catalog", "test:workbuddy:catalog:tool", "test:refresh-flow", "test:zcode", "test:zcode:headers", "test:zcode:system", "test:zcode:session", "test:zcode:quota", "test:zcode:rewrite", "test:zcode:rewrite:e2e", "test:session", "test:agent", "test:session-map", "test:tokenrhythm", "test:balance-account", "test:timer-refresh", "test:account-weight", "test:token-plan", "test:model-visibility", "test:cooldown", "test:cooldown:single", "test:unreachable", "test:route", "test:snapshot", "test:health:cooldown", "test:aggregate", "test:aggregate:error", "test:aggregate:usage", "test:usage", "test:admin:contract", "test:admin:login", "test:login:record", "test:catalog:billing", "test:catalog:billing:panel", "test:catalog:persist", "test:model-catalog", "test:model-overrides", "test:model-traits", "test:model-traits:tool", "test:model:duplicate", "test:upstream:cooldown", "test:upstream:breaker", "test:admin:regression", "test:deliver:frames", "test:deliver:backpressure", "test:peek:stream", "test:stream:idle", "test:stream:limits", "test:empty-answer", "test:dialect:stream", "test:dialect:cache", "test:effort", "test:client:gone", "test:log:scrub", "test:scrub:client", "test:admin:policy", "test:sensenova:intern", "test:intern-ai", "test:intern-ai:quota", "test:qiniu", "test:qiniu:keys", "test:xinghuo", "test:rate:wait", "test:qoder:benefits", "test:qoder:legacy", "test:qoder:models", "test:helper", "test:config", "test:admin:config", "test:privacy", "test:e2e:matrix"]
+depends = ["test:selection", "test:policy", "test:upstream:status", "test:minimax:fallback", "test:minimax:credits", "test:minimax:credits:view", "test:minimax:checkin", "test:minimax:cycle", "test:policy:e2e", "test:catalog-parity", "test:cleanup", "test:cleanup:admin", "test:account-id", "test:open-platform:admin", "test:quota:plugin", "test:quota:plugins:three", "test:quota:state", "test:open-platform:kind", "test:anthropic-platform", "test:open-platform:account", "test:admin:state", "test:credential:fault", "test:credential:plan", "test:admin:parity", "test:platform:availability", "test:admin", "test:open-platforms", "test:platform:migration", "test:platform:delete", "test:quota", "test:dead-session", "test:periodic", "test:periodic:off", "test:workbuddy:benefits", "test:workbuddy:catalog", "test:workbuddy:catalog:tool", "test:refresh-flow", "test:zcode", "test:zcode:headers", "test:zcode:system", "test:zcode:session", "test:zcode:quota", "test:zcode:claim", "test:zcode:claim:manual", "test:zcode:rewrite", "test:zcode:rewrite:e2e", "test:session", "test:agent", "test:session-map", "test:tokenrhythm", "test:balance-account", "test:timer-refresh", "test:account-weight", "test:token-plan", "test:model-visibility", "test:models:dialect", "test:cooldown", "test:cooldown:single", "test:unreachable", "test:route", "test:snapshot", "test:health:cooldown", "test:aggregate", "test:aggregate:error", "test:aggregate:usage", "test:usage", "test:admin:contract", "test:admin:login", "test:login:record", "test:catalog:billing", "test:catalog:billing:panel", "test:catalog:persist", "test:model-catalog", "test:model-overrides", "test:model-traits", "test:model-traits:tool", "test:model:duplicate", "test:upstream:cooldown", "test:upstream:breaker", "test:admin:regression", "test:deliver:frames", "test:deliver:backpressure", "test:peek:stream", "test:stream:idle", "test:stream:limits", "test:empty-answer", "test:dialect:stream", "test:dialect:cache", "test:effort", "test:client:gone", "test:log:scrub", "test:scrub:client", "test:admin:policy", "test:sensenova:intern", "test:intern-ai", "test:intern-ai:quota", "test:qiniu", "test:qiniu:keys", "test:xinghuo", "test:rate:wait", "test:qoder:benefits", "test:qoder:legacy", "test:qoder:models", "test:helper", "test:config", "test:admin:config", "test:privacy", "test:probe", "test:e2e:matrix", "test:fake-upstream", "test:admin:claimable"]
 
 
 [tasks."helper:sync"]
@@ -277,6 +277,10 @@ run = "node --experimental-strip-types test/admin-regression-check.ts"
 description = "Run the tests for the published models"
 run = "bash test/aggregate.sh"
 
+[tasks."test:admin:claimable"]
+description = "Check the platform-level count of accounts with claimable allowance (snapshot only)"
+run = "node --experimental-strip-types test/admin-claimable-check.ts"
+
 [tasks."test:admin"]
 description = "Run the tests for the panel's API (Connect)"
 run = "node --experimental-strip-types test/admin-check.ts"
@@ -329,6 +333,10 @@ run = "node --experimental-strip-types test/login-record-check.ts"
 [tasks."test:effort"]
 description = "Check that the thinking level survives the dialect conversion"
 run = "node --experimental-strip-types test/effort-check.ts"
+
+[tasks."test:models:dialect"]
+description = "Check the model list's two shapes: OpenAI by default, Anthropic on request, and the fields each one carries"
+run = "node --experimental-strip-types test/models-dialect-check.ts"
 
 [tasks."test:catalog-parity"]
 description = "Check that the panel's published models and the root route publish the same numbers"
@@ -481,6 +489,14 @@ run = "node --experimental-strip-types test/zcode-session-check.ts"
 description = "Check what a spent ZCode plan looks like: the platform answers 200 with no bucket, and that is 'used up', not 'nothing known'"
 run = "node --experimental-strip-types test/zcode-quota-check.ts"
 
+[tasks."test:zcode:claim"]
+description = "Check the ZCode activity-allowance claim: preview says whether there is one, claim takes exactly one, and the terminal codes are not retried (a fake upstream)"
+run = "node --experimental-strip-types test/zcode-claim-check.ts"
+
+[tasks."test:zcode:claim:manual"]
+description = "Check the panel-triggered ZCode claim: the browser's captcha goes into the request, the model headers stay out, and the five conclusions stay apart (a fake upstream)"
+run = "node --experimental-strip-types test/zcode-claim-manual-check.ts"
+
 [tasks."test:zcode:rewrite"]
 description = "Check the `::code-comment` rewrite: the whole text, the streamed pieces, and the reverse proof"
 run = "node --experimental-strip-types test/zcode-rewrite-check.ts"
@@ -610,11 +626,11 @@ run = "node --experimental-strip-types tools/verify-image.ts"
 
 [tasks."check:admin"]
 description = "Admin backend and account/credential/platform/model catalogues (lib/admin, lib/credential, lib/platforms, lib/model-catalog)"
-depends = ["test:admin", "test:admin:state", "test:admin:parity", "test:admin:contract", "test:admin:login", "test:admin:policy", "test:admin:config", "test:admin:regression", "test:cleanup:admin", "test:open-platform:admin", "test:open-platform:kind", "test:open-platform:account", "test:open-platforms", "test:credential:fault", "test:credential:plan", "test:platform:availability", "test:platform:migration", "test:platform:delete", "test:account-id", "test:account-weight", "test:login:record", "test:config", "test:quota:plugin", "test:quota:plugins:three", "test:quota:state", "test:quota", "test:catalog:billing", "test:catalog:billing:panel", "test:catalog:persist", "test:model-catalog", "test:model-overrides", "test:model-traits", "test:model-traits:tool", "test:model-traits:reference", "test:model:duplicate", "test:model-visibility"]
+depends = ["test:admin", "test:admin:claimable", "test:admin:state", "test:admin:parity", "test:admin:contract", "test:admin:login", "test:admin:policy", "test:admin:config", "test:admin:regression", "test:cleanup:admin", "test:open-platform:admin", "test:open-platform:kind", "test:open-platform:account", "test:open-platforms", "test:credential:fault", "test:credential:plan", "test:platform:availability", "test:platform:migration", "test:platform:delete", "test:account-id", "test:account-weight", "test:login:record", "test:config", "test:quota:plugin", "test:quota:plugins:three", "test:quota:state", "test:quota", "test:catalog:billing", "test:catalog:billing:panel", "test:catalog:persist", "test:model-catalog", "test:model-overrides", "test:model-traits", "test:model-traits:tool", "test:model-traits:reference", "test:model:duplicate", "test:model-visibility"]
 
 [tasks."check:routing"]
 description = "Account selection, fallback, cooldown, health, usage and the timer jobs (lib/router, lib/cooldown, lib/session, lib/periodic)"
-depends = ["test:selection", "test:policy", "test:policy:e2e", "test:route", "test:aggregate", "test:aggregate:error", "test:aggregate:usage", "test:cooldown", "test:cooldown:single", "test:unreachable", "test:upstream:status", "test:upstream:cooldown", "test:upstream:breaker", "test:snapshot", "test:health:cooldown", "test:balance-account", "test:token-plan", "test:rate:wait", "test:refresh-flow", "test:timer-refresh", "test:dead-session", "test:session", "test:session-map", "test:agent", "test:usage", "test:periodic", "test:periodic:off"]
+depends = ["test:selection", "test:policy", "test:policy:e2e", "test:route", "test:models:dialect", "test:aggregate", "test:aggregate:error", "test:aggregate:usage", "test:cooldown", "test:cooldown:single", "test:unreachable", "test:upstream:status", "test:upstream:cooldown", "test:upstream:breaker", "test:snapshot", "test:health:cooldown", "test:balance-account", "test:token-plan", "test:rate:wait", "test:refresh-flow", "test:timer-refresh", "test:dead-session", "test:session", "test:session-map", "test:agent", "test:usage", "test:periodic", "test:periodic:off"]
 
 [tasks."check:deliver"]
 description = "Response delivery: streaming frames, backpressure, dialects, client-gone and log scrubbing (lib/router, lib/dialect, lib/log-scrub)"
@@ -622,11 +638,39 @@ depends = ["test:deliver:frames", "test:deliver:backpressure", "test:peek:stream
 
 [tasks."check:kinds"]
 description = "The upstream kinds: simulated clients and open platforms (lib/kinds, lib/qoder, lib/workbuddy, lib/minimax, lib/zcode, lib/tokenrhythm, lib/intern-ai, lib/qiniu, lib/xinghuo, lib/sensenova)"
-depends = ["test:minimax:fallback", "test:minimax:credits", "test:minimax:credits:view", "test:minimax:checkin", "test:minimax:cycle", "test:qoder:benefits", "test:qoder:legacy", "test:qoder:models", "test:workbuddy:benefits", "test:workbuddy:catalog", "test:workbuddy:catalog:tool", "test:zcode", "test:zcode:headers", "test:zcode:system", "test:zcode:session", "test:zcode:quota", "test:zcode:rewrite", "test:zcode:rewrite:e2e", "test:tokenrhythm", "test:sensenova:intern", "test:intern-ai", "test:intern-ai:quota", "test:qiniu", "test:qiniu:keys", "test:xinghuo", "test:anthropic-platform"]
+depends = ["test:minimax:fallback", "test:minimax:credits", "test:minimax:credits:view", "test:minimax:checkin", "test:minimax:cycle", "test:qoder:benefits", "test:qoder:legacy", "test:qoder:models", "test:workbuddy:benefits", "test:workbuddy:catalog", "test:workbuddy:catalog:tool", "test:zcode", "test:zcode:headers", "test:zcode:system", "test:zcode:session", "test:zcode:quota", "test:zcode:claim", "test:zcode:claim:manual", "test:zcode:rewrite", "test:zcode:rewrite:e2e", "test:tokenrhythm", "test:sensenova:intern", "test:intern-ai", "test:intern-ai:quota", "test:qiniu", "test:qiniu:keys", "test:xinghuo", "test:anthropic-platform"]
 
 [tasks."check:misc"]
 description = "Catalogue parity, cleanup rules, the helper scripts, the privacy scanner and the offline matrix (test/, helper/, check-privacy.ts)"
-depends = ["test:catalog-parity", "test:cleanup", "test:helper", "test:privacy", "test:e2e:matrix"]
+depends = ["test:catalog-parity", "test:cleanup", "test:helper", "test:privacy", "test:verify", "test:probe", "test:fake-upstream", "test:e2e:matrix"]
+
+[tasks."test:verify"]
+description = "Check the diff-based gate chooser (which gates each change needs)"
+run = "node --experimental-strip-types test/verify-changes-check.ts"
+
+[tasks.verify]
+description = "按 diff 决定要跑哪些门禁并顺序跑它们（--plan 只打印计划，--base <rev> 指定基线）"
+run = "node --experimental-strip-types tools/verify-changes.ts"
+
+[tasks.probe]
+description = "Declarative upstream probe: config in tools/probes/<platform>.json, run against a real account (write requests need --yes-write)"
+run = "node --experimental-strip-types tools/probe.ts"
+
+[tasks."test:probe"]
+description = "Check the probe tool offline (the 127.0.0.1 fake upstream: whitelist headers, the write gate, the $arg substitution)"
+run = "node --experimental-strip-types test/probe-check.ts"
+
+[tasks."test:fake-upstream"]
+description = "Check the fake upstream module and the probe's --dry-run / --fake switches, plus the pre-commit hook is still in place"
+run = "node --experimental-strip-types test/fake-upstream-check.ts"
+
+[tasks."hooks:install"]
+description = "Install the pre-commit hook (git config core.hooksPath .githooks; idempotent)"
+run = """
+git config core.hooksPath .githooks
+echo "pre-commit hook 已装上：.githooks/pre-commit（core.hooksPath → .githooks）。重复跑无害"
+echo "临时跳过一次提交：git commit --no-verify"
+"""
 
 [tasks."check:web"]
 description = "Panel frontend, no browser (web/src)"

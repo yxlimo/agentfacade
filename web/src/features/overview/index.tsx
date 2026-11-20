@@ -1,4 +1,5 @@
 import { Link } from '@tanstack/react-router'
+import { useTranslation } from 'react-i18next'
 import {
   Activity,
   Boxes,
@@ -30,6 +31,7 @@ import { credentialKindLabel } from '@/lib/credential-kind'
 import { formatCompact, formatCount, formatUptime } from '@/lib/format'
 
 export function OverviewPage() {
+  const { t } = useTranslation()
   const status = useSystemStatus()
   const usage = useUsageSummary({ upstreamId: '', window: 'day' })
 
@@ -45,8 +47,8 @@ export function OverviewPage() {
 
   return (
     <PageShell
-      title='总览'
-      description='网关当前状态：平台概况与今日用量。'
+      title={t('overview.title')}
+      description={t('overview.description')}
     >
 
       <div className='mb-4'>
@@ -60,7 +62,7 @@ export function OverviewPage() {
           <CardHeader>
             <CardDescription className='flex items-center gap-1.5'>
               <Activity className='size-3.5' />
-              今日请求
+              {t('overview.todayRequests')}
             </CardDescription>
             <CardTitle className='text-2xl'>
               {total ? formatCount(total.requests) : '—'}
@@ -68,10 +70,11 @@ export function OverviewPage() {
           </CardHeader>
           <CardContent className='text-sm text-muted-foreground'>
             {total
-              ? `成功 ${formatCount(total.succeeded)} · 失败 ${formatCount(
-                  total.failed
-                )}`
-              : '暂无用量数据'}
+              ? t('common.successFailed', {
+                  ok: formatCount(total.succeeded),
+                  bad: formatCount(total.failed),
+                })
+              : t('overview.noUsageData')}
           </CardContent>
         </Card>
 
@@ -79,13 +82,13 @@ export function OverviewPage() {
           <CardHeader>
             <CardDescription className='flex items-center gap-1.5'>
               <Layers className='size-3.5' />
-              主路由模型
+              {t('overview.mainModels')}
             </CardDescription>
             <CardTitle className='text-2xl'>{data.publishedModelCount}</CardTitle>
           </CardHeader>
           <CardContent className='text-sm text-muted-foreground'>
             <Link to='/models' className='underline underline-offset-4'>
-              管理主路由模型
+              {t('overview.manageModels')}
             </Link>
           </CardContent>
         </Card>
@@ -94,14 +97,16 @@ export function OverviewPage() {
           <CardHeader>
             <CardDescription className='flex items-center gap-1.5'>
               <Clock className='size-3.5' />
-              运行时长
+              {t('overview.uptime')}
             </CardDescription>
             <CardTitle className='text-2xl'>
               {formatUptime(data.uptimeSec)}
             </CardTitle>
           </CardHeader>
           <CardContent className='text-sm text-muted-foreground'>
-            版本 {data.version || '未知'}
+            {t('overview.version', {
+              version: data.version || t('overview.unknownVersion'),
+            })}
           </CardContent>
         </Card>
       </div>
@@ -113,15 +118,15 @@ export function OverviewPage() {
           <CardHeader>
             <CardTitle className='flex items-center gap-2 text-base'>
               <Boxes className='size-4' />
-              平台
+              {t('overview.platforms')}
             </CardTitle>
             <CardDescription>
-              开关在「平台」页改，改完立刻生效。
+              {t('overview.platformSwitchHint')}
             </CardDescription>
           </CardHeader>
           <CardContent className='grid gap-3'>
             {data.upstreams.length === 0 ? (
-              <EmptyState title='暂无平台' />
+              <EmptyState title={t('overview.noPlatforms')} />
             ) : (
               data.upstreams.map((upstream) => (
                 <div
@@ -133,13 +138,14 @@ export function OverviewPage() {
                       {upstream.label || upstream.id}
                     </span>
                     <span className='text-xs text-muted-foreground'>
-                      {upstream.id} · {upstream.modelCount} 个模型
+                      {upstream.id} · {t('overview.models', { count: upstream.modelCount })}
                     </span>
                     {upstream.credential ? (
                       <span className='text-xs text-muted-foreground'>
-                        凭据
                         {credentialKindLabel(upstream.credential.kind)
-                          ? `：${credentialKindLabel(upstream.credential.kind)}`
+                          ? t('overview.credentialKind', {
+                              kind: credentialKindLabel(upstream.credential.kind),
+                            })
                           : ''}
                       </span>
                     ) : null}
@@ -163,17 +169,17 @@ export function OverviewPage() {
           <CardHeader>
             <CardTitle className='flex items-center gap-2 text-base'>
               <Activity className='size-4' />
-              今日用量
+              {t('overview.todayUsage')}
             </CardTitle>
-            <CardDescription>按平台分的 token 数。</CardDescription>
+            <CardDescription>{t('overview.usageByPlatform')}</CardDescription>
           </CardHeader>
           <CardContent className='grid gap-3'>
             {usage.isPending ? (
-              <LoadingState label='正在加载用量…' />
+              <LoadingState label={t('usage.loadingUsage')} />
             ) : usage.isError ? (
               <ErrorState error={usage.error} onRetry={() => usage.refetch()} />
             ) : (usage.data?.byUpstream.length ?? 0) === 0 ? (
-              <EmptyState title='今日暂无请求' />
+              <EmptyState title={t('overview.noRequestsToday')} />
             ) : (
               usage.data?.byUpstream.map((bucket) => (
                 <div
@@ -182,8 +188,10 @@ export function OverviewPage() {
                 >
                   <span className='font-medium'>{bucket.key}</span>
                   <span className='font-mono text-muted-foreground'>
-                    入 {formatCompact(bucket.summary?.promptTokens ?? 0n)} / 出{' '}
-                    {formatCompact(bucket.summary?.completionTokens ?? 0n)}
+                    {t('overview.inOut', {
+                      in: formatCompact(bucket.summary?.promptTokens ?? 0n),
+                      out: formatCompact(bucket.summary?.completionTokens ?? 0n),
+                    })}
                   </span>
                 </div>
               ))

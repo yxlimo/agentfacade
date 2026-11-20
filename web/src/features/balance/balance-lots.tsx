@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import type { BalanceLot } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { EmptyState } from '@/components/async-state'
 import { StatusBadge } from '@/components/status-badge'
@@ -20,9 +21,10 @@ import { formatCny, formatDate, isFarFuture, remainingDays } from '@/lib/format'
  * 不翻译它。倒计时那一列对这种批次给「—」。
  */
 export function BalanceLotsTable({ lots }: { lots: BalanceLot[] }) {
+  const { t } = useTranslation()
   if (lots.length === 0) {
     return (
-      <EmptyState title='没有余额批次' />
+      <EmptyState title={t('balance.emptyBalanceLots')} />
     )
   }
 
@@ -30,12 +32,12 @@ export function BalanceLotsTable({ lots }: { lots: BalanceLot[] }) {
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>批次</TableHead>
-          <TableHead>来源</TableHead>
-          <TableHead className='text-right'>剩余</TableHead>
-          <TableHead>到期时间</TableHead>
-          <TableHead>倒计时</TableHead>
-          <TableHead>状态</TableHead>
+          <TableHead>{t('balance.lot')}</TableHead>
+          <TableHead>{t('balance.source')}</TableHead>
+          <TableHead className='text-right'>{t('balance.remaining')}</TableHead>
+          <TableHead>{t('balance.expiresAt')}</TableHead>
+          <TableHead>{t('balance.countdown')}</TableHead>
+          <TableHead>{t('balance.state')}</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -48,6 +50,7 @@ export function BalanceLotsTable({ lots }: { lots: BalanceLot[] }) {
 }
 
 function BalanceLotRow({ lot }: { lot: BalanceLot }) {
+  const { t } = useTranslation()
   const far = isFarFuture(lot.expiresAt)
   const days = remainingDays(lot.expiresAt)
 
@@ -67,9 +70,9 @@ function BalanceLotRow({ lot }: { lot: BalanceLot }) {
         {far || days === null ? (
           '—'
         ) : days === 0 ? (
-          <span className='text-destructive'>已到期</span>
+          <span className='text-destructive'>{t('balance.expired')}</span>
         ) : (
-          `${days} 天`
+          t('balance.days', { days })
         )}
       </TableCell>
       <TableCell>

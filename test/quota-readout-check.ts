@@ -314,24 +314,25 @@ setSecret(sessionId, "session", {
 });
 
 const { fetchZcodeQuota } = await import("../lib/zcode/credits.ts");
-const zcodeQuota = await fetchZcodeQuota("zcode");
-check("读到了额度", zcodeQuota !== null, JSON.stringify(zcodeQuota));
-check("一个额度桶", zcodeQuota?.buckets.length === 1, String(zcodeQuota?.buckets.length));
+const zcodeProbe = await fetchZcodeQuota("zcode");
+check("问到了额度", zcodeProbe.state === "ok", JSON.stringify(zcodeProbe));
+const zcodeBuckets = zcodeProbe.state === "ok" ? (zcodeProbe.value.buckets ?? []) : [];
+check("一个额度桶", zcodeBuckets.length === 1, String(zcodeBuckets.length));
 check(
   "桶的模型是 GLM-5.3",
-  zcodeQuota?.buckets[0]?.showName === "GLM-5.3",
-  String(zcodeQuota?.buckets[0]?.showName),
+  zcodeBuckets[0]?.showName === "GLM-5.3",
+  String(zcodeBuckets[0]?.showName),
 );
 check(
   "桶的剩余是 2880000",
-  zcodeQuota?.buckets[0]?.remaining === 2880000,
-  String(zcodeQuota?.buckets[0]?.remaining),
+  zcodeBuckets[0]?.remaining === 2880000,
+  String(zcodeBuckets[0]?.remaining),
 );
 check(
   "到期时刻是 ISO（平台给的是 unix 秒，不能直接 Date.parse）",
-  typeof zcodeQuota?.buckets[0]?.expiresAt === "string" &&
-    !Number.isNaN(Date.parse(zcodeQuota.buckets[0].expiresAt!)),
-  String(zcodeQuota?.buckets[0]?.expiresAt),
+  typeof zcodeBuckets[0]?.expiresAt === "string" &&
+    !Number.isNaN(Date.parse(zcodeBuckets[0].expiresAt!)),
+  String(zcodeBuckets[0]?.expiresAt),
 );
 check(
   "额度请求带着设备 id",

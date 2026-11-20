@@ -6,7 +6,8 @@ import {
   SetConfigRequestSchema,
 } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { useAdminClient } from '@/features/auth/client-provider'
-import { assertOk, describeError } from '@/lib/errors'
+import { assertOk, describeErrorText } from '@/lib/errors'
+import i18n from '@/lib/i18n'
 import { queryKeys } from '@/lib/query-keys'
 import { invalidateServerData } from '@/lib/server-data'
 
@@ -39,14 +40,14 @@ export function useSetConfig() {
           clear: input.clear,
         })
       )
-      assertOk(result, '保存失败')
+      assertOk(result, i18n.t('config.saveFailed'))
       return result
     },
     onError: (error) => {
-      toast.error(describeError(error))
+      toast.error(describeErrorText(error, i18n.t))
     },
     onSuccess: (result) => {
-      toast.success(result.message || '已保存，已经生效')
+      toast.success(result.message || i18n.t('config.savedAndLive'))
     },
     onSettled: () => {
       // 配置项那一页，和总览里那几个跟配置有关的数。

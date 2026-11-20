@@ -1,8 +1,11 @@
 import { Fragment, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { useIsFetching } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { ChevronRight, Plus } from 'lucide-react'
 import { PageShell } from '@/components/layout/page-shell'
+import { Badge } from '@/components/ui/badge'
 import {
   EmptyState,
   ErrorState,
@@ -68,7 +71,7 @@ import {
 } from '@/features/accounts/provider-key-fields'
 import { useSetProviderKeys } from '@/features/accounts/api'
 import { formatLocalMoment } from '@/lib/format'
-import { describeError } from '@/lib/errors'
+import { describeErrorText } from '@/lib/errors'
 import {
   movePlatformOrder,
   useOrderedPlatforms,
@@ -81,10 +84,11 @@ import type {
   RunBenefitNowResponse,
   Upstream,
 } from '@/gen/agentfacade/admin/v1/admin_pb'
+import type { zh } from '@/lib/i18n/catalogs/zh'
 
-const REGION_LABELS: Record<string, string> = {
-  cn: '中国区',
-  global: '海外',
+const REGION_LABELS: Record<string, keyof typeof zh> = {
+  cn: 'upstreams.regionCn',
+  global: 'upstreams.regionGlobal',
 }
 
 /**
@@ -95,6 +99,7 @@ const REGION_LABELS: Record<string, string> = {
  * 表里的行：一个平台下可以有好几个，各自的凭据、开关、额度各归各。
  */
 export function UpstreamsPage() {
+  const { t } = useTranslation()
   const upstreams = useUpstreams()
   const setEnabled = useSetAccountEnabled()
   const addAccount = useAddAccount()
@@ -216,8 +221,8 @@ export function UpstreamsPage() {
 
   return (
     <PageShell
-      title='平台'
-      description='内置的模板平台与自建的开放平台，每个平台下可以有多个账号。'
+      title={t('upstreams.title')}
+      description={t('upstreams.description')}
       actions={
         <div className='flex items-center gap-2'>
           <Button
@@ -225,11 +230,11 @@ export function UpstreamsPage() {
             aria-pressed={sorting}
             onClick={() => setSorting((value) => !value)}
           >
-            {sorting ? '完成排序' : '排序'}
+            {sorting ? t('upstreams.finishSorting') : t('upstreams.sort')}
           </Button>
           <Button onClick={openAddPlatform}>
             <Plus />
-            新增平台
+            {t('upstreams.addPlatform')}
           </Button>
         </div>
       }
@@ -238,10 +243,11 @@ export function UpstreamsPage() {
       <Card>
         <CardContent className='px-0'>
           {list.length === 0 ? (
-            <EmptyState title='网关没有返回任何平台' />
+            <EmptyState title={t('upstreams.noPlatforms')} />
           ) : sorting ? (
             <PlatformSortList
               platforms={list}
+              t={t}
               onMove={(from, to) => {
                 const ids = list.map((upstream) => upstream.id)
                 const next = movePlatformOrder(ids, from, to)
@@ -252,14 +258,14 @@ export function UpstreamsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>平台</TableHead>
-                  <TableHead>区域</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead>生效策略</TableHead>
+                  <TableHead>{t('upstreams.headerPlatform')}</TableHead>
+                  <TableHead>{t('upstreams.headerRegion')}</TableHead>
+                  <TableHead>{t('upstreams.headerState')}</TableHead>
+                  <TableHead>{t('upstreams.headerPolicy')}</TableHead>
                   {/* 操作列：列宽就是几个按钮的宽（w-max），窄屏时（xl 以下）
                       收窄一点让按钮换行摆，不把它们推出可视区。 */}
                   <TableHead className='sticky right-0 z-20 w-max max-xl:w-40 xl:min-w-max border-l bg-background text-right whitespace-nowrap'>
-                    操作
+                    {t('upstreams.headerActions')}
                   </TableHead>
                 </TableRow>
               </TableHeader>
@@ -290,9 +296,12 @@ export function UpstreamsPage() {
                               variant='ghost'
                               size='icon-sm'
                               aria-expanded={isExpanded}
-                              aria-label={`${
-                                isExpanded ? '收起' : '展开'
-                              } ${upstream.id} 的账号与凭据`}
+                              aria-label={t(
+                                isExpanded
+                                  ? 'upstreams.collapseAccounts'
+                                  : 'upstreams.expandAccounts',
+                                { id: upstream.id }
+                              )}
                               onClick={(event) => {
                                 event.stopPropagation()
                                 setExpanded(isExpanded ? null : upstream.id)
@@ -326,7 +335,9 @@ export function UpstreamsPage() {
                         </TableCell>
                         <TableCell className='text-xs text-muted-foreground'>
                           {upstream.region
-                            ? (REGION_LABELS[upstream.region] ?? upstream.region)
+                            ? REGION_LABELS[upstream.region]
+                              ? t(REGION_LABELS[upstream.region])
+                              : upstream.region
                             : '—'}
                         </TableCell>
                         {/* 状态这一列也是能伸缩的：结论那句允许换行，但也有
@@ -335,6 +346,19 @@ export function UpstreamsPage() {
                           {/* 能不能接由后端说：有开着的账号就是开着的。 */}
                           <div className='grid min-w-24 max-lg:min-w-20 gap-0.5'>
                             <UpstreamStateBadge state={upstream.state} />
+                            {/* 名下有没有账号可领由服务端数好；活动名是上游原话，原样显示。 */}
+                            {upstream.claimableAccounts > 0 ? (
+                              <Badge
+                                variant='outline'
+                                className='w-fit max-w-full whitespace-normal border-amber-500/60 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200'
+                              >
+                                {upstream.claimableLabel
+                                  ? t('upstreams.claimableWithName', {
+                                      name: upstream.claimableLabel,
+                                    })
+                                  : t('upstreams.claimable')}
+                              </Badge>
+                            ) : null}
                             {/* 后端拼好的一句话：为什么现在不能接。 */}
                             {upstream.stateReason ? (
                               <span className='text-xs text-muted-foreground'>
@@ -344,7 +368,11 @@ export function UpstreamsPage() {
                             {/* 冷却到什么时候：stateReason 里已经说了的时候不重复。 */}
                             {!upstream.stateReason && upstream.cooldownUntilMs > 0n ? (
                               <span className='text-xs text-muted-foreground'>
-                                {`冷却到 ${formatLocalMoment(upstream.cooldownUntilMs)}`}
+                                {t('upstreams.cooldownUntil', {
+                                  time: formatLocalMoment(
+                                    upstream.cooldownUntilMs
+                                  ),
+                                })}
                               </span>
                             ) : null}
                           </div>
@@ -382,7 +410,7 @@ export function UpstreamsPage() {
                                 variant='outline'
                                 onClick={() => openEditPlatform(upstream)}
                               >
-                                编辑
+                                {t('upstreams.edit')}
                               </Button>
                             ) : null}
                             {/* 刷新模型目录只给开放平台：开放平台的目录一律从
@@ -401,7 +429,10 @@ export function UpstreamsPage() {
                                           ...prev,
                                           [upstream.id]: {
                                             ok: true,
-                                            message: `已刷新，${result.models.length} 个模型`,
+                                            message: t(
+                                              'upstreams.refreshedModels',
+                                              { count: result.models.length }
+                                            ),
                                             models: [...result.models],
                                           },
                                         }))
@@ -414,7 +445,7 @@ export function UpstreamsPage() {
                                           ...prev,
                                           [upstream.id]: {
                                             ok: false,
-                                            message: describeError(error),
+                                            message: describeErrorText(error, t),
                                             models: [],
                                           },
                                         }))
@@ -423,7 +454,7 @@ export function UpstreamsPage() {
                                   )
                                 }
                               >
-                                刷新模型目录
+                                {t('upstreams.refreshModels')}
                               </Button>
                             ) : null}
                             {/* 删平台之前要先扫主路由模型：指向它的那些
@@ -436,7 +467,7 @@ export function UpstreamsPage() {
                               onClick={() => setAdding(upstream)}
                             >
                               <Plus />
-                              新增账号
+                              {t('upstreams.addAccount')}
                             </Button>
                           </div>
                         </TableCell>
@@ -464,6 +495,7 @@ export function UpstreamsPage() {
                               />
                               <ProviderAccounts
                                 access={accessOf(upstream)}
+                                platform={upstream.id}
                                 accounts={upstream.accounts}
                                 loggingIn={login.pending}
                                 busyAccountId={busyAccountId}
@@ -501,8 +533,10 @@ export function UpstreamsPage() {
                                 onManageKeys={(account) => {
                                   // 账号不在列表里了：不要把 key 写到别处去。
                                   if (!findAccount(list, account.id)) {
-                                    toast.error('找不到这个账号', {
-                                      description: `${account.id} 不在平台列表里`,
+                                    toast.error(t('upstreams.accountNotFound'), {
+                                      description: t('upstreams.accountNotInList', {
+                                        id: account.id,
+                                      }),
                                     })
                                     return
                                   }
@@ -614,15 +648,20 @@ export function UpstreamsPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              注销 {deleteTarget ? deleteTarget.alias || deleteTarget.id : ''}
+              {t('upstreams.deleteAccountTitle', {
+                name: deleteTarget
+                  ? deleteTarget.alias || deleteTarget.id
+                  : '',
+              })}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              删除该账号会同时删除其名下的 {deleteTarget?.credentialCount ?? 0}{' '}
-              条凭据，且不可恢复。平台本身保留，客户端的地址不变
+              {t('upstreams.deleteAccountDescription', {
+                count: deleteTarget?.credentialCount ?? 0,
+              })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogCancel>{t('upstreams.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               variant='destructive'
               onClick={() => {
@@ -632,7 +671,7 @@ export function UpstreamsPage() {
                 deleteAccount.mutate({ id: target.id })
               }}
             >
-              注销
+              {t('upstreams.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -651,9 +690,11 @@ export function UpstreamsPage() {
  */
 function PlatformSortList({
   platforms,
+  t,
   onMove,
 }: {
   platforms: Upstream[]
+  t: TFunction
   onMove: (from: number, to: number) => void
 }) {
   return (
@@ -661,8 +702,8 @@ function PlatformSortList({
       <DragSortList
         items={platforms}
         getId={(upstream) => upstream.id}
-        ariaLabel='平台排序'
-        hint='拖动行调整顺序'
+        ariaLabel={t('upstreams.sortAria')}
+        hint={t('upstreams.sortHint')}
         rowProps={(upstream) => ({ 'data-platform-id': upstream.id })}
         renderItem={(upstream) => (
           <>
@@ -681,20 +722,20 @@ function PlatformSortList({
               <Button
                 size='sm'
                 variant='outline'
-                aria-label={`上移 ${upstream.id}`}
+                aria-label={t('upstreams.moveUpAria', { id: upstream.id })}
                 disabled={index === 0}
                 onClick={() => onMove(index, index - 1)}
               >
-                上移
+                {t('upstreams.moveUp')}
               </Button>
               <Button
                 size='sm'
                 variant='outline'
-                aria-label={`下移 ${upstream.id}`}
+                aria-label={t('upstreams.moveDownAria', { id: upstream.id })}
                 disabled={last}
                 onClick={() => onMove(index, index + 1)}
               >
-                下移
+                {t('upstreams.moveDown')}
               </Button>
             </>
           )

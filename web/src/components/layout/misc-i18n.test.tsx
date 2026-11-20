@@ -1,0 +1,23 @@
+import { afterEach, describe, expect, it } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { LangToggle } from '@/components/layout/lang-toggle'
+import { setLang } from '@/lib/i18n'
+
+describe('零散页面文案（英文）', () => {
+  afterEach(async () => {
+    await setLang('zh')
+    localStorage.removeItem('agentfacade.lang')
+  })
+
+  it('语言菜单里中文项的显示名跟着语言切', async () => {
+    await setLang('en')
+    render(<LangToggle />)
+    const user = userEvent.setup({ delay: null })
+
+    await user.click(screen.getByRole('button', { name: 'Language' }))
+    // 语言名用各自语言的自称，不随界面语言翻译。
+    expect(screen.getByRole('menuitem', { name: '中文' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'English' })).toBeInTheDocument()
+  })
+})

@@ -80,6 +80,10 @@ function upstreamContext(
   uctx.onUsage = (u) => {
     uctx.lastUsage = maxTotals(uctx.lastUsage ?? null, usageTotals(u));
   };
+  // 结束原因与片段结构只用于诊断空答复；这段里没有正文，日志也不会记正文。
+  uctx.onFinish = (finish) => {
+    uctx.lastFinish = finish;
+  };
   return uctx;
 }
 
@@ -692,6 +696,15 @@ export function budgetUsed(completion: number, budget: number | "未指定"): st
   return `${Math.round((completion / budget) * 100)}%`;
 }
 
+/** 空答复的诊断片段：只写结构，不写任何正文 */
+export function emptyAnswerDetail(uctx: UpstreamContext, client: string): string {
+  const finish = uctx.lastFinish;
+  const counts = finish
+    ? `片段=正文${finish.content}/思考${finish.thinking}/工具${finish.tool}`
+    : "片段=未给";
+  return `结束原因=${finish?.reason ?? "未给"} ${counts} client=${client}`;
+}
+
 /**
  * 记下这一条请求。
  *
@@ -724,7 +737,7 @@ function recordRequestUsage(
     console.warn(
       `[UPSTREAM] ${route.platform}/${upstreamModel} 答 200 但没有正文` +
         `（completion=${completion} reasoning=${reasoning} 正文=${completion - reasoning}` +
-        ` 上游上限=${budget} 用掉=${used} client=${client}）`,
+        ` 上游上限=${budget} 用掉=${used} ${emptyAnswerDetail(uctx, client)}）`,
     );
   }
   recordUsage({

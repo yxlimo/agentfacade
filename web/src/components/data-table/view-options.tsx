@@ -7,6 +7,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
+import { useTranslation } from 'react-i18next'
 import { SlidersHorizontalIcon } from 'lucide-react'
 import { type Table } from '@tanstack/react-table'
 
@@ -17,6 +18,7 @@ type DataTableViewOptionsProps<TData> = {
 export function DataTableViewOptions<TData>({
   table,
 }: DataTableViewOptionsProps<TData>) {
+  const { t } = useTranslation()
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
@@ -26,11 +28,11 @@ export function DataTableViewOptions<TData>({
           className='ms-auto hidden h-8 lg:flex'
         >
           <SlidersHorizontalIcon className='size-4' />
-          列
+          {t('table.columns')}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align='end' className='w-37.5'>
-        <DropdownMenuLabel>显示哪些列</DropdownMenuLabel>
+        <DropdownMenuLabel>{t('table.visibleColumns')}</DropdownMenuLabel>
         <DropdownMenuSeparator />
         {table
           .getAllColumns()

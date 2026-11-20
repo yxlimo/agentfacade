@@ -1,10 +1,11 @@
 import { useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { PageShell } from '@/components/layout/page-shell'
 import { ErrorState } from '@/components/async-state'
 import { Button } from '@/components/ui/button'
 import { useUpstreams } from '@/features/upstreams/api'
 import { useBenefitStatus, useRunBenefitNow } from '@/features/upstreams/benefits'
-import { describeError } from '@/lib/errors'
+import { describeErrorText } from '@/lib/errors'
 import { useOrderedPlatforms } from '@/lib/platform-order'
 import { PlatformCheckinRow } from '@/features/benefits/platform-checkin-row'
 import type { BenefitStatus, Upstream } from '@/gen/agentfacade/admin/v1/admin_pb'
@@ -29,6 +30,7 @@ export function disabledAccountIds(upstreams: Upstream[]): Set<string> {
  * 清单里取。
  */
 export function CheckinPage() {
+  const { t } = useTranslation()
   const platforms = useUpstreams()
   const status = useBenefitStatus()
   const run = useRunBenefitNow()
@@ -82,18 +84,18 @@ export function CheckinPage() {
 
   return (
     <PageShell
-      title='签到'
-      description='按平台列出签到状态与明细。'
+      title={t('benefits.title')}
+      description={t('benefits.description')}
       actions={
         <Button size='sm' onClick={() => run.mutate()} disabled={run.isPending}>
-          {run.isPending ? '签到中…' : '立即签到'}
+          {t(run.isPending ? 'benefits.checking' : 'benefits.checkinNow')}
         </Button>
       }
     >
       {platforms.isPending || status.isPending ? (
         <div>
-          <p className='mb-4 text-sm text-muted-foreground'>正在读取签到状态…</p>
-          <ul aria-label='平台签到' className='grid gap-3'>
+          <p className='mb-4 text-sm text-muted-foreground'>{t('benefits.loading')}</p>
+          <ul aria-label={t('benefits.platformCheckins')} className='grid gap-3'>
             {[0, 1, 2].map((index) => (
               <li key={index} className='rounded-lg border px-4 py-3'>
                 <div className='h-4 w-24 animate-pulse rounded bg-muted' />
@@ -108,25 +110,25 @@ export function CheckinPage() {
         <ErrorState error={status.error} onRetry={() => status.refetch()} />
       ) : rows.length === 0 ? (
         <p className='rounded-lg border px-4 py-12 text-center text-sm text-muted-foreground'>
-          没有需要签到的平台
+          {t('benefits.noPlatforms')}
         </p>
       ) : (
         <>
           {run.isError ? (
             <p
-              aria-label='签到失败'
+              aria-label={t('benefits.checkinFailed')}
               className='mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive'
             >
-              {describeError(run.error as Error)}
+              {describeErrorText(run.error as Error, t)}
             </p>
           ) : null}
 
           {run.data ? (
             <div
-              aria-label='本次签到'
+              aria-label={t('benefits.thisRun')}
               className='mb-4 grid gap-1 rounded-lg border px-4 py-3'
             >
-              <span className='text-sm font-medium'>本次签到</span>
+              <span className='text-sm font-medium'>{t('benefits.thisRun')}</span>
               {runLines.length > 0 ? (
                 <ul className='grid gap-0.5 text-sm'>
                   {runLines.map((line, index) => (
@@ -136,12 +138,12 @@ export function CheckinPage() {
                   ))}
                 </ul>
               ) : (
-                <span className='text-sm text-muted-foreground'>没有输出</span>
+                <span className='text-sm text-muted-foreground'>{t('benefits.noOutput')}</span>
               )}
             </div>
           ) : null}
 
-          <ul aria-label='平台签到' className='grid gap-3'>
+          <ul aria-label={t('benefits.platformCheckins')} className='grid gap-3'>
             {rows.map((row) => (
               <PlatformCheckinRow
                 key={row.upstreamId}

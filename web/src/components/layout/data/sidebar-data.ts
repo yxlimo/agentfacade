@@ -13,50 +13,50 @@ import { type SidebarData } from '../types'
 export const sidebarData: SidebarData = {
   navGroups: [
     {
-      title: '总览',
+      title: 'shell.navOverview',
       items: [
         {
-          title: '总览',
+          title: 'shell.navOverview',
           url: '/',
           icon: LayoutDashboard,
         },
       ],
     },
     {
-      title: '网关',
+      title: 'shell.navGateway',
       items: [
         {
-          title: '平台',
+          title: 'shell.navPlatforms',
           url: '/upstreams',
           icon: Boxes,
         },
         {
-          title: '插件列表',
+          title: 'shell.navPlugins',
           url: '/quota-plugins',
           icon: PlugZap,
         },
         {
-          title: '额度',
+          title: 'shell.navQuotas',
           url: '/balance',
           icon: Wallet,
         },
         {
-          title: '签到',
+          title: 'shell.navCheckin',
           url: '/checkin',
           icon: CalendarCheck,
         },
         {
-          title: '用量',
+          title: 'shell.navUsage',
           url: '/usage',
           icon: CircleDollarSign,
         },
         {
-          title: '主路由模型',
+          title: 'shell.navModels',
           url: '/models',
           icon: Layers,
         },
         {
-          title: '配置',
+          title: 'shell.navConfig',
           url: '/config',
           icon: Settings2,
         },

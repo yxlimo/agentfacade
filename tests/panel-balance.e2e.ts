@@ -1,5 +1,5 @@
 // tests/panel-balance.e2e.ts — 额度页的端到端：一个平台一行、默认收起、收起只摆
-// 前 5 条、空额度不隐藏、额度不许相加、没回来不是「没有额度」。
+// 前 5 条、空额度不隐藏、额度不许相加、没回来不是「暂无额度数据」。
 //
 // 数据从哪来：额度是真问回来的 —— 网关的 GetBalance 走一遍真的探测链路
 // （lib/qoder/credits.ts 的 /api/v2/quota/usage 与 /api/v3/user/status），
@@ -79,7 +79,7 @@ async function expandAll(screen: Screen, total: number): Promise<void> {
   }
 }
 
-test('额度没回来：那一行是「正在读取」，绝不是「没有额度」', async ({
+test('额度没回来：那一行是「正在读取」，绝不是「暂无额度数据」', async ({
   app,
   screen,
 }) => {
@@ -96,7 +96,7 @@ test('额度没回来：那一行是「正在读取」，绝不是「没有额�
     const pending = screen.getByLabel('qoder-cn 额度行 正在读取', { exact: true });
     await expect(pending).toBeVisible();
     await expect(pending).toContainText('正在读取');
-    await expect(pending).not.toContainText('没有额度');
+    await expect(pending).not.toContainText('暂无额度数据');
     // 那个平台此刻没有别的行形态：既不是数据行，也不是报错行。
     await expect(rowOf(screen, 'qoder-cn')).toHaveCount(0);
     await expect(screen.getByLabel('qoder-cn 额度行 没问出来', { exact: true })).toHaveCount(0);
@@ -145,7 +145,7 @@ test('额度页一个平台一行：行的集合与次序跟着平台清单走�
   }
 });
 
-test('左连接：没有账号的平台也在，行上写「没有账号 · 没有额度」，展开有那份说明', async ({
+test('左连接：没有账号的平台也在，行上写「没有账号 · 暂无额度数据」，展开有那份说明', async ({
   app,
   screen,
 }) => {
@@ -156,15 +156,15 @@ test('左连接：没有账号的平台也在，行上写「没有账号 · 没�
   const row = rowOf(screen, 'minimax');
   await expect(row).toBeVisible();
   await expect(row).toContainText('没有账号');
-  await expect(row).toContainText('没有额度');
+  await expect(row).toContainText('暂无额度数据');
 
-  // 展开后明细区里摆的是那份 role="note" 的「没有额度」，不是 0。
+  // 展开后明细区里摆的是那份 role="note" 的「暂无额度数据」，不是 0。
   await rowButton(row).click();
   const detail = screen.getByLabel('minimax 额度明细');
   await expect(detail).toBeVisible();
-  const notice = detail.getByLabel('没有额度');
+  const notice = detail.getByLabel('暂无额度数据');
   await expect(notice).toBeVisible();
-  await expect(notice).toHaveText('没有额度');
+  await expect(notice).toHaveText('暂无额度数据');
 });
 
 test('默认收起，点开才展开；再点收起，明细区从 DOM 里拿掉（不是 hidden）', async ({

@@ -334,7 +334,7 @@ async function raw(p: string, init: RequestInit = {}): Promise<{ status: number;
 }
 
 console.log("");
-console.log("契约：四十二个方法");
+console.log("契约：四十四个方法");
 
 // 每个方法配一个像样的请求。
 // 登录那六个：挑不会碰到网络的上游（密码流与回填流），不真的登录。
@@ -370,6 +370,19 @@ const CALLS: Array<{ method: string; request: unknown }> = [
   { method: "DeletePublishedModel", request: { id: "contract-loop" } },
   { method: "GetBenefitStatus", request: {} },
   { method: "RunBenefitNow", request: {} },
+  // ZCode 的活动额度领取：账号不存在时两个方法都答得上来（结论是 failed，
+  // 不是 Connect 错误）—— 这两个不在上面那八个「失败走 Connect 错误」的方法里。
+  { method: "GetZcodeClaimStatus", request: { providerId: "no-such-account" } },
+  {
+    method: "ClaimZcodePlan",
+    request: {
+      providerId: "no-such-account",
+      planId: "plan-none",
+      campaignId: "camp-none",
+      captchaVerifyParam: "captcha-none",
+      captchaRegion: "cn",
+    },
+  },
   { method: "ListModels", request: { upstreamId: "" } },
   { method: "TailLog", request: { lines: 5, filter: "" } },
   // 登录：密码流与回填流不碰网络，也不会真的登录。
@@ -404,7 +417,7 @@ const CALLS: Array<{ method: string; request: unknown }> = [
   { method: "DeleteModelOverride", request: { platformId: "qoder", modelId: "contract-temp" } },
 ];
 
-check("契约里有四十二个方法", contract.methods.size === 42, String(contract.methods.size));
+check("契约里有四十四个方法", contract.methods.size === 44, String(contract.methods.size));
 // RestartSystem 会让进程退出，单独在最后试。
 check(
   "测的方法与契约一一对上（RestartSystem 单独试）",

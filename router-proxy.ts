@@ -7,6 +7,13 @@
 //   GET  /v1/models            the published model catalog
 //   GET  /health
 //
+// `GET /v1/models` answers in the OpenAI shape by default — that is what most
+// clients ask for. `?dialect=anthropic` switches it to the Anthropic shape,
+// `?dialect=openai` says the same as the default. Without a query the headers
+// decide: an Anthropic client (`anthropic-version` / `anthropic-beta`, or an
+// `x-api-key` with no `authorization`) gets the Anthropic shape, everybody else
+// the OpenAI one. An unknown `?dialect=` is a 400, never a silent fallback.
+//
 // The root route serves the models the panel published: the database decides
 // which models exist and which upstream serves them. A request that names an
 // upstream in the path (`/qoder-cn/v1/messages`) goes to that upstream with
