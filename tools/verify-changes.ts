@@ -233,6 +233,8 @@ export interface RuleHit {
 export interface ImportHit {
   /** 命中的门禁。 */
   task: string;
+  /** 门禁里指向那个脚本的 test:* 任务名 —— 计划里要看得见是哪条任务把门禁拉进来的。 */
+  test: string;
   /** 改动的源文件（仓库相对路径）。 */
   source: string;
   /** 直接 import 它的测试脚本（仓库相对路径）。 */
@@ -242,6 +244,7 @@ export interface ImportHit {
 /** 一个门禁组里的测试脚本，以及它直接 import 的源文件。 */
 interface GateTest {
   task: string;
+  test: string;
   script: string;
   imports: Set<string>;
 }
@@ -341,7 +344,12 @@ export function parseGateTests(text: string, readScript: (script: string) => str
       if (!script) continue;
       // 仓库根的 tests/** 是面板 e2e：它们打 HTTP，不 import 服务端模块。
       if (script.startsWith("tests/")) continue;
-      gatesOut.push({ task: gate.name, script, imports: new Set(importedSources(script, readScript(script))) });
+      gatesOut.push({
+        task: gate.name,
+        test: test.name,
+        script,
+        imports: new Set(importedSources(script, readScript(script))),
+      });
     }
   }
   if (gatesOut.length === 0) throw new Error("mise.toml 里没解析出任何带脚本的测试任务");
@@ -354,7 +362,7 @@ export function matchImports(files: string[], gates: GateTest[]): ImportHit[] {
   const hits: ImportHit[] = [];
   for (const gate of gates) {
     for (const source of gate.imports) {
-      if (changed.has(source)) hits.push({ task: gate.task, source, script: gate.script });
+      if (changed.has(source)) hits.push({ task: gate.task, test: gate.test, source, script: gate.script });
     }
   }
   return hits;
@@ -528,7 +536,15 @@ function printPlan(
     lines.push("命中的反向依赖：");
     for (const hit of imports) {
       lines.push(
-        "  import → " + hit.task + "  [" + hit.source + " 被 " + hit.script + " 直接 import]"
+        "  import → " +
+          hit.task +
+          "  [" +
+          hit.source +
+          " 被 " +
+          hit.script +
+          " 直接 import，经 " +
+          hit.test +
+          "]"
       );
     }
   }
