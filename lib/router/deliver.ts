@@ -959,6 +959,27 @@ export function deliverJson(
   ctx.body = payload;
 }
 
+/** Only structural counts — no answer text ever leaves this layer. */
+export interface AnswerSegments {
+  content: number;
+  thinking: number;
+  tool: number;
+}
+
+/** What the upstream said about how it ended, without any of the answer itself. */
+export interface AnswerFinish extends AnswerSegments {
+  reason: string;
+}
+
+function countOpenAISegments(chunk: Json, counts: AnswerSegments): void {
+  const delta = (chunk as { choices?: Array<{ delta?: Json }> })?.choices?.[0]?.delta;
+  if (!delta || typeof delta !== "object") return;
+  const d = delta as Json;
+  if ("content" in d && d.content) counts.content++;
+  if (("reasoning_content" in d && d.reasoning_content) || ("reasoning" in d && d.reasoning)) counts.thinking++;
+  if ("tool_calls" in d && d.tool_calls) counts.tool++;
+}
+
 /**
  * Watch the chunks for the upstream's finish reason.
  *
@@ -969,14 +990,20 @@ export function deliverJson(
  */
 async function* watchFinish(
   chunks: AsyncIterable<Json>,
-  onFinish?: (reason: string) => void,
+  onFinish?: (finish: AnswerFinish) => void,
   onUsage?: (usage: any) => void,
 ): AsyncGenerator<Json> {
+  const counts: AnswerSegments = { content: 0, thinking: 0, tool: 0 };
+  let reason: string | undefined;
   for await (const chunk of chunks) {
-    const reason = chunk?.choices?.[0]?.finish_reason;
-    if (reason && onFinish) onFinish(String(reason));
+    countOpenAISegments(chunk, counts);
+    const found = chunk?.choices?.[0]?.finish_reason;
+    if (found) reason = String(found);
     if (chunk?.usage && onUsage) onUsage(chunk.usage);
     yield chunk;
+  }
+  if (onFinish && (reason || counts.content + counts.thinking + counts.tool > 0)) {
+    onFinish({ reason: reason ?? "未给", ...counts });
   }
 }
 
@@ -998,7 +1025,7 @@ export async function deliverOpenAIStream(
   body: ReadableStream<Uint8Array>,
   dialect: Dialect,
   model: string,
-  onFinish?: (reason: string) => void,
+  onFinish?: (finish: AnswerFinish) => void,
   onUsage?: (usage: any) => void,
   onFailure?: (error: unknown) => void,
 ): Promise<void> {
@@ -1086,6 +1113,7 @@ export async function deliverAnthropicStream(
   pingMs = 0,
   onUsage?: (usage: any) => void,
   onFailure?: (error: unknown) => void,
+  onFinish?: (finish: AnswerFinish) => void,
 ): Promise<void> {
   ctx.res.setHeader("x-request-id", rid("req_"));
   // 客户端走了的时候，这个信号让读上游的那个循环停下来。
@@ -1131,13 +1159,26 @@ export async function deliverAnthropicStream(
     // tee 的两条支线都要取消，源头才停（取消一条，另一条还在读）。
     onClientGoneTee(ctx, [toClient, toParser], abort);
     const parsing = (async () => {
+      const counts: AnswerSegments = { content: 0, thinking: 0, tool: 0 };
+      let reason: string | undefined;
       try {
         for await (const event of readSseEvents(toParser, abort.signal)) {
           const json = parseLooseJson(event.data);
           if (onUsage && json?.usage) onUsage(json.usage);
+          const type = json?.type;
+          if (type === "content_block_delta") {
+            const deltaType = json?.delta?.type;
+            if (deltaType === "text_delta") counts.content++;
+            else if (deltaType === "thinking_delta") counts.thinking++;
+            else if (deltaType === "input_json_delta") counts.tool++;
+          }
+          if (type === "message_delta" && json?.delta?.stop_reason) reason = String(json.delta.stop_reason);
         }
       } catch {
         // The usage is a nice-to-have; the answer itself is what matters.
+      }
+      if (onFinish && (reason || counts.content + counts.thinking + counts.tool > 0)) {
+        onFinish({ reason: reason ?? "未给", ...counts });
       }
     })();
     await writeAnthropicFrames(toClient, ctx, model, pingMs, onFailure, abort);
@@ -1148,7 +1189,14 @@ export async function deliverAnthropicStream(
   // 看门狗断开连接时（客户端不读了）也要停上游：它还在吐字就是在计费。
   onClientGone(ctx, upstream, abort);
   try {
+    const converted: AnswerSegments = { content: 0, thinking: 0, tool: 0 };
+    let convertedReason: string | undefined;
     for await (const chunk of anthropicStreamToOpenAI(upstream, model, onUsage, abort.signal)) {
+      if (onFinish && chunk.startsWith("data: {")) {
+        const frame = parseLooseJson(chunk.slice(6));
+        countOpenAISegments(frame, converted);
+        if (frame?.choices?.[0]?.finish_reason) convertedReason = String(frame.choices[0].finish_reason);
+      }
       if (!(await writeFrame(ctx, chunk))) {
         // 客户端走了：上游也别接着算（还在计费），这一条也不该记成成功。
         await stopUpstream(upstream, abort);
@@ -1158,6 +1206,9 @@ export async function deliverAnthropicStream(
     }
     // 上游安静的时候客户端断开：这条请求不算成功。
     reportClientGone(ctx, onFailure);
+    if (onFinish && (convertedReason || converted.content + converted.thinking + converted.tool > 0)) {
+      onFinish({ reason: convertedReason ?? "未给", ...converted });
+    }
   } catch (e) {
     console.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
     await writeFrame(ctx, errorEvent(clientMessageOf(e)));
@@ -1401,7 +1452,7 @@ export function repairMessageStart(json: any, model: string): { json: any; repai
 async function pipeOpenAIChunks(
   body: ReadableStream<Uint8Array>,
   ctx: Koa.Context,
-  onFinish?: (reason: string) => void,
+  onFinish?: (finish: AnswerFinish) => void,
   onUsage?: (usage: any) => void,
   model?: string,
   onFailure?: (error: unknown) => void,
