@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { runTracelessVerification } from '@/features/upstreams/aliyun-captcha'
@@ -28,6 +29,7 @@ export function ClaimButton({
   /** 这一行能不能操作（列表正在重取时别点）。 */
   enabled: boolean
 }) {
+  const { t } = useTranslation()
   const status = useZcodeClaimStatus({
     providerId: account.id,
     enabled: enabled && platform === 'zcode',
@@ -49,7 +51,11 @@ export function ClaimButton({
   const offers = [...data.offers].sort((a, b) => a.priority - b.priority)
   const offer = offers[0]
   if (!offer || offer.alreadyClaimed) {
-    return <span className='text-xs text-muted-foreground'>已领取</span>
+    return (
+      <span className='text-xs text-muted-foreground'>
+        {t('upstreams.claimed')}
+      </span>
+    )
   }
 
   const captcha = data.captcha
@@ -59,7 +65,7 @@ export function ClaimButton({
     if (running || !captcha) return
     setResult(null)
     if (!elementRef.current || !buttonRef.current) {
-      setResult(wordingOfCaptcha('init'))
+      setResult(wordingOfCaptcha('init', t))
       return
     }
     const verification = await runTracelessVerification({
@@ -70,11 +76,11 @@ export function ClaimButton({
       button: buttonSelector,
     })
     if (!verification.ok) {
-      setResult(wordingOfCaptcha(verification.stage))
+      setResult(wordingOfCaptcha(verification.stage, t))
       return
     }
     const interactiveNotice = verification.interactive
-      ? '这台浏览器不支持无感验证，已用交互式验证码通过'
+      ? t('upstreams.interactiveNotice')
       : ''
     try {
       const answer = await claim.mutateAsync({
@@ -85,16 +91,26 @@ export function ClaimButton({
         // 上游没给 region 时契约里这一格是空串，不是「随便填一个」。
         captchaRegion: captcha.region,
       })
-      const answerWording = wordingOf(answer)
+      const answerWording = wordingOf(answer, t)
       setResult(
         interactiveNotice
-          ? { text: `${interactiveNotice}；${answerWording.text}`, error: answerWording.error }
+          ? {
+              text: `${interactiveNotice}${t('upstreams.noticeJoin')}${answerWording.text}`,
+              error: answerWording.error,
+            }
           : answerWording
       )
     } catch {
       // 传输层失败（连不上网关）时服务端没给结论，不说「没领到」。
-      const unknown = { text: '这次领取的结果还不知道，请稍后再看', error: false }
-      setResult(interactiveNotice ? { text: `${interactiveNotice}；${unknown.text}`, error: false } : unknown)
+      const unknown = { text: t('upstreams.claimUnknown'), error: false }
+      setResult(
+        interactiveNotice
+          ? {
+              text: `${interactiveNotice}${t('upstreams.noticeJoin')}${unknown.text}`,
+              error: false,
+            }
+          : unknown
+      )
     }
   }
 
@@ -115,7 +131,7 @@ export function ClaimButton({
         onClick={() => void onClick()}
       >
         {running ? <Loader2 className='animate-spin' /> : null}
-        {running ? '领取中' : '领取'}
+        {running ? t('upstreams.claiming') : t('upstreams.claim')}
       </Button>
       {result ? (
         <span

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -37,6 +38,7 @@ export function AddAccountDialog({
   onOpenChange: (open: boolean) => void
   pending: boolean
 }) {
+  const { t } = useTranslation()
   const [alias, setAlias] = useState('')
 
   const reset = () => setAlias('')
@@ -53,18 +55,18 @@ export function AddAccountDialog({
         <DialogHeader>
           <DialogTitle className='flex items-center gap-2'>
             <Plus className='size-4' />
-            新增账号
+            {t('upstreams.addAccountTitle')}
           </DialogTitle>
           <DialogDescription>
-            在「{platformLabel}」下加一个账号。客户端地址不变。
+            {t('upstreams.addAccountDescription', { platform: platformLabel })}
           </DialogDescription>
         </DialogHeader>
         <div className='grid gap-2'>
-          <Label htmlFor='account-alias'>别名</Label>
+          <Label htmlFor='account-alias'>{t('upstreams.aliasLabel')}</Label>
           <Input
             id='account-alias'
             value={alias}
-            placeholder='比如 主账号、M plan、租户一'
+            placeholder={t('upstreams.aliasPlaceholder')}
             onChange={(event) => setAlias(event.target.value)}
             onKeyDown={(event) => {
               if (event.key !== 'Enter') return
@@ -73,7 +75,7 @@ export function AddAccountDialog({
             }}
           />
           <p className='text-xs text-muted-foreground'>
-            同一个平台下多个账号靠它分辨，不填会自动命名
+            {t('upstreams.aliasHint')}
           </p>
         </div>
         <DialogFooter>
@@ -84,13 +86,13 @@ export function AddAccountDialog({
               onOpenChange(false)
             }}
           >
-            取消
+            {t('upstreams.cancel')}
           </Button>
           <Button
             disabled={pending}
             onClick={() => onSubmit({ platform, alias: alias.trim() })}
           >
-            加上
+            {t('upstreams.add')}
           </Button>
         </DialogFooter>
       </DialogContent>

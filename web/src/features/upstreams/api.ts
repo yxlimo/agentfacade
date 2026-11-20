@@ -15,6 +15,7 @@ import { useAdminClient } from '@/features/auth/client-provider'
 import { assertOk, describeError } from '@/lib/errors'
 import { queryKeys } from '@/lib/query-keys'
 import { invalidateServerData } from '@/lib/server-data'
+import i18n from '@/lib/i18n'
 
 /** 平台列表的查询键。键本身在 `lib/query-keys.ts` 里，见那份的说明。 */
 export const upstreamKeys = queryKeys.upstreams
@@ -68,14 +69,14 @@ export function useSetAccountEnabled() {
           enabled: input.enabled,
         })
       )
-      assertOk(result, '保存失败')
+      assertOk(result, i18n.t('upstreams.saveFailed'))
       return result
     },
     onError: (error) => {
       toast.error(describeError(error))
     },
     onSuccess: (result) => {
-      toast.success(result.message || '已保存，已经生效')
+      toast.success(result.message || i18n.t('upstreams.savedAndLive'))
     },
     onSettled: () => {
       // 一个账号的开关：账号那份答复、平台那份（带账号）、总览、额度都变了。
@@ -106,7 +107,7 @@ export function useAddAccount() {
       toast.error(describeError(error))
     },
     onSuccess: () => {
-      toast.success('已新增')
+      toast.success(i18n.t('upstreams.added'))
     },
     onSettled: () => {
       invalidateServerData(queryClient, 'accounts')
@@ -127,14 +128,14 @@ export function useDeleteAccount() {
       const result = await client.deleteAccount(
         create(DeleteAccountRequestSchema, { id: input.id })
       )
-      assertOk(result, '删除失败')
+      assertOk(result, i18n.t('upstreams.deleteFailed'))
       return result
     },
     onError: (error) => {
       toast.error(describeError(error))
     },
     onSuccess: (result) => {
-      toast.success(result.message || '已删除')
+      toast.success(result.message || i18n.t('upstreams.deleted'))
     },
     onSettled: () => {
       invalidateServerData(queryClient, 'accounts')
@@ -162,14 +163,14 @@ export function useSetPlatformPolicy() {
           policy: input.policy,
         })
       )
-      assertOk(result, '保存失败')
+      assertOk(result, i18n.t('upstreams.saveFailed'))
       return result
     },
     onError: (error) => {
       toast.error(describeError(error))
     },
     onSuccess: (result) => {
-      toast.success(result.message || '策略已保存')
+      toast.success(result.message || i18n.t('upstreams.policySaved'))
     },
     onSettled: () => {
       // 策略是平台那一行上的字段：平台那份答复变了。
@@ -197,14 +198,14 @@ export function useUpdateProvider() {
           weight: input.weight,
         })
       )
-      assertOk(result, '保存失败')
+      assertOk(result, i18n.t('upstreams.saveFailed'))
       return result
     },
     onError: (error) => {
       toast.error(describeError(error))
     },
     onSuccess: (result) => {
-      toast.success(result.message || '已保存')
+      toast.success(result.message || i18n.t('upstreams.saved'))
     },
     onSettled: () => {
       invalidateServerData(queryClient, 'accounts')

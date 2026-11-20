@@ -3,64 +3,88 @@ import {
   UnpublishedReason,
   UpstreamState,
 } from '@/gen/agentfacade/admin/v1/admin_pb'
+import i18n from '@/lib/i18n'
+import type { zh } from '@/lib/i18n/catalogs/zh'
+
+type DictKey = keyof typeof zh
 
 /**
  * 上游状态的人话。
  *
  * 面板不再自己拼「开着 && 登录了」——能不能接由后端说，state 说了算。
+ * 标签从词典取：语言切换时以 i18next 的 languageChanged 重算一次，导出对象
+ * 保持原来的形状（models 等目录也读这几份表）。
  */
-export const UPSTREAM_STATE_LABELS: Record<UpstreamState, string> = {
-  [UpstreamState.UNSPECIFIED]: '未知',
-  [UpstreamState.READY]: '就绪',
-  [UpstreamState.DISABLED]: '已停用',
-  [UpstreamState.NO_CREDENTIAL]: '没登录',
-  [UpstreamState.CREDENTIAL_EXPIRED]: '登录过期了',
-  [UpstreamState.CREDENTIAL_REJECTED]: '登录被拒了',
-  [UpstreamState.OUT_OF_CREDITS]: '额度用完',
-  [UpstreamState.LOGGING_IN]: '正在登录',
-  [UpstreamState.COOLING]: '冷却中',
-  [UpstreamState.QUEUED]: '排队中',
+function labelsOf<T extends string | number>(
+  keys: Record<T, DictKey>
+): Record<T, string> {
+  const result = {} as Record<T, string>
+  for (const key of Object.keys(keys) as T[]) {
+    const dictKey: DictKey = keys[key]
+    result[key] = i18n.t(dictKey)
+  }
+  return result
 }
 
-/**
- * 不能选的时候说清楚为什么。
- *
- * 一句话，短的，能塞进下拉那一行。
- */
-export const UPSTREAM_STATE_HINTS: Record<UpstreamState, string> = {
-  [UpstreamState.UNSPECIFIED]: '状态未知',
-  [UpstreamState.READY]: '现在能用',
-  [UpstreamState.DISABLED]: '开关关着',
-  [UpstreamState.NO_CREDENTIAL]: '没登录',
-  [UpstreamState.CREDENTIAL_EXPIRED]: '登录过期了',
-  [UpstreamState.CREDENTIAL_REJECTED]: '登录被拒了',
-  [UpstreamState.OUT_OF_CREDITS]: '额度用完了',
-  [UpstreamState.LOGGING_IN]: '正在登录',
-  [UpstreamState.COOLING]: '正在冷却',
-  [UpstreamState.QUEUED]: '平台把模型排进了队列，等它放行',
+const UPSTREAM_STATE_KEYS: Record<UpstreamState, DictKey> = {
+  [UpstreamState.UNSPECIFIED]: 'upstreams.stateUnspecified',
+  [UpstreamState.READY]: 'upstreams.stateReady',
+  [UpstreamState.DISABLED]: 'upstreams.stateDisabled',
+  [UpstreamState.NO_CREDENTIAL]: 'upstreams.stateNoCredential',
+  [UpstreamState.CREDENTIAL_EXPIRED]: 'upstreams.stateCredentialExpired',
+  [UpstreamState.CREDENTIAL_REJECTED]: 'upstreams.stateCredentialRejected',
+  [UpstreamState.OUT_OF_CREDITS]: 'upstreams.stateOutOfCredits',
+  [UpstreamState.LOGGING_IN]: 'upstreams.stateLoggingIn',
+  [UpstreamState.COOLING]: 'upstreams.stateCooling',
+  [UpstreamState.QUEUED]: 'upstreams.stateQueued',
 }
 
-/** 凭据状态的人话。 */
-export const CREDENTIAL_STATE_LABELS: Record<CredentialState, string> = {
-  [CredentialState.UNSPECIFIED]: '未知',
-  [CredentialState.AUTHENTICATED]: '可用',
-  [CredentialState.MISSING]: '缺失',
-  [CredentialState.EXPIRED]: '已过期',
-  [CredentialState.ERROR]: '出错',
-  [CredentialState.USABLE]: '可用',
-  [CredentialState.ANONYMOUS]: '可用',
+const UPSTREAM_STATE_HINT_KEYS: Record<UpstreamState, DictKey> = {
+  [UpstreamState.UNSPECIFIED]: 'upstreams.hintUnspecified',
+  [UpstreamState.READY]: 'upstreams.hintReady',
+  [UpstreamState.DISABLED]: 'upstreams.hintDisabled',
+  [UpstreamState.NO_CREDENTIAL]: 'upstreams.stateNoCredential',
+  [UpstreamState.CREDENTIAL_EXPIRED]: 'upstreams.stateCredentialExpired',
+  [UpstreamState.CREDENTIAL_REJECTED]: 'upstreams.stateCredentialRejected',
+  [UpstreamState.OUT_OF_CREDITS]: 'upstreams.hintOutOfCredits',
+  [UpstreamState.LOGGING_IN]: 'upstreams.stateLoggingIn',
+  [UpstreamState.COOLING]: 'upstreams.hintCooling',
+  [UpstreamState.QUEUED]: 'upstreams.hintQueued',
 }
 
-/** 模型没被根路由公布的原因。 */
-export const UNPUBLISHED_REASON_LABELS: Record<UnpublishedReason, string> = {
-  [UnpublishedReason.UNSPECIFIED]: '未公布',
-  [UnpublishedReason.DISABLED]: '模型被停用了',
-  [UnpublishedReason.UPSTREAM_DISABLED]: '目标的平台关着',
-  [UnpublishedReason.NO_CREDENTIAL]: '目标的平台没登录',
-  [UnpublishedReason.MODEL_GONE]: '目标的平台不列这个模型了',
-  [UnpublishedReason.TARGET_DISABLED]: '目标被停用了',
-  [UnpublishedReason.NO_TARGET]: '没有能用的目标',
+const CREDENTIAL_STATE_KEYS: Record<CredentialState, DictKey> = {
+  [CredentialState.UNSPECIFIED]: 'upstreams.credentialUnknown',
+  [CredentialState.AUTHENTICATED]: 'upstreams.credentialAvailable',
+  [CredentialState.MISSING]: 'upstreams.credentialMissing',
+  [CredentialState.EXPIRED]: 'upstreams.credentialExpired',
+  [CredentialState.ERROR]: 'upstreams.credentialError',
+  [CredentialState.USABLE]: 'upstreams.credentialAvailable',
+  [CredentialState.ANONYMOUS]: 'upstreams.credentialAvailable',
 }
+
+const UNPUBLISHED_REASON_KEYS: Record<UnpublishedReason, DictKey> = {
+  [UnpublishedReason.UNSPECIFIED]: 'upstreams.reasonUnpublished',
+  [UnpublishedReason.DISABLED]: 'upstreams.reasonDisabled',
+  [UnpublishedReason.UPSTREAM_DISABLED]: 'upstreams.reasonUpstreamDisabled',
+  [UnpublishedReason.NO_CREDENTIAL]: 'upstreams.reasonNoCredential',
+  [UnpublishedReason.MODEL_GONE]: 'upstreams.reasonModelGone',
+  [UnpublishedReason.TARGET_DISABLED]: 'upstreams.reasonTargetDisabled',
+  [UnpublishedReason.NO_TARGET]: 'upstreams.reasonNoTarget',
+}
+
+export let UPSTREAM_STATE_LABELS = labelsOf(UPSTREAM_STATE_KEYS)
+export let UPSTREAM_STATE_HINTS = labelsOf(UPSTREAM_STATE_HINT_KEYS)
+export let CREDENTIAL_STATE_LABELS = labelsOf(CREDENTIAL_STATE_KEYS)
+export let UNPUBLISHED_REASON_LABELS = labelsOf(UNPUBLISHED_REASON_KEYS)
+
+i18n.on('languageChanged', () => {
+  UPSTREAM_STATE_LABELS = labelsOf(UPSTREAM_STATE_KEYS)
+  UPSTREAM_STATE_HINTS = labelsOf(UPSTREAM_STATE_HINT_KEYS)
+  CREDENTIAL_STATE_LABELS = labelsOf(CREDENTIAL_STATE_KEYS)
+  UNPUBLISHED_REASON_LABELS = labelsOf(UNPUBLISHED_REASON_KEYS)
+})
+
+/** 不能选的时候说清楚为什么：一句话，短的，能塞进下拉那一行。 */
 
 /** 这个上游现在能不能接请求。 */
 export function isUpstreamReady(state: UpstreamState): boolean {

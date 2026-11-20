@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { CalendarCheck, Loader2 } from 'lucide-react'
 import { ErrorState, LoadingState } from '@/components/async-state'
 import { Badge } from '@/components/ui/badge'
@@ -45,6 +46,7 @@ export function BenefitsPanel({
   /** 状态取不到时重试。 */
   onRetry: () => void
 }) {
+  const { t } = useTranslation()
   // 签到状态按账号 id 归到平台名下：benefit 里的 upstreamId 是账号 id，
   // 跟平台 id 不是一回事。
   const accountIds = new Set(accounts.map((account) => account.id))
@@ -56,12 +58,12 @@ export function BenefitsPanel({
   }
 
   return (
-    <section className='grid gap-3' aria-label='每日签到'>
+    <section className='grid gap-3' aria-label={t('upstreams.benefitsAria')}>
       <div className='flex flex-wrap items-start justify-between gap-2'>
         <div className='grid gap-0.5'>
-          <h3 className='text-sm font-medium'>每日签到</h3>
+          <h3 className='text-sm font-medium'>{t('upstreams.benefitsTitle')}</h3>
           <p className='text-xs text-muted-foreground'>
-            点「现在签到」会把所有登记过的账号都签一遍，下面结果是全部账号的
+            {t('upstreams.benefitsHint')}
           </p>
         </div>
         <Button
@@ -75,7 +77,7 @@ export function BenefitsPanel({
           ) : (
             <CalendarCheck />
           )}
-          {running ? '签到中' : '现在签到'}
+          {running ? t('upstreams.benefitRunning') : t('upstreams.benefitRun')}
         </Button>
       </div>
 
@@ -87,7 +89,9 @@ export function BenefitsPanel({
               runResult.ok ? '' : 'text-destructive'
             }`}
           >
-            {runResult.ok ? '本次签到' : '本次签到，有账号未成功'}
+            {runResult.ok
+              ? t('upstreams.benefitResult')
+              : t('upstreams.benefitResultPartial')}
           </p>
           {runResult.lines.map((line, index) => (
             <p key={index} className='text-xs text-muted-foreground'>
@@ -98,7 +102,7 @@ export function BenefitsPanel({
       ) : null}
 
       {loading ? (
-        <LoadingState label='正在取签到状态…' />
+        <LoadingState label={t('upstreams.benefitLoading')} />
       ) : error ? (
         <ErrorState error={error} onRetry={onRetry} />
       ) : (
@@ -124,12 +128,12 @@ export function BenefitsPanel({
                 </div>
                 <div className='flex items-center gap-2'>
                   {failed ? (
-                    <Badge variant='destructive'>未成功</Badge>
+                    <Badge variant='destructive'>{t('upstreams.benefitFailed')}</Badge>
                   ) : null}
                   <span className='text-xs text-muted-foreground'>
                     {benefit.checkedAt > 0n
                       ? formatLocalMoment(benefit.checkedAt)
-                      : '还没签过'}
+                      : t('upstreams.benefitNever')}
                   </span>
                 </div>
               </div>
@@ -137,7 +141,9 @@ export function BenefitsPanel({
                 {benefit.summary}
               </p>
               {benefit.credits > 0 ? (
-                <p className='text-xs'>+{benefit.credits} 点</p>
+                <p className='text-xs'>
+                  {t('upstreams.benefitCredits', { n: benefit.credits })}
+                </p>
               ) : null}
               {benefit.lines.map((line, index) => (
                 <p key={index} className='text-xs text-muted-foreground'>

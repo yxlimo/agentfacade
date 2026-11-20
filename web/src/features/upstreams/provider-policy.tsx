@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -12,28 +14,26 @@ import { ProviderPolicy } from '@/gen/agentfacade/admin/v1/admin_pb'
 import type { Upstream } from '@/gen/agentfacade/admin/v1/admin_pb'
 
 /**
- * 策略的中文标签。
+ * 策略的标签。
  *
  * 后端也有一份：lib/platforms.ts 的 POLICY_TEXT。两边要一起改 —— 后端的 toast
  * （策略已改为降级。）与面板的下拉是同屏出现的。
  */
-const POLICY_LABELS: Partial<Record<ProviderPolicy, string>> = {
-  [ProviderPolicy.SINGLE]: '单一',
-  [ProviderPolicy.FALLBACK]: '降级',
-  [ProviderPolicy.EXPIRY_FIRST]: '余额到期优先',
-}
-
-/**
- * 一个策略的标签。
- *
- * 兜底是给契约外的值留的（后端给了个没登记的枚举）：把枚举名给出来，别装作
- * 没有。
- */
-function policyLabel(policy: ProviderPolicy): string {
-  const label = POLICY_LABELS[policy]
-  if (label) return label
-  const name = (ProviderPolicy as Record<number, string>)[policy]
-  return name ?? String(policy)
+function policyLabel(policy: ProviderPolicy, t: TFunction): string {
+  switch (policy) {
+    case ProviderPolicy.SINGLE:
+      return t('upstreams.policySingle')
+    case ProviderPolicy.FALLBACK:
+      return t('upstreams.policyFallback')
+    case ProviderPolicy.EXPIRY_FIRST:
+      return t('upstreams.policyExpiryFirst')
+    default: {
+      // 兜底是给契约外的值留的（后端给了个没登记的枚举）：把枚举名给出来，别装作
+      // 没有。
+      const name = (ProviderPolicy as Record<number, string>)[policy]
+      return name ?? String(policy)
+    }
+  }
 }
 
 /**
@@ -43,18 +43,18 @@ function policyLabel(policy: ProviderPolicy): string {
  *
  * 兜底是给契约外的值留的：面板不知道它管什么，不编一个说法。
  */
-function policyHint(policy: ProviderPolicy): string {
+function policyHint(policy: ProviderPolicy, t: TFunction): string {
   switch (policy) {
     case ProviderPolicy.SINGLE:
-      return '只用一个账号，不换'
+      return t('upstreams.policySingleHint')
     case ProviderPolicy.FALLBACK:
-      return '依次尝试名下的账号，一个接不了就换下一个'
+      return t('upstreams.policyFallbackHint')
     case ProviderPolicy.EXPIRY_FIRST:
-      return '先用最先到期的余额'
+      return t('upstreams.policyExpiryFirstHint')
     default:
       return policy === ProviderPolicy.UNSPECIFIED
-        ? '策略未设置'
-        : '未知策略'
+        ? t('upstreams.policyUnspecified')
+        : t('upstreams.policyUnknown')
   }
 }
 
@@ -79,6 +79,7 @@ export function ProviderPolicySelect({
    */
   listUpdatedAt: number
 }) {
+  const { t } = useTranslation()
   const setPolicy = useSetPlatformPolicy()
 
   // 这个平台支持哪几个策略：后端在这一行上说了，不用另问一次。
@@ -100,7 +101,7 @@ export function ProviderPolicySelect({
   }, [listUpdatedAt, upstream.id])
 
   const current = picked ?? upstream.policy
-  const currentLabel = policyLabel(current)
+  const currentLabel = policyLabel(current, t)
   // 当前值不在后端给的选项里（这个平台后来不登记这个策略了，或者库里存着一个
   // 不支持的值）：把它补进选项，标成「当前」且不可选 —— 不能让占位符替服务端
   // 说话，服务端有值，面板就说有值。
@@ -114,23 +115,23 @@ export function ProviderPolicySelect({
   const descId = `${selectId}-desc`
 
   const stateText = onlyOneAccount
-    ? '这个平台只有一个账号，策略不生效'
+    ? t('upstreams.policyOnlyOne')
     : noChoice
-      ? '这个平台没有可选策略'
+      ? t('upstreams.policyNoChoice')
       : accountCount === 0
-        ? '这个平台还没有账号，策略先设着'
+        ? t('upstreams.policyNoAccounts')
         : ''
   // 有状态要说状态（为什么是禁用、为什么取不到），没有状态才说这个策略管什么。
   const description =
     stateText ||
     (current === ProviderPolicy.UNSPECIFIED || offered.includes(current)
-      ? policyHint(current)
-      : `当前：${currentLabel}，这个平台没有这个选项`)
+      ? policyHint(current, t)
+      : t('upstreams.policyOutside', { label: currentLabel }))
 
   return (
     <div className='grid gap-0.5'>
       <Label htmlFor={selectId} className='sr-only'>
-        {`生效策略（${upstream.id}）`}
+        {t('upstreams.policyAria', { id: upstream.id })}
       </Label>
       <Select
         // UNSPECIFIED 是契约外的值（服务端没给这个字段，或者给了个没登记的
@@ -154,12 +155,14 @@ export function ProviderPolicySelect({
           className='w-40'
           // 名字带上平台：九个平台各有一个这样的选择器，同名的话读屏器和
           // 自动化都分不清点的是哪一个。
-          aria-label={`生效策略（${upstream.id}）`}
+          aria-label={t('upstreams.policyAria', { id: upstream.id })}
           aria-describedby={descId}
         >
           {/* 触发器上的字由面板给。Radix 自己找选项里的字：当前值不在选项里的
               时候它找不到，值就成了占位符「未设置」——那是替服务端说话。 */}
-          <SelectValue placeholder='未设置'>{currentLabel}</SelectValue>
+          <SelectValue placeholder={t('upstreams.policyUnset')}>
+            {currentLabel}
+          </SelectValue>
         </SelectTrigger>
         <SelectContent>
           {options.map((policy) => (
@@ -169,8 +172,10 @@ export function ProviderPolicySelect({
               disabled={policy === outsideOptions}
             >
               {policy === outsideOptions
-                ? `${policyLabel(policy)}（当前）`
-                : policyLabel(policy)}
+                ? t('upstreams.policyCurrent', {
+                    label: policyLabel(policy, t),
+                  })
+                : policyLabel(policy, t)}
             </SelectItem>
           ))}
         </SelectContent>

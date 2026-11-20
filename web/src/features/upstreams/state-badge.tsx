@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import {
   CredentialState,
   UpstreamState,
@@ -19,6 +20,7 @@ export function UpstreamStateBadge({
   state: UpstreamState
   className?: string
 }) {
+  const { t } = useTranslation()
   return (
     <Badge
       variant={upstreamStateVariant(state)}
@@ -26,7 +28,7 @@ export function UpstreamStateBadge({
         .filter(Boolean)
         .join(' ')}
     >
-      {UPSTREAM_STATE_LABELS[state] ?? '未知'}
+      {UPSTREAM_STATE_LABELS[state] ?? t('upstreams.credentialUnknown')}
     </Badge>
   )
 }
@@ -39,9 +41,10 @@ export function CredentialStateBadge({
   status: CredentialState
   className?: string
 }) {
+  const { t } = useTranslation()
   return (
     <Badge variant={credentialStateVariant(status)} className={className}>
-      {CREDENTIAL_STATE_LABELS[status] ?? '未知'}
+      {CREDENTIAL_STATE_LABELS[status] ?? t('upstreams.credentialUnknown')}
     </Badge>
   )
 }

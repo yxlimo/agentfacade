@@ -11,7 +11,10 @@
  * 选择器字符串。
  *
  * 错误分层：脚本加载 / init / 验证 / 超时。SDK 的 code 与 msg 原样带上。
+ * 面板自己写的提示走词典；SDK 的原话不翻译。
  */
+
+import i18n from '@/lib/i18n'
 
 const SDK_URL =
   'https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js'
@@ -107,7 +110,7 @@ function loadScript(doc: Document): Promise<void> {
     )
     if (existing) {
       existing.addEventListener('load', () => resolve(), { once: true })
-      existing.addEventListener('error', () => reject(new Error('SDK 脚本加载失败')), {
+      existing.addEventListener('error', () => reject(new Error(i18n.t('upstreams.captchaScriptLoadFail'))), {
         once: true,
       })
       return
@@ -118,7 +121,7 @@ function loadScript(doc: Document): Promise<void> {
     script.addEventListener('load', () => resolve(), { once: true })
     script.addEventListener(
       'error',
-      () => reject(new Error('SDK 脚本加载失败')),
+      () => reject(new Error(i18n.t('upstreams.captchaScriptLoadFail'))),
       { once: true }
     )
     ;(doc.head ?? doc.documentElement).appendChild(script)
@@ -210,7 +213,7 @@ export async function runTracelessVerification(
       ok: false,
       stage: 'script',
       code: '',
-      message: 'SDK 加载完没有 initAliyunCaptcha',
+      message: i18n.t('upstreams.captchaNoInit'),
     }
   }
 
@@ -220,7 +223,7 @@ export async function runTracelessVerification(
       ok: false,
       stage: 'init',
       code: 'ELEMENT_MISSING',
-      message: '验证码的容器或按钮不在页面上',
+      message: i18n.t('upstreams.captchaElementMissing'),
     }
   }
 
@@ -240,7 +243,7 @@ export async function runTracelessVerification(
       if (typeof raw === 'string') return { code: '', message: raw }
       return {
         code: raw?.code ?? '',
-        message: raw?.msg ?? raw?.message ?? '验证码失败',
+        message: raw?.msg ?? raw?.message ?? i18n.t('upstreams.captchaFailed'),
       }
     }
 
@@ -250,7 +253,7 @@ export async function runTracelessVerification(
           ok: false,
           stage: 'verification',
           code: '',
-          message: '验证码没有给出 verify param',
+          message: i18n.t('upstreams.captchaNoParam'),
         })
         return
       }
@@ -278,7 +281,7 @@ export async function runTracelessVerification(
         ok: false,
         stage: 'timeout',
         code: 'TIMEOUT',
-        message: `等验证码结果超过 ${timeoutMs} 毫秒`,
+        message: i18n.t('upstreams.captchaTimeout', { ms: timeoutMs }),
       })
     }, timeoutMs)
 
@@ -291,7 +294,7 @@ export async function runTracelessVerification(
             ok: false,
             stage: 'verification',
             code: 'VERIFICATION_FAIL',
-            message: '验证码实例既不支持无感也没有交互式入口',
+            message: i18n.t('upstreams.captchaNoEntry'),
           })
           return
         }

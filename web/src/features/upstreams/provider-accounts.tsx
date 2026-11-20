@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { KeyRound, LogIn, Stethoscope, Trash2 } from 'lucide-react'
 import { EmptyState, ErrorState, LoadingState } from '@/components/async-state'
 import { StatusBadge } from '@/components/status-badge'
@@ -25,6 +27,9 @@ import { QuotaSummary } from '@/features/balance/quota'
 import { formatDateTime, formatLocalMoment } from '@/lib/format'
 import { credentialKindLabel } from '@/lib/credential-kind'
 import type { Account, Credential } from '@/gen/agentfacade/admin/v1/admin_pb'
+import type { zh } from '@/lib/i18n/catalogs/zh'
+
+type DictKey = keyof typeof zh
 
 /**
  * 账号状态的文案。
@@ -32,11 +37,19 @@ import type { Account, Credential } from '@/gen/agentfacade/admin/v1/admin_pb'
  * 账号这一层说的是「登录了没有」，凭据那一层说的是「这一条还能不能用」—— 同
  * 一个状态词，两层的话不一样。
  */
-const ACCOUNT_STATUS_LABELS: Record<string, string> = {
-  usable: '已登录',
-  missing: '没有凭据',
-  expired: '已过期',
-  error: '出错',
+const ACCOUNT_STATUS_KEYS: Record<string, DictKey> = {
+  usable: 'upstreams.accountUsable',
+  missing: 'upstreams.accountMissing',
+  expired: 'upstreams.credentialExpired',
+  error: 'upstreams.accountError',
+}
+
+function accountStatusLabels(t: TFunction): Record<string, string> {
+  const result: Record<string, string> = {}
+  for (const key of Object.keys(ACCOUNT_STATUS_KEYS)) {
+    result[key] = t(ACCOUNT_STATUS_KEYS[key])
+  }
+  return result
 }
 
 /**
@@ -55,20 +68,21 @@ function needsRelogin(credential: Credential): boolean {
  * 一格就是一把（标题带「API Key」），几格就是几段（写「凭据」）。格子数还
  * 说不准的时候（种类登记表没到手）一律写「凭据」：此时是几格都不知道。
  */
-function accessLabel(access: ProviderKeyAccess): string {
-  return access.status === 'ready' && access.layout.fields.length > 1
-    ? '凭据'
-    : access.status === 'ready'
-      ? 'API Key'
-      : '凭据'
+function accessLabel(access: ProviderKeyAccess, t: TFunction): string {
+  return access.status === 'ready' && access.layout.fields.length === 1
+    ? t('upstreams.keyLabel')
+    : t('upstreams.credentialsLabel')
 }
 
 /**
  * 鼠标停在入口上时说的话：为什么现在点不了。
  */
-function accessHint(access: ProviderKeyAccess): string | undefined {
+function accessHint(
+  access: ProviderKeyAccess,
+  t: TFunction
+): string | undefined {
   if (access.status === 'loading') {
-    return '凭据格子还在加载，稍后再试'
+    return t('upstreams.keysLoadingHint')
   }
   if (access.status === 'failed') {
     return access.message
@@ -122,6 +136,7 @@ export function ProviderAccounts({
   /** 改权重：大的先试。 */
   onWeightChange: (account: Account, weight: number) => void
 }) {
+  const { t } = useTranslation()
   const [picked, setPicked] = useState('')
   // 选中的账号：用户点过的那个；没点过就用第一个 —— 省得先点一下才看到凭据。
   const activeId =
@@ -148,7 +163,7 @@ export function ProviderAccounts({
   if (accounts.length === 0) {
     return (
       <div>
-        <EmptyState title='这个平台还没有账号' />
+        <EmptyState title={t('upstreams.noAccounts')} />
       </div>
     )
   }
@@ -159,13 +174,23 @@ export function ProviderAccounts({
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>账号</TableHead>
-            <TableHead className='text-right'>权重</TableHead>
-            <TableHead>状态</TableHead>
-            <TableHead className='text-right'>凭据</TableHead>
-            <TableHead className='text-right'>额度</TableHead>
-            <TableHead className='text-right'>启用</TableHead>
-            <TableHead className='text-right'>操作</TableHead>
+            <TableHead>{t('upstreams.headerAccount')}</TableHead>
+            <TableHead className='text-right'>
+              {t('upstreams.headerWeight')}
+            </TableHead>
+            <TableHead>{t('upstreams.headerState')}</TableHead>
+            <TableHead className='text-right'>
+              {t('upstreams.credentialsLabel')}
+            </TableHead>
+            <TableHead className='text-right'>
+              {t('upstreams.headerQuota')}
+            </TableHead>
+            <TableHead className='text-right'>
+              {t('upstreams.headerEnabled')}
+            </TableHead>
+            <TableHead className='text-right'>
+              {t('upstreams.headerActions')}
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -201,7 +226,9 @@ export function ProviderAccounts({
                   type='number'
                   className='h-8 w-20 text-right'
                   defaultValue={account.weight}
-                  aria-label={`${account.alias || account.id} 的权重`}
+                  aria-label={t('upstreams.weightAria', {
+                    name: account.alias || account.id,
+                  })}
                   onClick={(event) => event.stopPropagation()}
                   onBlur={(event) => {
                     const next = Number(event.target.value)
@@ -218,7 +245,7 @@ export function ProviderAccounts({
                 <div className='grid gap-0.5'>
                   <StatusBadge
                     status={account.status}
-                    labels={ACCOUNT_STATUS_LABELS}
+                    labels={accountStatusLabels(t)}
                   />
                   {/* 后端说了原因就用它的话：凭据被拒、令牌过期都在这儿。 */}
                   {account.detail ? (
@@ -229,9 +256,13 @@ export function ProviderAccounts({
                   {/* 路由暂时绕开这个账号：说清楚到什么时候、因为什么。 */}
                   {account.cooldownUntilMs > 0n ? (
                     <span className='text-xs text-muted-foreground'>
-                      冷却到 {formatLocalMoment(account.cooldownUntilMs)}
+                      {t('upstreams.cooldownUntil', {
+                        time: formatLocalMoment(account.cooldownUntilMs),
+                      })}
                       {account.cooldownReason
-                        ? `（${account.cooldownReason}）`
+                        ? t('upstreams.cooldownReason', {
+                            reason: account.cooldownReason,
+                          })
                         : ''}
                     </span>
                   ) : null}
@@ -256,7 +287,9 @@ export function ProviderAccounts({
                     onCheckedChange={(checked) =>
                       onToggleEnabled(account, checked)
                     }
-                    aria-label={`${account.alias || account.id} 的开关`}
+                    aria-label={t('upstreams.switchAria', {
+                      name: account.alias || account.id,
+                    })}
                   />
                 </div>
               </TableCell>
@@ -278,7 +311,7 @@ export function ProviderAccounts({
                     // 所以提示挂在外面那个 span 上：鼠标停上去能看出为什么点不了。
                     <span
                       className='inline-flex flex-col items-end gap-0.5'
-                      title={accessHint(access)}
+                      title={accessHint(access, t)}
                     >
                       <Button
                         variant='outline'
@@ -287,11 +320,11 @@ export function ProviderAccounts({
                         onClick={() => onManageKeys(account)}
                       >
                         <KeyRound />
-                        {accessLabel(access)}
+                        {accessLabel(access, t)}
                       </Button>
                       {access.status === 'loading' ? (
                         <span className='text-xs text-muted-foreground'>
-                          凭据格子还在加载
+                          {t('upstreams.keysStillLoading')}
                         </span>
                       ) : null}
                       {access.status === 'failed' ? (
@@ -316,17 +349,19 @@ export function ProviderAccounts({
                     onClick={() => onLogin(account)}
                   >
                     <LogIn />
-                    登录
+                    {t('upstreams.login')}
                   </Button>
                   {/* 注销 = 删掉这个账号这一行（凭据一起删），要先确认。 */}
                   <Button
                     variant='ghost'
                     size='sm'
-                    aria-label={`注销 ${account.alias || account.id}`}
+                    aria-label={t('upstreams.deleteAccountAria', {
+                      name: account.alias || account.id,
+                    })}
                     onClick={() => onDelete(account)}
                   >
                     <Trash2 />
-                    注销
+                    {t('upstreams.delete')}
                   </Button>
                 </div>
               </TableCell>
@@ -336,11 +371,15 @@ export function ProviderAccounts({
       </Table>
 
       <div className='grid gap-1'>
-        <p className='text-sm font-medium'>凭据</p>
+        <p className='text-sm font-medium'>
+          {t('upstreams.credentialsLabel')}
+        </p>
         <p className='text-xs text-muted-foreground'>
           {active
-            ? `${active.alias || active.id} 名下的凭据`
-            : '未选择账号'}
+            ? t('upstreams.accountCredentials', {
+                name: active.alias || active.id,
+              })
+            : t('upstreams.noAccountSelected')}
         </p>
       </div>
 
@@ -352,18 +391,20 @@ export function ProviderAccounts({
           onRetry={() => credentials.refetch()}
         />
       ) : (credentials.data?.credentials.length ?? 0) === 0 ? (
-        <EmptyState title='该账号下没有凭据' />
+        <EmptyState title={t('upstreams.noCredentials')} />
       ) : (
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>凭据</TableHead>
-              <TableHead>类型</TableHead>
-              <TableHead>掩码</TableHead>
-              <TableHead>指纹</TableHead>
-              <TableHead>状态</TableHead>
-              <TableHead>到期</TableHead>
-              <TableHead className='text-right'>操作</TableHead>
+              <TableHead>{t('upstreams.credentialsLabel')}</TableHead>
+              <TableHead>{t('upstreams.headerType')}</TableHead>
+              <TableHead>{t('upstreams.headerMask')}</TableHead>
+              <TableHead>{t('upstreams.headerFingerprint')}</TableHead>
+              <TableHead>{t('upstreams.headerState')}</TableHead>
+              <TableHead>{t('upstreams.headerExpiry')}</TableHead>
+              <TableHead className='text-right'>
+                {t('upstreams.headerActions')}
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -383,7 +424,9 @@ export function ProviderAccounts({
                       <span className='font-mono text-xs text-muted-foreground'>
                         {credential.id}
                         {credential.generation > 0
-                          ? ` · 第 ${credential.generation} 代`
+                          ? t('upstreams.credentialGeneration', {
+                              n: credential.generation,
+                            })
                           : ''}
                       </span>
                     </div>
@@ -414,7 +457,7 @@ export function ProviderAccounts({
                           用户只看到一个「已过期」徽标。 */}
                       {relogin && !credential.lastError ? (
                         <span className='text-xs text-destructive'>
-                          这份会话不能用了，要重新登录
+                          {t('upstreams.sessionUnusable')}
                         </span>
                       ) : null}
                     </div>
@@ -423,7 +466,9 @@ export function ProviderAccounts({
                     {formatDateTime(credential.expiresAt)}
                     {credential.lastOkAt ? (
                       <div className='text-muted-foreground'>
-                        最近可用 {formatDateTime(credential.lastOkAt)}
+                        {t('upstreams.lastOk', {
+                          time: formatDateTime(credential.lastOkAt),
+                        })}
                       </div>
                     ) : null}
                   </TableCell>
@@ -438,7 +483,7 @@ export function ProviderAccounts({
                         }
                       >
                         <Stethoscope />
-                        试一下
+                        {t('upstreams.tryCredential')}
                       </Button>
                       {/* 会话失效了只能重新授权：走账号那一行现成的登录流程，
                           不另写一套。 */}
@@ -449,7 +494,7 @@ export function ProviderAccounts({
                           onClick={() => onLogin(owner)}
                         >
                           <LogIn />
-                          重新登录
+                          {t('upstreams.relogin')}
                         </Button>
                       ) : null}
                     </div>
