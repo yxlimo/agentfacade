@@ -3,40 +3,58 @@
 // 网关这一侧全是 JS 的 Date.now()，只有名字里带 _sec 的两个是秒：
 // GetSystemStatusResponse.uptime_sec 和 CredentialStatus.remaining_sec。
 // 契约的注释里没写单位，这里跟网关对齐。
+//
+// locale 跟着面板语言走（i18n.language，zh-CN / en-US），签名不变。
 
-const dateTimeFormat = new Intl.DateTimeFormat('zh-CN', {
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-  hour12: false,
-})
+import i18n from './i18n'
 
-const dateFormat = new Intl.DateTimeFormat('zh-CN', {
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-})
+function locale(): string {
+  return i18n.language === 'en' ? 'en-US' : 'zh-CN'
+}
 
-const numberFormat = new Intl.NumberFormat('zh-CN')
+function dateTimeFormat(): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat(locale(), {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  })
+}
+
+function dateFormat(): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat(locale(), {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+}
+
+function numberFormat(): Intl.NumberFormat {
+  return new Intl.NumberFormat(locale())
+}
 
 // 时刻与日期时刻：只到分钟，秒对签到这种事没有意义。
-const localTimeFormat = new Intl.DateTimeFormat('zh-CN', {
-  hour: '2-digit',
-  minute: '2-digit',
-  hourCycle: 'h23',
-})
+function localTimeFormat(): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat(locale(), {
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  })
+}
 
-const localMomentFormat = new Intl.DateTimeFormat('zh-CN', {
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  hourCycle: 'h23',
-})
+function localMomentFormat(): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat(locale(), {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  })
+}
 
 function toNumber(value: bigint | number | undefined | null): number | null {
   if (value === undefined || value === null) return null
@@ -50,13 +68,13 @@ export function formatDateTime(
 ): string {
   const ms = toNumber(value)
   if (ms === null) return '—'
-  return dateTimeFormat.format(new Date(ms))
+  return dateTimeFormat().format(new Date(ms))
 }
 
 export function formatDate(value: bigint | number | undefined | null): string {
   const ms = toNumber(value)
   if (ms === null) return '—'
-  return dateFormat.format(new Date(ms))
+  return dateFormat().format(new Date(ms))
 }
 
 /**
@@ -77,15 +95,17 @@ export function formatLocalMoment(
     date.getMonth() === today.getMonth() &&
     date.getDate() === today.getDate()
   if (sameDay) {
-    return `今天 ${localTimeFormat.format(date)}`
+    return i18n.t('common.todayTime', {
+      time: localTimeFormat().format(date),
+    })
   }
-  return localMomentFormat.format(date)
+  return localMomentFormat().format(date)
 }
 
 export function formatCount(value: bigint | number | undefined | null): string {
   if (value === undefined || value === null) return '0'
   const n = typeof value === 'bigint' ? Number(value) : value
-  return numberFormat.format(n)
+  return numberFormat().format(n)
 }
 
 /**
@@ -101,7 +121,7 @@ export function formatCompact(
   const n = typeof value === 'bigint' ? Number(value) : value
   if (!Number.isFinite(n)) return '0'
   const abs = Math.abs(n)
-  if (abs < 1000) return numberFormat.format(n)
+  if (abs < 1000) return numberFormat().format(n)
   // The unit is separated by a space: in a small font "1.4B" is read as
   // "1.48" at a glance, and a space makes the unit a unit.
   if (abs < 1_000_000) return `${trim(n / 1000)} K`
@@ -149,7 +169,7 @@ export function formatPoints(value: number | undefined | null): string {
   if (value === undefined || value === null || !Number.isFinite(value)) {
     return '0'
   }
-  return Number.isInteger(value) ? numberFormat.format(value) : value.toFixed(2)
+  return Number.isInteger(value) ? numberFormat().format(value) : value.toFixed(2)
 }
 
 /** 时长（毫秒）。 */
@@ -157,9 +177,13 @@ export function formatMillis(value: bigint | number | undefined | null): string 
   if (value === undefined || value === null) return '—'
   const n = typeof value === 'bigint' ? Number(value) : value
   if (!Number.isFinite(n)) return '—'
-  if (n < 1000) return `${Math.round(n)} 毫秒`
-  if (n < 60_000) return `${(n / 1000).toFixed(1)} 秒`
-  return `${Math.floor(n / 60_000)} 分 ${Math.round((n % 60_000) / 1000)} 秒`
+  if (n < 1000) return i18n.t('common.ms', { n: Math.round(n) })
+  if (n < 60_000)
+    return i18n.t('common.sec', { n: (n / 1000).toFixed(1) })
+  return i18n.t('common.minSec', {
+    m: Math.floor(n / 60_000),
+    s: Math.round((n % 60_000) / 1000),
+  })
 }
 
 /**
@@ -173,9 +197,9 @@ export function formatUptime(seconds: bigint | number | undefined | null): strin
   const days = Math.floor(sec / 86_400)
   const hours = Math.floor((sec % 86_400) / 3600)
   const minutes = Math.floor((sec % 3600) / 60)
-  if (days > 0) return `${days} 天 ${hours} 小时`
-  if (hours > 0) return `${hours} 小时 ${minutes} 分钟`
-  return `${minutes} 分钟`
+  if (days > 0) return i18n.t('common.days', { d: days, h: hours })
+  if (hours > 0) return i18n.t('common.hours', { h: hours, m: minutes })
+  return i18n.t('common.minutes', { m: minutes })
 }
 
 /**
@@ -205,9 +229,10 @@ export function isFarFuture(
 
 /** 倒计时（秒）。登录窗口、批次到期都用它。 */
 export function formatCountdown(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds <= 0) return '已过期'
+  if (!Number.isFinite(seconds) || seconds <= 0)
+    return i18n.t('common.expired')
   const minutes = Math.floor(seconds / 60)
   const rest = seconds % 60
-  if (minutes > 0) return `${minutes} 分 ${rest} 秒`
-  return `${rest} 秒`
+  if (minutes > 0) return i18n.t('common.minSec', { m: minutes, s: rest })
+  return i18n.t('common.sec', { n: rest })
 }
