@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { KeyRound, RotateCcw, Save } from 'lucide-react'
 import { PageShell } from '@/components/layout/page-shell'
@@ -38,28 +39,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useConfig, useSetConfig } from '@/features/config/api'
 import type { ConfigItem } from '@/gen/agentfacade/admin/v1/admin_pb'
 
-const SOURCE_LABELS: Record<string, string> = {
-  database: '数据库覆盖',
-  environment: '环境变量',
-  default: '默认值',
-}
-
-/**
- * 分组的中文名。
- *
- * 服务端给的 group 是英文的键（general、gateway……），那是给机器看的。
- * 这个表只是「键 → 中文名」的对照，不是对服务端有哪些组的假设：认不出来
- * 的组就原样显示，不猜。
- *
- * 目前会出现的有四组：网关自己的、签到、Qoder。上游的开关在「平台」页，但
- * 上游的那个设置（排队重试的间隔）在配置页，所以 qoder 组会出现。
- */
-const GROUP_LABELS: Record<string, string> = {
-  general: '常规',
-  gateway: '网关',
-  benefits: '签到',
-  qoder: 'Qoder',
-}
+type SourceKey = 'database' | 'environment' | 'default'
+type GroupKey = 'general' | 'gateway' | 'benefits' | 'qoder'
 
 /**
  * tab 的顺序。
@@ -68,8 +49,23 @@ const GROUP_LABELS: Record<string, string> = {
  */
 const GROUP_ORDER = ['general', 'gateway']
 
-function groupLabel(group: string): string {
-  return GROUP_LABELS[group] ?? group
+const SOURCES: SourceKey[] = ['database', 'environment', 'default']
+const GROUPS: GroupKey[] = ['general', 'gateway', 'benefits', 'qoder']
+
+function isSource(value: string): value is SourceKey {
+  return SOURCES.some((source) => source === value)
+}
+
+function isGroup(value: string): value is GroupKey {
+  return GROUPS.some((group) => group === value)
+}
+
+function sourceKey(source: string): `configPage.source.${SourceKey}` | null {
+  return isSource(source) ? `configPage.source.${source}` : null
+}
+
+function groupKey(group: string): `configPage.group.${GroupKey}` | null {
+  return isGroup(group) ? `configPage.group.${group}` : null
 }
 
 /**
@@ -128,6 +124,7 @@ function showKey(item: ConfigItem): boolean {
 }
 
 export function ConfigPage() {
+  const { t } = useTranslation()
   const config = useConfig()
   const setConfig = useSetConfig()
   const [editing, setEditing] = useState<{
@@ -159,10 +156,10 @@ export function ConfigPage() {
     const extra = [...map.keys()].filter((group) => !GROUP_ORDER.includes(group))
     return [...known, ...extra].map((group) => ({
       key: group,
-      label: groupLabel(group),
+      label: groupKey(group) ? t(groupKey(group)!) : group,
       items: map.get(group) ?? [],
     }))
-  }, [config.data])
+  }, [config.data, t])
 
   // 选中的那一组没了（比如重取之后分组变了），退回第一组。
   const activeTab = groups.some((group) => group.key === tab)
@@ -179,9 +176,9 @@ export function ConfigPage() {
   // 有改了还没生效的东西时，服务端说要重启。面板照它说，不自己猜：
   // 面板能改的那几个今天都是热的，但那是服务端的事。
   const pendingRestart = config.data?.pendingRestart ?? false
-  const effectText = pendingRestart
-    ? '改动写进数据库，改完要重启才生效。'
-    : '改动写进数据库，改完立刻生效。'
+  const effectText = t(
+    pendingRestart ? 'configPage.effectRestart' : 'configPage.effectLive'
+  )
 
   const save = async (key: string, value: string, clear: boolean) => {
     setBusy(true)
@@ -200,14 +197,14 @@ export function ConfigPage() {
 
   return (
     <PageShell
-      title='配置'
-      description='各设置项当前生效的值和值的来源。环境变量优先，部署里钉住的值面板改不动。'
+      title={t('configPage.title')}
+      description={t('configPage.description')}
     >
 
       {groups.length === 0 ? (
         <Card>
           <CardContent>
-            <EmptyState title='网关未返回任何配置项' />
+            <EmptyState title={t('configPage.empty')} />
           </CardContent>
         </Card>
       ) : (
@@ -234,10 +231,12 @@ export function ConfigPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>设置</TableHead>
-                        <TableHead>当前值</TableHead>
-                        <TableHead>来源</TableHead>
-                        <TableHead className='text-right'>操作</TableHead>
+                        <TableHead>{t('configPage.setting')}</TableHead>
+                        <TableHead>{t('configPage.currentValue')}</TableHead>
+                        <TableHead>{t('configPage.source')}</TableHead>
+                        <TableHead className='text-right'>
+                          {t('configPage.actions')}
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -265,7 +264,11 @@ export function ConfigPage() {
                             {item.secret ? (
                               // 敏感项的值读不出来，只说有没有。
                               <span className='text-xs'>
-                                {hasValue(item) ? '已设置' : '未设置'}
+                                {t(
+                                  hasValue(item)
+                                    ? 'configPage.set'
+                                    : 'configPage.notSet'
+                                )}
                               </span>
                             ) : (
                               <span className='font-mono text-xs'>
@@ -275,22 +278,26 @@ export function ConfigPage() {
                             {item.fallback &&
                             item.fallback !== item.value ? (
                               <div className='text-xs text-muted-foreground'>
-                                默认值 {item.fallback}
+                                {t('configPage.fallback', {
+                                  value: item.fallback,
+                                })}
                               </div>
                             ) : null}
                             {item.overrideValue &&
                             item.overrideValue !== item.value ? (
                               // 面板写了、但环境变量在用：这份在库里等着。
                               <div className='text-xs text-muted-foreground'>
-                                面板里的值 {item.overrideValue}，环境变量在用
+                                {t('configPage.override', {
+                                  value: item.overrideValue,
+                                })}
                               </div>
                             ) : null}
                           </TableCell>
                           <TableCell>
                             <Badge variant='outline'>
-                              {SOURCE_LABELS[item.source] ??
-                                item.source ??
-                                '未知'}
+                              {sourceKey(item.source)
+                                ? t(sourceKey(item.source)!)
+                                : (item.source || t('configPage.unknown'))}
                             </Badge>
                           </TableCell>
                           <TableCell className='text-right'>
@@ -310,7 +317,7 @@ export function ConfigPage() {
                                 }}
                               >
                                 <Save />
-                                改
+                                {t('configPage.edit')}
                               </Button>
                               {item.source === 'database' ||
                               (item.overrideValue && item.overrideValue !== '') ? (
@@ -323,7 +330,7 @@ export function ConfigPage() {
                                   }
                                 >
                                   <RotateCcw />
-                                  清回默认
+                                  {t('configPage.reset')}
                                 </Button>
                               ) : null}
                             </div>
@@ -349,7 +356,7 @@ export function ConfigPage() {
           <DialogHeader>
             <DialogTitle className='flex items-center gap-2'>
               {editing?.secret ? <KeyRound className='size-4' /> : null}
-              {editing?.title ?? '改配置'}
+              {editing?.title ?? t('configPage.editTitle')}
             </DialogTitle>
             <DialogDescription>
               <span className='font-mono text-xs'>{editing?.key}</span>
@@ -357,7 +364,7 @@ export function ConfigPage() {
             </DialogDescription>
           </DialogHeader>
           <div className='grid gap-2'>
-            <Label htmlFor='config-value'>新值</Label>
+            <Label htmlFor='config-value'>{t('configPage.newValue')}</Label>
             <Input
               id='config-value'
               value={draft}
@@ -367,10 +374,10 @@ export function ConfigPage() {
             />
             <p className='text-xs text-muted-foreground'>
               {editing?.secret
-                ? '该项的值读不出来。留空表示不修改。'
+                ? t('configPage.secretHint')
                 : pendingRestart
-                  ? '写入数据库后，重启才生效。'
-                  : '写入数据库后立即生效。'}
+                  ? t('configPage.secretRestartHint')
+                  : t('configPage.liveHint')}
             </p>
           </div>
           <DialogFooter>
@@ -379,7 +386,7 @@ export function ConfigPage() {
               onClick={() => setEditing(null)}
               disabled={busy}
             >
-              取消
+              {t('configPage.cancel')}
             </Button>
             <Button
               disabled={busy}
@@ -387,14 +394,16 @@ export function ConfigPage() {
                 if (!editing) return
                 if (editing.secret && draft.trim() === '') {
                   // 没填新值就别发请求：空串会被服务端当成「把密钥清空」。
-                  toast('敏感项原样保留', { description: '未填写新值，未做修改。' })
+                  toast(t('configPage.keepSecret'), {
+                    description: t('configPage.keepSecretHint'),
+                  })
                   setEditing(null)
                   return
                 }
                 void save(editing.key, draft, false)
               }}
             >
-              保存
+              {t('configPage.save')}
             </Button>
           </DialogFooter>
         </DialogContent>
