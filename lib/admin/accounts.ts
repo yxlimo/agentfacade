@@ -415,9 +415,10 @@ async function testTarget(target: CredentialTarget): Promise<{ ok: boolean; mess
     }
     case "workbuddy": {
       const credits = await fetchWorkBuddyCredits(p.id);
-      return credits
-        ? { ok: true, message: `可用，今日已签到：${credits.checkedIn ? "是" : "否"}` }
-        : { ok: false, message: "无法读取签到状态" };
+      if (credits.state !== "ok") {
+        return { ok: false, message: credits.state === "unauthorized" ? credits.message : "无法读取签到状态" };
+      }
+      return { ok: true, message: `可用，今日已签到：${credits.value.checkedIn ? "是" : "否"}` };
     }
     case "zcode": {
       // ZCode 的令牌没有刷新通道，过期了只能重登，所以这里只能看它还在不在。

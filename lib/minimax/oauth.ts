@@ -135,7 +135,7 @@ function loginHint(providerId = "minimax"): string {
  * provider the same account, and with it the same refresh token. One of them
  * refreshing would then break the other.
  */
-function loadSession(providerId = "minimax"): Session | null {
+export function loadSession(providerId = "minimax"): Session | null {
   return readSession<Session>(sessionId(providerId), hasTokens);
 }
 

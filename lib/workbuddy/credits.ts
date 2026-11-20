@@ -5,6 +5,13 @@
 
 import { loadSession as loadWorkBuddySession } from "./auth.ts";
 import { dataOf, workbuddyApi } from "./api.ts";
+import {
+  vendorFailed,
+  vendorMissing,
+  vendorOk,
+  vendorUnauthorized,
+  type VendorProbe,
+} from "../provider-kinds.ts";
 
 export interface WorkBuddyCredits {
   /** The credits the daily check-in hands out. */
@@ -19,26 +26,31 @@ export interface WorkBuddyCredits {
   checkedIn: boolean;
 }
 
-export async function fetchWorkBuddyCredits(providerId = "workbuddy-cn"): Promise<WorkBuddyCredits | null> {
+export type WorkBuddyCreditsProbe = VendorProbe<WorkBuddyCredits>;
+
+/**
+ * 签到状态。401/403 是上游明说令牌不行；其余错误码（含 0 = 网络失败）
+ * 只是这一轮问不到。上游没有单独的「token 失效」业务码，不硬造一个。
+ */
+export async function fetchWorkBuddyCredits(providerId = "workbuddy-cn"): Promise<WorkBuddyCreditsProbe> {
   const session = loadWorkBuddySession(providerId);
-  if (!session) return null;
+  if (!session) return vendorMissing();
   try {
     const res = await workbuddyApi(session, "/v2/billing/meter/checkin-activity-status", "POST", undefined, providerId);
-    // A failed query is "unknown", not "no credits".
-    if (res.status !== 200) {
-      // 上游拒了这个令牌：记下来，于是下一次拿凭据时会换一个。
-      return null;
+    if (res.status === 401 || res.status === 403) {
+      return vendorUnauthorized(`上游拒绝了这把令牌（HTTP ${res.status}）`);
     }
+    if (res.status !== 200) return vendorFailed(`上游答了 HTTP ${res.status}`);
     const data = dataOf(res.body);
-    if (!data) return null;
-    return {
+    if (!data) return vendorFailed("上游的答复里没有数据");
+    return vendorOk({
       daily: Number(data.daily_credit ?? 0),
       today: Number(data.today_credit ?? 0),
       total: Number(data.total_credits ?? 0),
       streakDays: Number(data.streak_days ?? 0),
       checkedIn: data.today_checked_in === true,
-    };
-  } catch {
-    return null;
+    });
+  } catch (e) {
+    return vendorFailed(`问不到签到状态：${(e as Error)?.message ?? String(e)}`);
   }
 }

@@ -6,7 +6,7 @@
 // the same shape — and because the video windows are dropped in one place.
 
 import type { CredentialField, CredentialForm, CredentialOwner, CredentialPlan, CredentialSlot } from "../provider-kinds.ts";
-import type { TokenPlanView } from "../provider-kinds.ts";
+import { vendorProbeOf, type TokenPlanView, type VendorProbe } from "../provider-kinds.ts";
 import { isIgnoredPlanWindow } from "../cooldown.ts";
 import { providerSecretId } from "../credential-ids.ts";
 import { deadSession } from "../session.ts";
@@ -41,6 +41,27 @@ export {
 } from "../provider-kinds.ts";
 export { isIgnoredPlanWindow } from "../cooldown.ts";
 export type { ProviderRow } from "../providers.ts";
+
+/**
+ * 上游拒的是不是现在这一把凭据。
+ *
+ * 两条判据缺一不可：结论明说 unauthorized，且结论的时刻晚于这份会话的登录
+ * 时刻。重新登录后旧的那次拒绝自动作废 —— 否则人已经重登了，账号还永远挂着
+ * 一个红（zcode 踩过）。缺登录时刻（老会话）时按被拒绝处理：显然该报的错不
+ * 报，比「刚重登那几分钟还红着」难收拾得多。
+ */
+export function refusedByCurrentSession(
+  probes: (VendorProbe<unknown> | null | undefined)[],
+  loginAtMs: number | null | undefined,
+): boolean {
+  const refused = probes.find((p) => p?.state === "unauthorized");
+  if (!refused || refused.state !== "unauthorized") return false;
+  const login = Number(loginAtMs ?? 0);
+  if (!login) return true;
+  return refused.at > login;
+}
+
+
 
 /* ------------------------------------------------------------------ *
  * The credential slots every kind builds from

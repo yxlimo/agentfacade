@@ -46,14 +46,16 @@ import "../kinds/index.ts";
 import { platformAvailability, type PlatformAvailability } from "./platform-state.ts";
 import { kindOf } from "../provider-kinds.ts";
 import type { ProviderRow } from "../providers.ts";
-import type {
-  BalanceView,
-  CreditView,
-  CredentialView,
-  HealthSnapshot,
-  QuotaView,
-  TokenPlanView,
-  ZcodeClaimSnapshot,
+import {
+  vendorMissing,
+  type BalanceView,
+  type CreditView,
+  type CredentialView,
+  type HealthSnapshot,
+  type QuotaView,
+  type TokenPlanView,
+  type VendorProbe,
+  type ZcodeClaimSnapshot,
 } from "../provider-kinds.ts";
 
 // The panel's own view of these shapes comes from here.
@@ -309,13 +311,14 @@ const MINIMAX_REGION = regionKey(configString("MINIMAX_REGION", "cn"));
  *
  * 路由器握着他的会话，所以只有路由器能问平台。
  */
-export async function miniMaxBalance(providerId = "minimax"): Promise<unknown> {
+export async function miniMaxBalance(providerId = "minimax"): Promise<VendorProbe<unknown>> {
+  let accessToken = "";
   try {
-    const cred = await readCredential(providerId);
-    return await fetchMiniMaxBalance(cred.accessToken, MINIMAX_REGION);
+    accessToken = (await readCredential(providerId)).accessToken;
   } catch {
-    return null;
+    return vendorMissing();
   }
+  return await fetchMiniMaxBalance(accessToken, MINIMAX_REGION);
 }
 
 /**
@@ -344,15 +347,15 @@ export async function miniMaxCreditLedger(
  * （`/backend/account/token_plan/remains_percent`）。读不到就是读不到——没有
  * 第二条路，套餐 key 那套已经删了。
  */
-export async function miniMaxCodeTokenPlan(providerId = "minimax"): Promise<unknown> {
+export async function miniMaxCodeTokenPlan(providerId = "minimax"): Promise<VendorProbe<unknown>> {
   const region = MINIMAX_REGION;
+  let accessToken = "";
   try {
-    const cred = await readCredential(providerId);
-    const withSession = await fetchMiniMaxTokenPlanWithSession(cred.accessToken, region);
-    return withSession?.windows.length ? withSession : null;
+    accessToken = (await readCredential(providerId)).accessToken;
   } catch {
-    return null;
+    return vendorMissing();
   }
+  return await fetchMiniMaxTokenPlanWithSession(accessToken, region);
 }
 
 /** 「Token Plan 达限后使用积分」这个开关，读不到是 null（不知道）。 */
@@ -561,15 +564,26 @@ async function refreshOne(snapshot: HealthSnapshot, row: ProviderRow): Promise<v
       } catch (e) {
         account = { region: row.region, usable: false, reason: (e as Error)?.message };
       }
-      snapshot.qoder[row.id] = { account, credits: await fetchQoderCredits(row.id) };
+      const probe = await fetchQoderCredits(row.id);
+      snapshot.qoder[row.id] = {
+        account,
+        credits: probe.state === "ok" ? probe.value : null,
+        quota: probe,
+      };
       return;
     }
     case "minimax": {
       // 明细与判定值同源：一次扫描只发一次 credit/details
       const ledger = await miniMaxCreditLedger(row.id);
+      const balance = await miniMaxBalance(row.id);
+      const tokenPlan = await miniMaxCodeTokenPlan(row.id);
       snapshot.minimax[row.id] = {
-        balance: await miniMaxBalance(row.id),
-        tokenPlan: await miniMaxCodeTokenPlan(row.id),
+        balance: balance.state === "ok" ? balance.value : null,
+        tokenPlan: tokenPlan.state === "ok" ? tokenPlan.value : null,
+        // 结论另存一格：老的 balance / tokenPlan 只留成功时的值，读不出时
+        // 面板要能分清「401」「5xx」「没登录」，不是一张空白。
+        balanceProbe: balance,
+        tokenPlanProbe: tokenPlan,
         credits: ledger.lots,
         points: { amount: ledger.points, at: Date.now() },
         creditFallbackEnabled: await miniMaxCreditFallback(row.id),
@@ -591,13 +605,16 @@ async function refreshOne(snapshot: HealthSnapshot, row: ProviderRow): Promise<v
       };
       return;
     }
-    case "workbuddy":
+    case "workbuddy": {
       // 签到状态与积分账本是两件事：一个是连签，一个是平台自己的余额。
+      const credits = await fetchWorkBuddyCredits(row.id);
+      const resources = await fetchWorkBuddyResources(row.id);
       snapshot.workbuddy[row.id] = {
-        credits: await fetchWorkBuddyCredits(row.id),
-        resources: await fetchWorkBuddyResources(row.id),
+        credits: credits.state === "ok" ? credits.value : null,
+        resources,
       } as WorkBuddySnapshotEntry;
       return;
+    }
   }
 }
 
