@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Check, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -21,6 +22,7 @@ export function ProviderAliasCell({
   /** 只画铅笔：名字在别处已经显示了。 */
   iconOnly?: boolean
 }) {
+  const { t } = useTranslation()
   const [editing, setEditing] = useState(false)
   const [text, setText] = useState(alias)
 
@@ -32,14 +34,14 @@ export function ProviderAliasCell({
         className={
           iconOnly ? undefined : 'h-7 px-2 text-xs text-muted-foreground'
         }
-        aria-label={`编辑 ${providerId} 的别名`}
+        aria-label={t('upstreams.editAlias', { id: providerId })}
         onClick={() => {
           setText(alias)
           setEditing(true)
         }}
       >
         <Pencil className='size-3' />
-        {iconOnly ? null : alias || '新增名称'}
+        {iconOnly ? null : alias || t('upstreams.addName')}
       </Button>
     )
   }
@@ -49,7 +51,7 @@ export function ProviderAliasCell({
       <Input
         autoFocus
         value={text}
-        aria-label={`${providerId} 的别名`}
+        aria-label={t('upstreams.aliasAria', { id: providerId })}
         onChange={(event) => setText(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === 'Enter') {
@@ -63,7 +65,7 @@ export function ProviderAliasCell({
       <Button
         variant='ghost'
         size='icon-sm'
-        aria-label='保存别名'
+        aria-label={t('upstreams.saveAlias')}
         onClick={() => {
           onSave(text.trim())
           setEditing(false)
