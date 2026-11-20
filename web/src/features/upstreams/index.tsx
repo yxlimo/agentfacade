@@ -1,5 +1,6 @@
 import { Fragment, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { useIsFetching } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { ChevronRight, Plus } from 'lucide-react'
@@ -679,7 +680,7 @@ function PlatformSortList({
   onMove,
 }: {
   platforms: Upstream[]
-  t: ReturnType<typeof useTranslation>['t']
+  t: TFunction
   onMove: (from: number, to: number) => void
 }) {
   return (

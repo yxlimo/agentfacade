@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { Link } from '@tanstack/react-router'
 import { Menu, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -10,6 +11,7 @@ import {
 import { Button } from '../ui/button'
 
 export function AppTitle() {
+  const { t } = useTranslation()
   const { setOpenMobile } = useSidebar()
   return (
     <SidebarMenu>
@@ -26,7 +28,7 @@ export function AppTitle() {
               className='grid flex-1 text-start text-sm leading-tight'
             >
               <span className='truncate font-bold'>AgentFacade</span>
-              <span className='truncate text-xs'>网关管理面板</span>
+              <span className='truncate text-xs'>{t('shell.title')}</span>
             </Link>
             <ToggleSidebar />
           </div>
@@ -41,6 +43,7 @@ function ToggleSidebar({
   onClick,
   ...props
 }: React.ComponentProps<typeof Button>) {
+  const { t } = useTranslation()
   const { toggleSidebar } = useSidebar()
 
   return (
@@ -58,7 +61,7 @@ function ToggleSidebar({
     >
       <X className='md:hidden' />
       <Menu className='max-md:hidden' />
-      <span className='sr-only'>折叠侧边栏</span>
+      <span className='sr-only'>{t('shell.collapseSidebar')}</span>
     </Button>
   )
 }

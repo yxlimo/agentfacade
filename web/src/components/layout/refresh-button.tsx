@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { useIsFetching, useQueryClient } from '@tanstack/react-query'
 import { RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -8,6 +9,7 @@ import { cn } from '@/lib/utils'
  * 能让用户自己按一下。
  */
 export function RefreshButton() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const fetching = useIsFetching() > 0
 
@@ -15,8 +17,8 @@ export function RefreshButton() {
     <Button
       variant='ghost'
       size='icon'
-      aria-label='刷新'
-      title='刷新'
+      aria-label={t('shell.refresh')}
+      title={t('shell.refresh')}
       disabled={fetching}
       onClick={() => {
         void queryClient.invalidateQueries()

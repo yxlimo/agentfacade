@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useTranslation } from 'react-i18next'
 import { Command as CommandPrimitive } from "cmdk"
 import { cn } from "cn"
 import { SearchIcon } from "lucide-react"
@@ -30,8 +31,8 @@ function Command({
 }
 
 function CommandDialog({
-  title = "命令面板",
-  description = "搜索要执行的命令…",
+  title,
+  description,
   children,
   className,
   showCloseButton = true,
@@ -42,11 +43,12 @@ function CommandDialog({
   className?: string
   showCloseButton?: boolean
 }) {
+  const { t } = useTranslation()
   return (
     <Dialog {...props}>
       <DialogHeader className="sr-only">
-        <DialogTitle>{title}</DialogTitle>
-        <DialogDescription>{description}</DialogDescription>
+        <DialogTitle>{title ?? t('ui.commandPalette')}</DialogTitle>
+        <DialogDescription>{description ?? t('ui.commandSearch')}</DialogDescription>
       </DialogHeader>
       <DialogContent
         className={cn("overflow-hidden p-0", className)}

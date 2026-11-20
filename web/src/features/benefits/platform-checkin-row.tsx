@@ -1,8 +1,10 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { ChevronDown } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { formatLocalMoment } from '@/lib/format'
+import i18n from '@/lib/i18n'
 import { CheckinState, type BenefitStatus } from '@/gen/agentfacade/admin/v1/admin_pb'
 
 /** 明细区的 id：展开时 `aria-controls` 指过来。 */
@@ -20,18 +22,19 @@ function detailId(upstreamId: string): string {
  */
 function platformStateText(benefits: BenefitStatus[]): string {
   const total = benefits.length
-  if (total === 0) return '今日签到状态未知'
+  if (total === 0) return i18n.t('benefits.stateUnknown')
   const signed = benefits.filter(
     (benefit) => benefit.checkinState === CheckinState.SIGNED,
   ).length
   const unknown = benefits.filter(
     (benefit) => benefit.checkinState === CheckinState.UNKNOWN,
   ).length
-  if (signed === total) return '今日已签到'
+  if (signed === total) return i18n.t('benefits.stateDone')
   // 有账号不知道签没签，而其余的又没签全：不能替它说「还没签」。
-  if (unknown > 0) return '今日签到状态未知'
-  if (signed > 0) return `${total} 个账号中 ${signed} 个已签到`
-  return '今日尚未签到'
+  if (unknown > 0) return i18n.t('benefits.stateUnknown')
+  if (signed > 0)
+    return i18n.t('benefits.statePartial', { total, signed })
+  return i18n.t('benefits.stateNotYet')
 }
 
 /**
@@ -55,14 +58,18 @@ export function PlatformCheckinRow({
   accountAliases: Map<string, string>
 }) {
   const [expanded, setExpanded] = useState(false)
+  const { t } = useTranslation()
   const id = detailId(upstreamId)
   const credits = benefits.reduce((total, benefit) => total + benefit.credits, 0)
 
   return (
-    <li aria-label={`${upstreamId} 签到行`} className='rounded-lg border'>
+    <li
+      aria-label={t('benefits.platformRow', { id: upstreamId })}
+      className='rounded-lg border'
+    >
       <button
         type='button'
-        aria-label={`${upstreamId} 签到`}
+        aria-label={t('benefits.platform', { id: upstreamId })}
         aria-expanded={expanded}
         aria-controls={expanded ? id : undefined}
         onClick={() => setExpanded((open) => !open)}
@@ -70,12 +77,17 @@ export function PlatformCheckinRow({
       >
         <span className='grid min-w-0 gap-1'>
           <span className='text-sm font-medium'>{title}</span>
-          <span aria-label={`${upstreamId} 签到摘要`} className='text-xs text-muted-foreground'>
+          <span
+            aria-label={t('benefits.platformSummary', { id: upstreamId })}
+            className='text-xs text-muted-foreground'
+          >
             {platformStateText(benefits)}
           </span>
         </span>
         <span className='flex min-w-0 items-center gap-2'>
-          {credits > 0 ? <Badge>+{credits} 点</Badge> : null}
+          {credits > 0 ? (
+            <Badge>{t('benefits.points', { n: credits })}</Badge>
+          ) : null}
           <ChevronDown
             aria-hidden='true'
             className={cn(
@@ -90,7 +102,7 @@ export function PlatformCheckinRow({
         <div
           id={id}
           role='region'
-          aria-label={`${upstreamId} 签到明细`}
+          aria-label={t('benefits.platformDetails', { id: upstreamId })}
           className='grid gap-2 border-t px-6 py-4'
         >
           {benefits.map((benefit) => {
@@ -100,7 +112,7 @@ export function PlatformCheckinRow({
             return (
               <div
                 key={benefit.accountId}
-                aria-label={`${upstreamId} ${label} 签到明细条目`}
+                aria-label={t('benefits.detailEntry', { id: upstreamId, label })}
                 className='grid gap-0.5 text-sm'
               >
                 <span className='font-medium'>{label}</span>
@@ -120,9 +132,12 @@ export function PlatformCheckinRow({
                 ) : null}
                 {benefit.checkedAt > 0n ? (
                   <span className='text-xs text-muted-foreground'>
-                    {benefit.checkinState === CheckinState.UNKNOWN
-                      ? `上次查询 ${formatLocalMoment(benefit.checkedAt)}`
-                      : `上次签到 ${formatLocalMoment(benefit.checkedAt)}`}
+                    {t(
+                      benefit.checkinState === CheckinState.UNKNOWN
+                        ? 'benefits.lastChecked'
+                        : 'benefits.lastCheckin',
+                      { time: formatLocalMoment(benefit.checkedAt) },
+                    )}
                   </span>
                 ) : null}
               </div>

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { ChevronDown, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -30,7 +31,7 @@ function accountLabel(account: UpstreamQuota, upstreamId: string): string {
 function accountSubtitle(
   account: UpstreamQuota,
   upstreamId: string,
-  t: ReturnType<typeof useTranslation>['t'],
+  t: TFunction,
 ): string {
   const label = accountLabel(account, upstreamId)
   // 账号 id 就是标题、或者就是平台 id（行上已经写着）的时候不再重复。

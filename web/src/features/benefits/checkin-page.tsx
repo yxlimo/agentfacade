@@ -84,18 +84,18 @@ export function CheckinPage() {
 
   return (
     <PageShell
-      title='签到'
-      description='按平台列出签到状态与明细。'
+      title={t('benefits.title')}
+      description={t('benefits.description')}
       actions={
         <Button size='sm' onClick={() => run.mutate()} disabled={run.isPending}>
-          {run.isPending ? '签到中…' : '立即签到'}
+          {t(run.isPending ? 'benefits.checking' : 'benefits.checkinNow')}
         </Button>
       }
     >
       {platforms.isPending || status.isPending ? (
         <div>
-          <p className='mb-4 text-sm text-muted-foreground'>正在读取签到状态…</p>
-          <ul aria-label='平台签到' className='grid gap-3'>
+          <p className='mb-4 text-sm text-muted-foreground'>{t('benefits.loading')}</p>
+          <ul aria-label={t('benefits.platformCheckins')} className='grid gap-3'>
             {[0, 1, 2].map((index) => (
               <li key={index} className='rounded-lg border px-4 py-3'>
                 <div className='h-4 w-24 animate-pulse rounded bg-muted' />
@@ -110,13 +110,13 @@ export function CheckinPage() {
         <ErrorState error={status.error} onRetry={() => status.refetch()} />
       ) : rows.length === 0 ? (
         <p className='rounded-lg border px-4 py-12 text-center text-sm text-muted-foreground'>
-          没有需要签到的平台
+          {t('benefits.noPlatforms')}
         </p>
       ) : (
         <>
           {run.isError ? (
             <p
-              aria-label='签到失败'
+              aria-label={t('benefits.checkinFailed')}
               className='mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive'
             >
               {describeErrorText(run.error as Error, t)}
@@ -125,10 +125,10 @@ export function CheckinPage() {
 
           {run.data ? (
             <div
-              aria-label='本次签到'
+              aria-label={t('benefits.thisRun')}
               className='mb-4 grid gap-1 rounded-lg border px-4 py-3'
             >
-              <span className='text-sm font-medium'>本次签到</span>
+              <span className='text-sm font-medium'>{t('benefits.thisRun')}</span>
               {runLines.length > 0 ? (
                 <ul className='grid gap-0.5 text-sm'>
                   {runLines.map((line, index) => (
@@ -138,12 +138,12 @@ export function CheckinPage() {
                   ))}
                 </ul>
               ) : (
-                <span className='text-sm text-muted-foreground'>没有输出</span>
+                <span className='text-sm text-muted-foreground'>{t('benefits.noOutput')}</span>
               )}
             </div>
           ) : null}
 
-          <ul aria-label='平台签到' className='grid gap-3'>
+          <ul aria-label={t('benefits.platformCheckins')} className='grid gap-3'>
             {rows.map((row) => (
               <PlatformCheckinRow
                 key={row.upstreamId}

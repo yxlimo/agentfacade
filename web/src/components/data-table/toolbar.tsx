@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { XIcon } from 'lucide-react'
 import { type Table } from '@tanstack/react-table'
 import { Button } from '@/components/ui/button'
@@ -24,11 +25,13 @@ type DataTableToolbarProps<TData> = {
 
 export function DataTableToolbar<TData>({
   table,
-  searchPlaceholder = '筛选…',
+  searchPlaceholder,
   searchKey,
   filters = [],
   extra,
 }: DataTableToolbarProps<TData>) {
+  const { t } = useTranslation()
+  const placeholder = searchPlaceholder ?? t('table.searchPlaceholder')
   const isFiltered =
     table.getState().columnFilters.length > 0 || table.getState().globalFilter
 
@@ -37,7 +40,7 @@ export function DataTableToolbar<TData>({
       <div className='flex flex-1 flex-col-reverse items-start gap-y-2 sm:flex-row sm:items-center sm:space-x-2'>
         {searchKey ? (
           <Input
-            placeholder={searchPlaceholder}
+            placeholder={placeholder}
             value={
               (table.getColumn(searchKey)?.getFilterValue() as string) ?? ''
             }
@@ -48,7 +51,7 @@ export function DataTableToolbar<TData>({
           />
         ) : (
           <Input
-            placeholder={searchPlaceholder}
+            placeholder={placeholder}
             value={table.getState().globalFilter ?? ''}
             onChange={(event) => table.setGlobalFilter(event.target.value)}
             className='h-8 w-37.5 lg:w-62.5'
@@ -78,7 +81,7 @@ export function DataTableToolbar<TData>({
             }}
             className='h-8 px-2 lg:px-3'
           >
-            重置
+            {t('table.reset')}
             <XIcon className='ms-2 h-4 w-4' />
           </Button>
         )}

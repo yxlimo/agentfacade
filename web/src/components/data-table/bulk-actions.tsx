@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { type Table } from '@tanstack/react-table'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -31,6 +32,7 @@ export function DataTableBulkActions<TData>({
   entityName,
   children,
 }: DataTableBulkActionsProps<TData>): React.ReactNode | null {
+  const { t } = useTranslation()
   const selectedRows = table.getFilteredSelectedRowModel().rows
   const selectedCount = selectedRows.length
   const toolbarRef = useRef<HTMLDivElement>(null)
@@ -38,7 +40,10 @@ export function DataTableBulkActions<TData>({
 
   useEffect(() => {
     if (selectedCount > 0) {
-      const message = `已选中 ${selectedCount} 个${entityName}`
+      const message = t('table.selected', {
+        count: selectedCount,
+        entity: entityName,
+      })
 
       queueMicrotask(() => {
         setAnnouncement(message)
@@ -47,7 +52,7 @@ export function DataTableBulkActions<TData>({
       const timer = setTimeout(() => setAnnouncement(''), 3000)
       return () => clearTimeout(timer)
     }
-  }, [selectedCount, entityName])
+  }, [selectedCount, entityName, t])
 
   const handleClearSelection = () => {
     table.resetRowSelection()
@@ -128,7 +133,10 @@ export function DataTableBulkActions<TData>({
       <div
         ref={toolbarRef}
         role='toolbar'
-        aria-label={`已选中 ${selectedCount} 个${entityName}的批量操作`}
+        aria-label={t('table.selectedActions', {
+          count: selectedCount,
+          entity: entityName,
+        })}
         aria-describedby='bulk-actions-description'
         tabIndex={-1}
         onKeyDown={handleKeyDown}
@@ -153,15 +161,15 @@ export function DataTableBulkActions<TData>({
                 size='icon'
                 onClick={handleClearSelection}
                 className='size-6 rounded-full'
-                aria-label='清掉选择'
-                title='清掉选择（Esc）'
+                aria-label={t('table.clearSelection')}
+                title={t('table.clearSelectionHint')}
               >
                 <X />
-                <span className='sr-only'>清掉选择</span>
+                <span className='sr-only'>{t('table.clearSelection')}</span>
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              <p>清掉选择（Esc）</p>
+              <p>{t('table.clearSelectionHint')}</p>
             </TooltipContent>
           </Tooltip>
 
@@ -178,11 +186,12 @@ export function DataTableBulkActions<TData>({
             <Badge
               variant='default'
               className='min-w-8 rounded-lg'
-              aria-label={`已选中 ${selectedCount} 个`}
+              aria-label={t('table.selectedShort', { count: selectedCount })}
             >
               {selectedCount}
             </Badge>{' '}
-            <span className='hidden sm:inline'>{entityName}</span> 已选中
+            <span className='hidden sm:inline'>{entityName}</span>{' '}
+            {t('table.selectedSuffix')}
           </div>
 
           <Separator

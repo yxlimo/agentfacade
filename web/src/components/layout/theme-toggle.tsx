@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Monitor, Moon, Sun } from 'lucide-react'
 import { useTheme } from '@/components/theme-provider'
 import { Button } from '@/components/ui/button'
@@ -16,6 +17,7 @@ import {
  */
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme()
+  const { t } = useTranslation()
   const [mounted, setMounted] = useState(false)
 
   // 服务端渲染时不知道用户的主题，先渲染成一个中性的图标，挂上之后再换。
@@ -26,7 +28,7 @@ export function ThemeToggle() {
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
-        <Button variant='ghost' size='icon' aria-label='切换主题'>
+        <Button variant='ghost' size='icon' aria-label={t('shell.toggleTheme')}>
           {mounted && theme === 'dark' ? (
             <Moon className='size-4' />
           ) : mounted && theme === 'light' ? (
@@ -39,15 +41,15 @@ export function ThemeToggle() {
       <DropdownMenuContent align='end'>
         <DropdownMenuItem onSelect={() => setTheme('light')}>
           <Sun className='size-4' />
-          浅色
+          {t('shell.themeLight')}
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => setTheme('dark')}>
           <Moon className='size-4' />
-          深色
+          {t('shell.themeDark')}
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => setTheme('system')}>
           <Monitor className='size-4' />
-          跟随系统
+          {t('shell.themeSystem')}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

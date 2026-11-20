@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { type Column } from '@tanstack/react-table'
 import {
   ArrowDownIcon,
@@ -26,6 +27,7 @@ export function DataTableColumnHeader<TData, TValue>({
   title,
   className,
 }: DataTableColumnHeaderProps<TData, TValue>) {
+  const { t } = useTranslation()
   if (!column.getCanSort()) {
     return <div className={cn(className)}>{title}</div>
   }
@@ -52,18 +54,18 @@ export function DataTableColumnHeader<TData, TValue>({
         <DropdownMenuContent align='start'>
           <DropdownMenuItem onClick={() => column.toggleSorting(false)}>
             <ArrowUpIcon className='size-3.5 text-muted-foreground/70' />
-            升序
+            {t('table.sortAsc')}
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => column.toggleSorting(true)}>
             <ArrowDownIcon className='size-3.5 text-muted-foreground/70' />
-            降序
+            {t('table.sortDesc')}
           </DropdownMenuItem>
           {column.getCanHide() && (
             <>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => column.toggleVisibility(false)}>
                 <EyeOffIcon className='size-3.5 text-muted-foreground/70' />
-                隐藏这一列
+                {t('table.hideColumn')}
               </DropdownMenuItem>
             </>
           )}

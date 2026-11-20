@@ -1,7 +1,19 @@
 import { type LinkProps } from '@tanstack/react-router'
 
+/** 导航标题是词条键，渲染边界再翻译。 */
+type NavTitleKey =
+  | 'shell.navOverview'
+  | 'shell.navGateway'
+  | 'shell.navPlatforms'
+  | 'shell.navPlugins'
+  | 'shell.navQuotas'
+  | 'shell.navCheckin'
+  | 'shell.navUsage'
+  | 'shell.navModels'
+  | 'shell.navConfig'
+
 type BaseNavItem = {
-  title: string
+  title: NavTitleKey
   badge?: string
   icon?: React.ElementType
 }
@@ -19,7 +31,7 @@ type NavCollapsible = BaseNavItem & {
 type NavItem = NavCollapsible | NavLink
 
 type NavGroup = {
-  title: string
+  title: NavTitleKey
   items: NavItem[]
 }
 

@@ -12,6 +12,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from '@/components/ui/sidebar'
+import { useTranslation } from 'react-i18next'
 import { LogOut, ShieldCheck } from 'lucide-react'
 import { clearToken } from '@/features/auth/use-admin-token'
 
@@ -20,6 +21,7 @@ import { clearToken } from '@/features/auth/use-admin-token'
  * 和「忘掉令牌」。
  */
 export function NavUser() {
+  const { t } = useTranslation()
   const { isMobile } = useSidebar()
 
   return (
@@ -35,8 +37,8 @@ export function NavUser() {
                 <ShieldCheck className='size-4' />
               </div>
               <div className='grid flex-1 text-start text-sm leading-tight'>
-                <span className='truncate font-semibold'>访问令牌</span>
-                <span className='truncate text-xs'>已保存在这台机器上</span>
+                <span className='truncate font-semibold'>{t('shell.token')}</span>
+                <span className='truncate text-xs'>{t('shell.tokenStored')}</span>
               </div>
             </SidebarMenuButton>
           </DropdownMenuTrigger>
@@ -48,7 +50,7 @@ export function NavUser() {
           >
             <DropdownMenuLabel className='p-0 font-normal'>
               <div className='px-1 py-1.5 text-start text-sm'>
-                访问令牌保存在这台机器的浏览器里，清除后下次打开面板需要重新填写。
+                {t('shell.tokenHint')}
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
@@ -57,7 +59,7 @@ export function NavUser() {
               onClick={() => clearToken()}
             >
               <LogOut />
-              清除访问令牌
+              {t('shell.clearToken')}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
