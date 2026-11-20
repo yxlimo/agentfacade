@@ -304,6 +304,18 @@ def show_command(argv: list, prompt: str) -> str:
     return f"{head} {tail}"
 
 
+def read_opencode_help(runner=None, timeout: int = 60) -> str:
+    """读 `opencode run --help`，用来核对我们传的 flag 是否真的存在。
+
+    runner 可注入（单测对着录制的输出跑）；CLI 默认还是真跑那条命令。
+    """
+    run = runner or common.run_command
+    code, stdout, stderr = run(["opencode", "run", "--help"], timeout=timeout)
+    if code != 0:
+        return ""
+    return (stdout or "") + (stderr or "")
+
+
 def deliver(todo_path: pathlib.Path, client: str, session: dict, prompt: str, dry_run: bool = False, timeout: int = DEFAULT_TIMEOUT, runner=None) -> tuple:
     """把待办发出去，成功了把待办改名存档。
 

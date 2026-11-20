@@ -11,7 +11,6 @@ import datetime
 import json
 import os
 import pathlib
-import subprocess
 import sys
 import tempfile
 import typing
@@ -22,6 +21,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import buddy_todo  # noqa: E402
 import common  # noqa: E402
+
+
+HELP_FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "opencode-run-help.txt"
 
 
 def health_payload(accounts) -> dict:
@@ -448,38 +450,47 @@ class SendCommandTest(unittest.TestCase):
         )
 
 
-class OpenCodeFlagsTest(unittest.TestCase):
+class OpencodeFlagsTest(unittest.TestCase):
     """我们传的 flag 必须真的存在于 `opencode run`。
 
     之前 send_command 传了 --prompt（opencode run 的消息是位置参数，没有这个
     flag），真实发送时退 1、stderr 只有 "ERROR"，而单测断言的正是那条错命令，
-    所以一路绿灯。这里改成对着 --help 校验，flag 不存在就红。
+    所以一路绿灯。这里对着录制的 --help 输出校验，flag 不存在就红。
+    读帮助的那条命令走注入的 runner，测试不启真子进程、不依赖本机是否装了
+    opencode，也不再靠 skip 掩盖没校验到的情况。
     """
 
-    help_text: str
+    def fake_runner(self, stdout="", stderr="", code=0):
+        calls = []
 
-    def setUp(self):
-        self.help_text = self._help()
+        def run(argv, cwd=None, timeout=None):
+            calls.append({"argv": list(argv), "cwd": cwd, "timeout": timeout})
+            return code, stdout, stderr
 
-    def _help(self) -> str:
-        try:
-            out = subprocess.run(
-                ["opencode", "run", "--help"],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            self.skipTest("本机没有 opencode，跳过 flag 校验")
-        text = out.stdout + out.stderr
-        if "[<message...>]" not in text:
-            self.skipTest("opencode run --help 的输出形状变了，跳过")
-        return text
+        return run, calls
 
-    def _documented(self):
+    def help_text(self):
+        return HELP_FIXTURE.read_text(encoding="utf-8")
+
+    def test_reads_help_through_the_injected_runner_with_exact_arguments(self):
+        run, calls = self.fake_runner(stdout=self.help_text())
+        text = buddy_todo.read_opencode_help(runner=run)
+        self.assertEqual(text, self.help_text())
+        self.assertEqual(calls, [{"argv": ["opencode", "run", "--help"], "cwd": None, "timeout": 60}])
+
+    def test_failed_help_command_returns_no_text(self):
+        run, calls = self.fake_runner(stdout="help text", stderr="boom", code=1)
+        self.assertEqual(buddy_todo.read_opencode_help(runner=run), "")
+        self.assertEqual(len(calls), 1)
+
+    def test_stderr_is_part_of_the_help_output(self):
+        run, _calls = self.fake_runner(stdout="", stderr="USAGE\n")
+        self.assertEqual(buddy_todo.read_opencode_help(runner=run), "USAGE\n")
+
+    def _documented(self, text):
         # 帮助里每行形如 "  --session, -s string    会话 id"
         long_flags, short_flags = set(), set()
-        for line in self.help_text.splitlines():
+        for line in text.splitlines():
             for token in line.replace(",", " ").split():
                 if token.startswith("--"):
                     long_flags.add(token.rstrip(","))
@@ -488,13 +499,17 @@ class OpenCodeFlagsTest(unittest.TestCase):
         return long_flags, short_flags
 
     def test_the_message_is_a_positional_argument(self):
-        self.assertIn("message", self.help_text)
-        self.assertIn("[<message...>]", self.help_text)
+        text = self.help_text()
+        self.assertIn("message", text)
+        self.assertIn("[<message...>]", text)
 
     def test_every_flag_we_pass_is_documented(self):
+        run, calls = self.fake_runner(stdout=self.help_text())
+        text = buddy_todo.read_opencode_help(runner=run)
         session = {"client": "opencode", "id": "ses_e8f1b3e2cffeh5"}
         argv = buddy_todo.send_command("opencode", session, "继续")
-        long_flags, short_flags = self._documented()
+        long_flags, short_flags = self._documented(text)
+        self.assertEqual(argv[1:4], ["run", "-s", "ses_e8f1b3e2cffeh5"])
         for part in argv[1:]:
             if part == "--":
                 # 标准的「后面全是位置参数」分隔符，不是 flag
@@ -503,6 +518,7 @@ class OpenCodeFlagsTest(unittest.TestCase):
                 self.assertIn(part, long_flags, f"{part} 不是 opencode run 的 flag")
             elif part.startswith("-") and len(part) == 2:
                 self.assertIn(part, short_flags, f"{part} 不是 opencode run 的 flag")
+        self.assertEqual(calls[0]["argv"], ["opencode", "run", "--help"])
 
     def test_the_prompt_is_the_last_argument(self):
         session = {"client": "opencode", "id": "ses_e8f1b3e2cffeh5"}

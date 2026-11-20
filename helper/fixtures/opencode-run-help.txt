@@ -1,0 +1,25 @@
+DESCRIPTION
+  Run OpenCode with a message
+
+USAGE
+  opencode run [flags] [<message...>]
+
+ARGUMENTS
+  message... string    Message to send (optional)
+
+FLAGS
+  --continue, -c            Continue the last session
+  --session, -s string      Session ID to continue, or to create if it does not exist
+  --fork                    Fork the session before continuing
+  --worktree, -w [=name]    Start a new session in a new git worktree, optionally with this name
+  --model, -m string        Model to use in the format provider/model#variant
+  --agent string            Agent to use
+  --format choice           Output format (choices: default, json)
+  --file, -f string         File to attach to the message
+  --title string            Session title
+  --archived                Create the session archived so it stays out of session lists (useful for scripted or CI runs)
+  --thinking                Show thinking blocks
+  --auto                    Auto-approve permissions that are not explicitly denied
+
+GLOBAL FLAGS
+  --help, -h                                                          Show help information
