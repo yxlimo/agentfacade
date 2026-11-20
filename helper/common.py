@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """buddy-helper 共用的那几件：读网关、找会话、跑命令、归档。
 
-只用标准库。两个脚本（buddy_sync.py / buddy_todo.py）都从这里取东西，
-单测（test_buddy.py）也是拿这里当桩来测。
+只用标准库。buddy_todo.py 从这里取东西，单测（test_buddy.py）也是拿这里当桩来测。
 """
 from __future__ import annotations
 
