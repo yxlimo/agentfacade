@@ -5,14 +5,18 @@
 
 import { workbuddyCatalogModels } from "../catalog-models.ts";
 import {
+  currentHealthSnapshot,
   fromUpstreamStatus,
+  refusedByCurrentSession,
   registerKind,
   sessionOnlyPlan,
+  vendorProbeOf,
   type HealthSnapshot,
   type ProviderRow,
   type QuotaView,
 } from "./shared.ts";
-import { regionFrom, workbuddyStatus } from "../workbuddy/auth.ts";
+import { CredentialState } from "../gen/agentfacade/admin/v1/admin_pb.ts";
+import { loadSession as loadWorkBuddySession, regionFrom, workbuddyStatus } from "../workbuddy/auth.ts";
 import { refreshSession as refreshWorkBuddySession } from "../workbuddy/auth.ts";
 import { runWorkBuddyBenefits } from "../workbuddy/benefits.ts";
 import { workbuddyPublishList } from "../workbuddy/models.ts";
@@ -25,9 +29,19 @@ import type { WorkBuddyResources, WorkBuddySnapshotEntry } from "../workbuddy/re
  * 数字都是平台自己的账本：剩下的、已经用掉的、以及每一批积分的到期时刻。
  * 读不到账本就说读不到 —— 不拿签到积分编一条批次出来。
  */
+function workbuddyProbe(providerId: string, snapshot: HealthSnapshot | null | undefined) {
+  return vendorProbeOf((snapshot?.workbuddy?.[providerId] as WorkBuddySnapshotEntry | undefined)?.resources);
+}
+
+function workbuddyRefused(providerId: string, snapshot?: HealthSnapshot | null): boolean {
+  const loginAtMs = Number(loadWorkBuddySession(providerId)?.loginAtMs ?? 0);
+  return refusedByCurrentSession([workbuddyProbe(providerId, snapshot ?? currentHealthSnapshot())], loginAtMs);
+}
+
 function workbuddyQuotas(provider: ProviderRow, snapshot: HealthSnapshot): QuotaView[] {
-  const entry = snapshot.workbuddy?.[provider.id] as WorkBuddySnapshotEntry | undefined;
-  const resources = entry?.resources;
+  const probe = workbuddyProbe(provider.id, snapshot);
+  if (!probe || probe.state !== "ok") return [];
+  const resources = probe.value as WorkBuddyResources;
   if (!resources) return [];
   const used = resources.groups.reduce((sum, g) => sum + Number(g.used ?? 0), 0);
   return [
@@ -89,8 +103,15 @@ registerKind({
   // 推理用的就是登录会话：access token 本身是推理凭据。
   inferWith: "session",
   // 凭据只有登录会话。
-  credentials: sessionOnlyPlan({ title: "WorkBuddy 的凭据" }),
-  credential: (provider) => fromUpstreamStatus(workbuddyStatus(provider.id), "session"),
+  credentials: sessionOnlyPlan({
+    title: "WorkBuddy 的凭据",
+    refused: (accountId) => workbuddyRefused(accountId),
+  }),
+  credential: (provider) => {
+    const view = fromUpstreamStatus(workbuddyStatus(provider.id), "session");
+    if (!workbuddyRefused(provider.id)) return view;
+    return { ...view, status: CredentialState.ERROR, detail: "令牌被上游拒绝，需重新登录" };
+  },
   // 目录是区域的：cn 和 global 各自发布一份，不能共用。发布的那一份不是抓回来的
   // 那一份：cn 以代码表为准，上游只补字段（见 workbuddyPublishList）。
   models: (provider) => workbuddyCatalogModels(workbuddyPublishList(regionFrom(provider.region))),
@@ -102,9 +123,9 @@ registerKind({
   },
   outOfCredits: (provider, snapshot) => {
     // 平台账本里的总余额。读不到就说「不知道」：不知道不算用尽。
-    const entry = snapshot.workbuddy?.[provider.id] as WorkBuddySnapshotEntry | undefined;
-    const resources = entry?.resources;
-    if (!resources) return false;
+    const probe = workbuddyProbe(provider.id, snapshot);
+    if (!probe || probe.state !== "ok") return false;
+    const resources = probe.value as WorkBuddyResources;
     return Number(resources.total ?? 0) <= 0;
   },
 });

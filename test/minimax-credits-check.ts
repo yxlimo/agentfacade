@@ -422,7 +422,7 @@ if (!minimaxId) throw new Error("账号没有建出来");
 sessionPlanHits = 0;
 keyPlanHits = 0;
 const noSession = await miniMaxCodeTokenPlan(minimaxId);
-check("没有会话就是 null", noSession === null, JSON.stringify(noSession));
+check("没有会话就是 missing 结论", (noSession as any)?.state === "missing", JSON.stringify(noSession));
 check(
   "没有会话就不打上游（连旧的那条路也不走）",
   sessionPlanHits === 0 && keyPlanHits === 0,
@@ -442,7 +442,7 @@ keyPlanHits = 0;
 const withSession = await miniMaxCodeTokenPlan(minimaxId);
 check(
   "有会话就读到了套餐额度",
-  (withSession as any)?.windows?.length === 1,
+  (withSession as any)?.state === "ok" && (withSession as any)?.value?.windows?.length === 1,
   JSON.stringify(withSession),
 );
 check(

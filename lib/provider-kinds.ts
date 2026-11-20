@@ -434,12 +434,15 @@ export interface ZcodeClaimSnapshot {
  * 按上游分开：两个同类的上游各有各的数字。
  */
 export interface HealthSnapshot {
-  qoder: Record<string, { account: unknown; credits: unknown; quota?: unknown }>;
+  qoder: Record<string, { account: unknown; credits: unknown; quota?: VendorProbe<unknown> }>;
   minimax: Record<
     string,
     {
       balance: unknown;
       tokenPlan: unknown;
+      /** 两次额度探测的结论（四种，见 VendorProbe）。 */
+      balanceProbe?: VendorProbe<unknown>;
+      tokenPlanProbe?: VendorProbe<unknown>;
       credits: unknown;
       /** 积分，以及「plan 见底后自动扣积分」的开关：plan 窗口见底时看这两个。 */
       points?: { amount: number | null; at: number };
@@ -457,7 +460,7 @@ export interface HealthSnapshot {
    * 快照刷新。
    */
   zcode: Record<string, { quota: unknown; claim?: ZcodeClaimSnapshot }>;
-  workbuddy: Record<string, { credits: unknown }>;
+  workbuddy: Record<string, { credits: unknown; resources?: VendorProbe<unknown> }>;
   /**
    * 额度插件问回来的结论：插件 id → 账号 id → 那一次的结论。
    *

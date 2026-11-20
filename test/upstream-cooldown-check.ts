@@ -237,7 +237,11 @@ let wbId = "";
     workbuddy: {
       [wbId]: {
         credits: { daily: 0 },
-        resources: { total: 0, plan: "体验版", paid: false, groups: [], lots: [] },
+        resources: {
+          state: "ok",
+          at: now,
+          value: { total: 0, plan: "体验版", paid: false, groups: [], lots: [] },
+        },
       },
     },
   });
@@ -256,7 +260,11 @@ console.log("额度：签到积分为 0 但账本还有余额，不算用尽");
     workbuddy: {
       [wbId]: {
         credits: { daily: 0 },
-        resources: { total: 1867.97, plan: "体验版", paid: false, groups: [], lots: [] },
+        resources: {
+          state: "ok",
+          at: now,
+          value: { total: 1867.97, plan: "体验版", paid: false, groups: [], lots: [] },
+        },
       },
     },
   });

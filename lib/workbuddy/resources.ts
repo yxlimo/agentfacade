@@ -7,6 +7,13 @@
 
 import { loadSession as loadWorkBuddySession } from "./auth.ts";
 import { dataOf, workbuddyApi, type ApiResult } from "./api.ts";
+import {
+  vendorFailed,
+  vendorMissing,
+  vendorOk,
+  vendorUnauthorized,
+  type VendorProbe,
+} from "../provider-kinds.ts";
 
 /** The summary endpoint. Note: this one has no /v2 prefix. */
 const SUMMARY_PATH = "/billing/meter/get-user-resource-summary";
@@ -57,8 +64,8 @@ export interface WorkBuddyResources {
 export interface WorkBuddySnapshotEntry {
   /** The check-in status; the shape is lib/workbuddy/credits.ts's. */
   credits: unknown;
-  /** The ledger; null when the platform did not answer. */
-  resources?: WorkBuddyResources | null;
+  /** The ledger; a four-state conclusion, not a bare value. */
+  resources?: VendorProbe<WorkBuddyResources>;
 }
 
 /** A number the platform sends as a string; a broken one is zero. */
@@ -141,15 +148,17 @@ export function parseWorkBuddyResources(summaryData: any, packagesData: any = nu
 /** How the platform is asked for the ledger. */
 export type WorkBuddyApiCall = (path: string, body?: unknown) => Promise<ApiResult>;
 
+export type WorkBuddyResourcesProbe = VendorProbe<WorkBuddyResources>;
+
 /**
- * The ledger, from the platform.
+ * The ledger, from the platform, as a four-state conclusion.
  *
- * Null means "unknown" — the account has no session, the platform refused, or
- * the answer was empty. It never means "no credits".
+ * `missing` says no session, `unauthorized` says 401/403, `failed` says the
+ * platform answered without a usable answer. None of them means "no credits".
  */
-export async function fetchWorkBuddyResources(providerId = "workbuddy-cn"): Promise<WorkBuddyResources | null> {
+export async function fetchWorkBuddyResources(providerId = "workbuddy-cn"): Promise<WorkBuddyResourcesProbe> {
   const session = loadWorkBuddySession(providerId);
-  if (!session) return null;
+  if (!session) return vendorMissing();
   const call: WorkBuddyApiCall = (path, body) => workbuddyApi(session, path, "POST", body ?? {}, providerId);
   return fetchWorkBuddyResourcesWith(call);
 }
@@ -160,16 +169,20 @@ export async function fetchWorkBuddyResources(providerId = "workbuddy-cn"): Prom
  * Split out so the parsing can be tested without a network: the caller
  * decides how the two answers come back.
  */
-export async function fetchWorkBuddyResourcesWith(call: WorkBuddyApiCall): Promise<WorkBuddyResources | null> {
+export async function fetchWorkBuddyResourcesWith(call: WorkBuddyApiCall): Promise<WorkBuddyResourcesProbe> {
   let summary: ApiResult;
   try {
     summary = await call(SUMMARY_PATH, {});
-  } catch {
-    return null;
+  } catch (e) {
+    return vendorFailed(`问不到账本：${(e as Error)?.message ?? String(e)}`);
   }
-  if (!summary || summary.status !== 200) return null;
+  if (!summary) return vendorFailed("账本查询没有答复");
+  if (summary.status === 401 || summary.status === 403) {
+    return vendorUnauthorized(`上游拒绝了这把令牌（HTTP ${summary.status}）`);
+  }
+  if (summary.status !== 200) return vendorFailed(`上游答了 HTTP ${summary.status}`);
   const data = dataOf(summary.body);
-  if (!data) return null;
+  if (!data) return vendorFailed("上游的答复里没有数据");
 
   // The lots are asked for by the codes the summary hands out.
   const codes = Array.isArray(data.Packages)
@@ -185,5 +198,5 @@ export async function fetchWorkBuddyResourcesWith(call: WorkBuddyApiCall): Promi
       packagesData = null;
     }
   }
-  return parseWorkBuddyResources(data, packagesData);
+  return vendorOk(parseWorkBuddyResources(data, packagesData));
 }

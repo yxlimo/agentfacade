@@ -5,24 +5,46 @@
 
 import { minimaxCatalogModels } from "../catalog-models.ts";
 import {
+  currentHealthSnapshot,
   fromUpstreamStatus,
   isIgnoredPlanWindow,
+  refusedByCurrentSession,
   registerKind,
   tokenPlanView,
+  vendorProbeOf,
   type HealthSnapshot,
   type ProviderRow,
   type QuotaView,
   type TokenPlanView,
   sessionOnlyPlan,
 } from "./shared.ts";
-import { credentialStatus as minimaxCredentialStatus } from "../minimax/auth.ts";
+import { credentialStatus as minimaxCredentialStatus, loginAtMs as minimaxLoginAtMs } from "../minimax/auth.ts";
+import { CredentialState } from "../gen/agentfacade/admin/v1/admin_pb.ts";
 import { refreshSession as refreshMiniMaxSession } from "../minimax/oauth.ts";
 import { runMiniMaxBenefits } from "../minimax/checkin.ts";
 import { MINIMAX_MODELS } from "../minimax/models.ts";
 import { isLotExpired } from "../minimax/points.ts";
 import { MINIMAX_UPSTREAM } from "../minimax/transport.ts";
 
+/** 这一账号那两次探测的结论（余额、套餐）。 */
+function minimaxProbes(providerId: string, snapshot: HealthSnapshot | null | undefined) {
+  const entry = snapshot?.minimax?.[providerId];
+  return {
+    balance: vendorProbeOf(entry?.balanceProbe),
+    plan: vendorProbeOf(entry?.tokenPlanProbe),
+  };
+}
+
+/** 上游拒的是不是现在这一把令牌。 */
+function minimaxRefused(providerId: string, snapshot?: HealthSnapshot | null): boolean {
+  const probes = minimaxProbes(providerId, snapshot ?? currentHealthSnapshot());
+  return refusedByCurrentSession([probes.balance, probes.plan], minimaxLoginAtMs(providerId));
+}
+
 function minimaxQuotas(provider: ProviderRow, snapshot: HealthSnapshot): QuotaView[] {
+  const probes = minimaxProbes(provider.id, snapshot);
+  // 不知道就不摆卡：全 0 的卡说的是「用完了」，而这里我们对额度一无所知。
+  if (probes.plan && probes.plan.state !== "ok") return [];
   const balance = snapshot.minimax?.[provider.id]?.balance as any;
   const plan = minimaxTokenPlan(provider, snapshot);
   // 过期的不算：路由的判定（pointsFromLedger）跳过它们，面板也得跳过 ——
@@ -124,12 +146,14 @@ registerKind({
   credentials: sessionOnlyPlan({
     title: "MiniMax Code 的凭据",
     noKeyNote: "it logs in, there is no key to write",
+    refused: (accountId) => minimaxRefused(accountId),
   }),
   credential: (provider) => {
     const raw = minimaxCredentialStatus(provider.id);
     const view = fromUpstreamStatus(raw, "session");
     if (raw.mode === "file") view.detail = view.detail || "读的是桌面端的 store，刷新由桌面端负责";
-    return view;
+    if (!minimaxRefused(provider.id)) return view;
+    return { ...view, status: CredentialState.ERROR, detail: "令牌被上游拒绝，需重新登录" };
   },
   models: () => minimaxCatalogModels(MINIMAX_MODELS),
   quotas: (provider, snapshot) => minimaxQuotas(provider, snapshot),

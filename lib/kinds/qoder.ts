@@ -5,21 +5,39 @@
 
 import { qoderCatalogModels } from "../catalog-models.ts";
 import {
+  currentHealthSnapshot,
   fromUpstreamStatus,
+  refusedByCurrentSession,
   registerKind,
   sessionOnlyPlan,
+  vendorProbeOf,
   type CreditLotView,
   type HealthSnapshot,
   type ProviderRow,
   type QuotaView,
 } from "./shared.ts";
-import { qoderStatus, regionOf as qoderRegionOf } from "../qoder/auth.ts";
+import { CredentialState } from "../gen/agentfacade/admin/v1/admin_pb.ts";
+import { loadSession as loadQoderSession, qoderStatus, regionOf as qoderRegionOf } from "../qoder/auth.ts";
 import { refreshSession as refreshQoderSession } from "../qoder/auth.ts";
 import { qoderModelsForRegion } from "../qoder/models.ts";
 import { ENDPOINTS as QODER_ENDPOINTS, LEGACY_PATH as QODER_LEGACY_PATH } from "../qoder/auth.ts";
 import { runQoderBenefits } from "../qoder/benefits.ts";
 
+/** 这一账号问额度的那一次结论。 */
+function qoderProbe(providerId: string, snapshot: HealthSnapshot | null | undefined) {
+  return vendorProbeOf(snapshot?.qoder?.[providerId]?.quota);
+}
+
+/** 上游拒的是不是现在这一把令牌。 */
+function qoderRefused(providerId: string, snapshot?: HealthSnapshot | null): boolean {
+  const loginAtMs = Number(loadQoderSession(providerId)?.loginAtMs ?? 0);
+  return refusedByCurrentSession([qoderProbe(providerId, snapshot ?? currentHealthSnapshot())], loginAtMs);
+}
+
 function qoderQuotas(provider: ProviderRow, snapshot: HealthSnapshot): QuotaView[] {
+  const probe = qoderProbe(provider.id, snapshot);
+  // 没问过、被拒、没问到：不许摆一张 0 卡把「不知道」写成「用完了」。
+  if (probe && probe.state !== "ok") return [];
   const credits = snapshot.qoder?.[provider.id]?.credits as any;
   if (!credits) return [];
   const resetsAt = credits.resetsAt ? Date.parse(String(credits.resetsAt)) : 0;
@@ -75,8 +93,15 @@ registerKind({
   // 推理用的就是登录会话：access token 本身是推理凭据。
   inferWith: "session",
   // 凭据只有登录会话。
-  credentials: sessionOnlyPlan({ title: "Qoder 的凭据" }),
-  credential: (provider) => fromUpstreamStatus(qoderStatus(provider.id), "session"),
+  credentials: sessionOnlyPlan({
+    title: "Qoder 的凭据",
+    refused: (accountId) => qoderRefused(accountId),
+  }),
+  credential: (provider) => {
+    const view = fromUpstreamStatus(qoderStatus(provider.id), "session");
+    if (!qoderRefused(provider.id)) return view;
+    return { ...view, status: CredentialState.ERROR, detail: "令牌被上游拒绝，需重新登录" };
+  },
   models: (provider) => qoderCatalogModels(qoderModelsForRegion(qoderRegionOf(provider.id))),
   quotas: (provider, snapshot) => qoderQuotas(provider, snapshot),
   benefits: (provider) => runQoderBenefits(provider.id),

@@ -10,7 +10,28 @@
 // money on the platform account — the cash, the vouchers and the credits, with
 // the credits being the ones that were given rather than paid for.
 
+import {
+  vendorFailed,
+  vendorMissing,
+  vendorOk,
+  vendorUnauthorized,
+  type VendorProbe,
+} from "../provider-kinds.ts";
 import { resolveHost } from "./hosts.ts";
+
+/**
+ * MiniMax 也有 `base_resp.status_code`，它不是 HTTP 状态码：0 是成功，别的
+ * 都是业务码。这几个码说的是「这把令牌不行」，其余非 0 是这一轮问不到。
+ *
+ * 依据：客户端那套接口共用的 base_resp；假上游测试里逐码核对。上游没给一份
+ * 完整的码表，所以只认有明确证据的几个，不把所有非 0 码都算成鉴权失败。
+ */
+const AUTH_FAILURE_CODES = new Set([
+  1004, // login expired / token invalid
+  1005, // unauthorized
+  2062, // token invalid
+]);
+
 
 /**
  * The platform hosts, keyed by region — `cn` / `en`, the keys every MiniMax
@@ -59,27 +80,41 @@ const num = (v: unknown): number => {
  * The OAuth session of the MiniMax Code gateway answers this one, so the
  * gateway can report what its own account has without a second credential.
  */
+export type MiniMaxBalanceProbe = VendorProbe<MiniMaxBalance>;
+
+/** 问余额，答一个结论。没有令牌就是 `missing`：压根没问。 */
 export async function fetchMiniMaxBalance(
   accessToken: string,
   region = "cn",
-): Promise<MiniMaxBalance | null> {
+): Promise<MiniMaxBalanceProbe> {
+  if (!accessToken) return vendorMissing();
   try {
     const r = await fetch(`${minimaxApiHost(region)}/account/query_balance`, {
       headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
       signal: AbortSignal.timeout(15_000),
     });
-    if (!r.ok) return null;
+    if (r.status === 401 || r.status === 403) {
+      return vendorUnauthorized(`上游拒绝了这把令牌（HTTP ${r.status}）`);
+    }
+    if (!r.ok) return vendorFailed(`上游答了 HTTP ${r.status}`);
     const body: any = await r.json().catch(() => null);
-    if (!body || body?.base_resp?.status_code !== 0) return null;
-    return {
+    if (!body) return vendorFailed("上游的答复不是 JSON");
+    const code = Number(body?.base_resp?.status_code ?? 0);
+    if (code !== 0) {
+      if (AUTH_FAILURE_CODES.has(code)) {
+        return vendorUnauthorized(`上游拒绝了这把令牌（业务码 ${code}）`);
+      }
+      return vendorFailed(`上游报了业务错误 ${code}`);
+    }
+    return vendorOk({
       available: num(body.available_amount),
       cash: num(body.cash_balance),
       voucher: num(body.voucher_balance),
       credit: num(body.credit_balance),
       owed: num(body.owed_amount),
-    };
-  } catch {
-    return null;
+    });
+  } catch (e) {
+    return vendorFailed(`问不到余额：${(e as Error)?.message ?? String(e)}`);
   }
 }
 
@@ -130,20 +165,33 @@ function percent(raw: unknown): number {
  * The platform reports the window as "how much is *used*" out of the total, so
  * what is left is the difference between the two.
  */
+export type MiniMaxTokenPlanProbe = VendorProbe<MiniMaxTokenPlan>;
+
 export async function fetchMiniMaxTokenPlanWithSession(
   accessToken: string,
   region = "cn",
-): Promise<MiniMaxTokenPlan | null> {
+): Promise<MiniMaxTokenPlanProbe> {
+  if (!accessToken) return vendorMissing();
   try {
     const r = await fetch(`${minimaxApiHost(region)}/backend/account/token_plan/remains_percent`, {
       headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
       signal: AbortSignal.timeout(15_000),
     });
-    if (!r.ok) return null;
+    if (r.status === 401 || r.status === 403) {
+      return vendorUnauthorized(`上游拒绝了这把令牌（HTTP ${r.status}）`);
+    }
+    if (!r.ok) return vendorFailed(`上游答了 HTTP ${r.status}`);
     const body: any = await r.json().catch(() => null);
-    if (!body || body?.base_resp?.status_code !== 0) return null;
+    if (!body) return vendorFailed("上游的答复不是 JSON");
+    const code = Number(body?.base_resp?.status_code ?? 0);
+    if (code !== 0) {
+      if (AUTH_FAILURE_CODES.has(code)) {
+        return vendorUnauthorized(`上游拒绝了这把令牌（业务码 ${code}）`);
+      }
+      return vendorFailed(`上游报了业务错误 ${code}`);
+    }
     const rows = Array.isArray(body.model_remains) ? body.model_remains : [];
-    return {
+    return vendorOk({
       windows: rows.map((row: any) => ({
         model: String(row?.model_name ?? ""),
         intervalPercent: percent(row?.current_interval_total_percent) - percent(row?.current_interval_used_percent),
@@ -153,8 +201,8 @@ export async function fetchMiniMaxTokenPlanWithSession(
         intervalRemainsMs: num(row?.remains_time),
         weeklyRemainsMs: num(row?.weekly_remains_time),
       })),
-    };
-  } catch {
-    return null;
+    });
+  } catch (e) {
+    return vendorFailed(`问不到套餐额度：${(e as Error)?.message ?? String(e)}`);
   }
 }

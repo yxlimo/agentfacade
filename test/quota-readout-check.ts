@@ -132,8 +132,9 @@ section("MiniMax Code 的套餐额度");
 
 const { fetchMiniMaxTokenPlanWithSession } = await import("../lib/minimax/credits.ts");
 
-const plan = await fetchMiniMaxTokenPlanWithSession("session-token", "cn");
-check("读到了套餐额度", plan !== null, JSON.stringify(plan));
+const planProbe = await fetchMiniMaxTokenPlanWithSession("session-token", "cn");
+check("读到了套餐额度", planProbe.state === "ok", JSON.stringify(planProbe));
+const plan = planProbe.state === "ok" ? planProbe.value : null;
 check(
   "一个窗口",
   plan?.windows.length === 1,

@@ -45,3 +45,10 @@ export function credentialStatus(providerId = "minimax"): Record<string, unknown
 
 export { AuthError };
 export type { Credential };
+
+/** 这份会话是什么时候登录的。用于判「上游拒的是不是现在这一把令牌」。 */
+export function loginAtMs(providerId = "minimax"): number {
+  if (AUTH_MODE === "file") return 0;
+  const session = oauth.loadSession(providerId);
+  return Number(session?.loginAtMs ?? 0);
+}

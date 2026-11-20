@@ -661,19 +661,19 @@ const PACKAGES = {
     if (path.includes("summary")) return { status: 200, body: { data: SUMMARY } };
     return { status: 500, body: { msg: "boom" } };
   });
-  check("明细失败时总量还在", failedLots?.total === Number("1867.97000068"), String(failedLots?.total));
-  check("明细失败时批次是空的", failedLots?.lots.length === 0, String(failedLots?.lots.length));
+  check("明细失败时总量还在", failedLots.state === "ok" && failedLots.value.total === Number("1867.97000068"), JSON.stringify(failedLots));
+  check("明细失败时批次是空的", failedLots.state === "ok" && failedLots.value.lots.length === 0, JSON.stringify(failedLots));
 
   // 总览那一问失败：不知道，不是没有。
   const failedSummary = await fetchWorkBuddyResourcesWith(async () => ({ status: 503, body: { msg: "nope" } }));
-  check("总览失败时是 null", failedSummary === null, String(failedSummary));
+  check("总览失败时是 failed 结论", failedSummary.state === "failed", JSON.stringify(failedSummary));
 
   const answered = await fetchWorkBuddyResourcesWith(async (path) => {
     if (path.includes("summary")) return { status: 200, body: { data: SUMMARY } };
     return { status: 200, body: { data: PACKAGES } };
   });
-  check("两问都到时批次齐了", answered?.lots.length === 2, String(answered?.lots.length));
-  check("两问都到时总量是平台的", answered?.total === Number("1867.97000068"), String(answered?.total));
+  check("两问都到时批次齐了", answered.state === "ok" && answered.value.lots.length === 2, JSON.stringify(answered));
+  check("两问都到时总量是平台的", answered.state === "ok" && answered.value.total === Number("1867.97000068"), JSON.stringify(answered));
 }
 
 console.log("");
@@ -689,7 +689,9 @@ console.log("the panel's numbers");
 
   const { parseWorkBuddyResources } = await import("../lib/workbuddy/resources.ts");
   const resources = parseWorkBuddyResources(SUMMARY, PACKAGES);
-  const with_ = kind?.quotas?.(row, { workbuddy: { "workbuddy-cn": { credits: null, resources } } } as any) ?? [];
+  // 快照里存的是结论，不是裸账本：账本读到了就是 ok。
+  const okResources = { state: "ok" as const, at: Date.now(), value: resources };
+  const with_ = kind?.quotas?.(row, { workbuddy: { "workbuddy-cn": { credits: null, resources: okResources } } } as any) ?? [];
   check("账本在时有一条额度", with_.length === 1, String(with_.length));
   const credits = with_[0]?.credits;
   check("剩余是平台的总积分", credits?.remaining === Number("1867.97000068"), String(credits?.remaining));

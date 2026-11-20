@@ -15,6 +15,13 @@ import {
 } from "./auth.ts";
 import { clearHint } from "../session.ts";
 import { scrubForLog } from "../log-scrub.ts";
+import {
+  vendorFailed,
+  vendorMissing,
+  vendorOk,
+  vendorUnauthorized,
+  type VendorProbe,
+} from "../provider-kinds.ts";
 
 export interface QoderAccountHealth {
   region: QoderRegion;
@@ -50,10 +57,17 @@ export interface QoderCredits {
  * check uses. The answer holds two pots: the plan's own credits and the ones
  * bought on top of it.
  */
-export async function fetchQoderCredits(providerId = "qoder"): Promise<QoderCredits | null> {
+export type QoderCreditsProbe = VendorProbe<QoderCredits>;
+
+/**
+ * Qoder 的鉴权失败有时不在 HTTP 码上：status 接口的 whitelistStatus 会明说
+ * `LoginExpire`。额度接口没给这份码时，只把 401/403 算 unauthorized；
+ * 别的不明业务码算 failed —— 不把「问不到」编成「凭据坏了」。
+ */
+export async function fetchQoderCredits(providerId = "qoder"): Promise<QoderCreditsProbe> {
   const region = regionOf(providerId);
   const session = loadSession(providerId);
-  if (!session) return null;
+  if (!session) return vendorMissing();
   try {
     const cred = await ensureCredential(providerId);
     const r = await fetch(`${ENDPOINTS[region].openapi}/api/v2/quota/usage`, {
@@ -70,23 +84,27 @@ export async function fetchQoderCredits(providerId = "qoder"): Promise<QoderCred
       // 没人知道上游到底答了什么。
       const text = await r.text().catch(() => "");
       console.warn(`[UPSTREAM] Qoder 额度查询 ${r.status}：${scrubForLog(text, 300)}`);
-      return null;
+      if (r.status === 401 || r.status === 403) {
+        return vendorUnauthorized(`上游拒绝了这把令牌（HTTP ${r.status}）`);
+      }
+      return vendorFailed(`上游答了 HTTP ${r.status}`);
     }
     const body = await r.json().catch(() => undefined);
+    if (!body || typeof body !== "object") return vendorFailed("上游的答复不是 JSON 对象");
     const pot = (p: any) => ({
       total: Number(p?.total ?? 0),
       used: Number(p?.used ?? 0),
       remaining: Number(p?.remaining ?? 0),
     });
-    return {
+    return vendorOk({
       region,
       plan: pot(body?.userQuota),
       addOn: pot(body?.addOnQuota),
       quotaExceeded: body?.isQuotaExceeded === true,
       resetsAt: typeof body?.expiresAt === "number" ? new Date(body.expiresAt).toISOString() : null,
-    };
-  } catch {
-    return null;
+    });
+  } catch (e) {
+    return vendorFailed(`问不到额度：${(e as Error)?.message ?? String(e)}`);
   }
 }
 
