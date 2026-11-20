@@ -843,4 +843,8 @@ export const zh = {
   'providerKeys.hint': '留空的格子表示清掉那一段。',
   'providerKeys.cancel': '取消',
   'providerKeys.save': '保存',
+
+  'notFound.page': '页面不存在。',
+  'lang.zh': '中文',
+  'lang.en': 'English',
 }

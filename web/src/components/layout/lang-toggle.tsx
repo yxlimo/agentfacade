@@ -39,13 +39,13 @@ export function LangToggle() {
           onSelect={() => setLang('zh')}
           aria-current={lang === 'zh' ? 'true' : undefined}
         >
-          中文
+          {t('lang.zh')}
         </DropdownMenuItem>
         <DropdownMenuItem
           onSelect={() => setLang('en')}
           aria-current={lang === 'en' ? 'true' : undefined}
         >
-          English
+          {t('lang.en')}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

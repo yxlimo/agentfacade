@@ -858,4 +858,8 @@ export const en: Record<keyof typeof zh, string> = {
   'providerKeys.hint': 'Leave a field empty to clear that credential.',
   'providerKeys.cancel': 'Cancel',
   'providerKeys.save': 'Save',
+
+  'notFound.page': 'Page not found.',
+  'lang.zh': 'Chinese',
+  'lang.en': 'English',
 }
