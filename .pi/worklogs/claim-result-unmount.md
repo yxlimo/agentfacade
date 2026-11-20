@@ -22,3 +22,6 @@
 - e2e / 单测里的按钮定位字面量跟随文案改名，`exact: true` 与断言强度未改
 - 验证：`cd web && pnpm test` 75 文件 / 598 用例全绿；`mise run web:typecheck` 通过
 - grep 旧定位字面量在 `tests/` 与 `web/src/` 已 0 命中
+
+- 收尾门禁：`mise run check:web`（75 文件 598 用例全绿）、`mise run typecheck`（通过）、`mise run check:panel`（25 文件 84 用例全绿，含 panel-zcode-claim 3 条）
+- 界面差异：改动前领取成功后 offer 清空，按钮和「已领到」一起消失，看着像没反应；改动后显示「已领取额度」抬头 + 「已领到「周积分包」」结论，没有可点按钮
