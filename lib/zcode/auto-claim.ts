@@ -177,7 +177,11 @@ export function mergePendingClaims(snapshot: HealthSnapshot): void {
  * pending 里，等下一份快照写出来时并进去。**不造**一份半份快照 —— 造出来的
  * 那个形状不对（少了 qoder / minimax 那些桶），读它的人会崩。
  */
-function record(providerId: string, snapshot: ZcodeClaimSnapshot): void {
+function record(
+  providerId: string,
+  snapshot: ZcodeClaimSnapshot,
+  offers?: number,
+): void {
   const live = peekHealthSnapshot<HealthSnapshot>()?.data ?? null;
   const previous =
     live?.zcode?.[providerId]?.claim ?? pendingClaims.get(providerId)?.claim;
@@ -185,9 +189,13 @@ function record(providerId: string, snapshot: ZcodeClaimSnapshot): void {
   const claimed = Array.from(
     new Set([...(previous?.claimedKeys ?? []), ...(snapshot.claimedKeys ?? [])]),
   );
-  const merged: ZcodeClaimSnapshot = claimed.length
-    ? { ...snapshot, claimedKeys: claimed }
-    : snapshot;
+  // 问到了就把可领的条数带上（0 也是问到了）。问不到的路径不传，快照里
+  // 就没有这一格 —— 面板据此分「没有」与「不知道」。
+  const merged: ZcodeClaimSnapshot = {
+    ...snapshot,
+    ...(!claimed.length ? {} : { claimedKeys: claimed }),
+    ...(offers === undefined ? {} : { offers }),
+  };
   if (!live) {
     pendingClaims.set(providerId, { snapshot: null, claim: merged });
     return;
@@ -327,7 +335,7 @@ export async function claimOnce(providerId: string): Promise<ZcodeClaimSnapshot 
       state: "none",
     });
     const snapshot: ZcodeClaimSnapshot = { at: touch.at, state: "none", message: "" };
-    record(providerId, snapshot);
+    record(providerId, snapshot, offers.length);
     return snapshot;
   }
   const offer = pickOffer(offers);
@@ -340,7 +348,7 @@ export async function claimOnce(providerId: string): Promise<ZcodeClaimSnapshot 
       state: "none",
     });
     const snapshot: ZcodeClaimSnapshot = { at: touch.at, state: "none", message: "" };
-    record(providerId, snapshot);
+    record(providerId, snapshot, offers.length);
     return snapshot;
   }
   const action = describeClaimedPlan(offer.name || offer.planId, offer.planId);
@@ -388,7 +396,7 @@ export async function claimOnce(providerId: string): Promise<ZcodeClaimSnapshot 
       code: 0,
       claimedKeys: [...claimedKeysOf(providerId), key],
     };
-    record(providerId, snapshot);
+    record(providerId, snapshot, offers.length);
     return snapshot;
   }
   if (result.state === "missing") {
@@ -435,7 +443,7 @@ export async function claimOnce(providerId: string): Promise<ZcodeClaimSnapshot 
     planName: offer.name ?? undefined,
     claimedKeys: terminal ? [...claimedKeysOf(providerId), key] : undefined,
   };
-  record(providerId, snapshot);
+  record(providerId, snapshot, offers.length);
   return snapshot;
 }
 

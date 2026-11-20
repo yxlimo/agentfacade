@@ -391,6 +391,13 @@ export interface ZcodeClaimSnapshot {
     | "failed";
   /** 服务端的原话。没有就空串。 */
   message: string;
+  /**
+   * 这一轮投放里可领的投放数（问到了才记；问不到就不写这一格）。
+   *
+   * 记的是事实，不是结论 —— 从 state 倒推的话，以后新增一类提醒就会
+   * 悄悄丢掉。0 是「问到了，没有」，undefined 是「不知道」。
+   */
+  offers?: number;
   /** 领到的计划名。 */
   planName?: string;
   /** 计划什么时候开始算数（ISO）。 */

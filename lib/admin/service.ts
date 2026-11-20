@@ -111,6 +111,7 @@ import {
   upstreamState,
   upstreamStateOf,
   upstreamCooling,
+  claimableAccounts,
   type HealthSnapshot,
   type QuotaView,
   type UpstreamId,
@@ -471,6 +472,8 @@ function platformMessage(
     policies: platformPolicies(id).map(policyEnum),
     // 名下有几个账号。面板用它判「策略有没有用」。
     accountCount: availability ? availability.accounts : upstreamAccountCount(id),
+    // 名下有几个账号有可领的活动额度。只读快照，不给上游多打一个请求。
+    claimableAccounts: claimableAccounts(rows),
     // 名下有没有开着的账号 —— 跟 enabled 同一个答案，两个名字一个是给机器判
     // 断用的、一个是给面板画开关用的，别让它们各说各话。
     hasEnabledAccount: enabled,

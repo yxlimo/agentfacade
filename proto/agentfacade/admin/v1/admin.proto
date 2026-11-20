@@ -116,6 +116,9 @@ message Upstream {
   string quota_plugin_label = 33;
   // 插件要的那几段凭据：按顺序摆在推理 key 后面。
   repeated QuotaPluginField quota_plugin_fields = 34;
+  // 名下有几个账号此刻有可领的活动额度（ZCode 这类）。
+  // 0 = 没有，或者没问过 —— 面板据此不显示提醒；别把「不知道」写成「没有」。
+  int32 claimable_accounts = 35;
 }
 
 // provider 的生效策略：上游名下的多个账号（租户）里，先调谁、失败后换谁。

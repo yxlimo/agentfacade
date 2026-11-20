@@ -83,6 +83,30 @@ function accountsFor(id: string): ProviderRow[] {
   return row ? [row] : [];
 }
 
+/**
+ * 这个平台名下有几个账号有可领的活动额度。
+ *
+ * 只读快照（自动领取循环每半小时写一次），不在这里问上游 —— 面板打开时
+ * 不能因此多打一个上游请求。快照里 offers 记的是「这一轮问到了几个可领」，
+ * 所以问不到的那一格是 undefined，不能当成 0。
+ *
+ * 已经领到（claimed）与服务端说不能再领（already）的账号不算：它们的 offers
+ * 可能是上一轮留下的，这轮再提醒只会是假的。
+ */
+export function claimableAccounts(rows: ProviderRow[]): number {
+  const live = peekHealthSnapshot<HealthSnapshot>()?.data;
+  if (!live) return 0;
+  let count = 0;
+  for (const row of rows) {
+    if (row.kind !== "zcode") continue;
+    const claim = live.zcode?.[row.id]?.claim;
+    if (!claim || claim.offers === undefined || claim.offers <= 0) continue;
+    if (claim.state === "claimed" || claim.state === "already") continue;
+    count++;
+  }
+  return count;
+}
+
 /** 一个上游的开关状态。 */
 export interface UpstreamSwitch {
   /** 现在在生效的值。开关是热的：面板改了，下一个请求就是新的。 */
