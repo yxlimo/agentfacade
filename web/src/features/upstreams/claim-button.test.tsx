@@ -148,7 +148,7 @@ describe('ZCode 账号行的领取按钮', () => {
     renderWithClient({ client, children: <UpstreamsPage /> })
     await open(user)
     await screen.findByText('领取账号')
-    expect(screen.queryByRole('button', { name: '领取' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '领取额度' })).not.toBeInTheDocument()
   })
 
   it('没有 offer 时没有领取按钮', async () => {
@@ -157,7 +157,7 @@ describe('ZCode 账号行的领取按钮', () => {
     renderWithClient({ client, children: <UpstreamsPage /> })
     await open(user)
     await screen.findByText('领取账号')
-    expect(screen.queryByRole('button', { name: '领取' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '领取额度' })).not.toBeInTheDocument()
   })
 
   it('已领取：显示不可点的状态', async () => {
@@ -173,8 +173,8 @@ describe('ZCode 账号行的领取按钮', () => {
     })
     renderWithClient({ client, children: <UpstreamsPage /> })
     await open(user)
-    expect(await screen.findByText('已领取')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '领取' })).not.toBeInTheDocument()
+    expect(await screen.findByText('已领取额度')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '领取额度' })).not.toBeInTheDocument()
     await user.click(screen.getByText('领取账号'))
     expect(claimInputs).toHaveLength(0)
   })
@@ -210,7 +210,7 @@ describe('ZCode 账号行的领取按钮', () => {
     })
     renderWithClient({ client, children: <UpstreamsPage /> })
     await open(user)
-    const button = await screen.findByRole('button', { name: '领取' })
+    const button = await screen.findByRole('button', { name: '领取额度' })
     await user.click(button)
 
     await waitFor(() => expect(runTraceless).toHaveBeenCalledTimes(1))
@@ -231,7 +231,7 @@ describe('ZCode 账号行的领取按钮', () => {
     const { client, claimInputs } = setup()
     renderWithClient({ client, children: <UpstreamsPage /> })
     await open(user)
-    await user.click(await screen.findByRole('button', { name: '领取' }))
+    await user.click(await screen.findByRole('button', { name: '领取额度' }))
 
     const status = await screen.findByRole('status')
     expect(status).toHaveTextContent('交互式验证码通过')
@@ -248,7 +248,7 @@ describe('ZCode 账号行的领取按钮', () => {
     const { client, claimInputs } = setup()
     renderWithClient({ client, children: <UpstreamsPage /> })
     await open(user)
-    await user.click(await screen.findByRole('button', { name: '领取' }))
+    await user.click(await screen.findByRole('button', { name: '领取额度' }))
 
     const status = await screen.findByRole('status')
     expect(status).toHaveTextContent('这台浏览器没能通过验证码')
@@ -266,7 +266,7 @@ describe('ZCode 账号行的领取按钮', () => {
     const { client, claimInputs } = setup()
     renderWithClient({ client, children: <UpstreamsPage /> })
     await open(user)
-    await user.click(await screen.findByRole('button', { name: '领取' }))
+    await user.click(await screen.findByRole('button', { name: '领取额度' }))
 
     const status = await screen.findByRole('status')
     expect(status).toHaveTextContent('还不知道')
@@ -284,7 +284,7 @@ describe('ZCode 账号行的领取按钮', () => {
     const { client } = setup({ claimOutcome: outcome })
     renderWithClient({ client, children: <UpstreamsPage /> })
     await open(user)
-    await user.click(await screen.findByRole('button', { name: '领取' }))
+    await user.click(await screen.findByRole('button', { name: '领取额度' }))
 
     const status = await screen.findByRole('status')
     expect(status).toHaveTextContent(text)
@@ -300,7 +300,7 @@ describe('ZCode 账号行的领取按钮', () => {
     })
     renderWithClient({ client, children: <UpstreamsPage /> })
     await open(user)
-    await user.click(await screen.findByRole('button', { name: '领取' }))
+    await user.click(await screen.findByRole('button', { name: '领取额度' }))
 
     const status = await screen.findByRole('status')
     expect(status).toHaveTextContent('上游说配额不足')
@@ -316,7 +316,7 @@ describe('ZCode 账号行的领取按钮', () => {
     })
     renderWithClient({ client, children: <UpstreamsPage /> })
     await open(user)
-    await user.click(await screen.findByRole('button', { name: '领取' }))
+    await user.click(await screen.findByRole('button', { name: '领取额度' }))
 
     const row = await screen.findByText(/已领到/)
     expect(within(row.parentElement ?? row).getByText(/13:00 生效/)).toBeInTheDocument()

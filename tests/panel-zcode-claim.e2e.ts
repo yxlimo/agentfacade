@@ -146,7 +146,7 @@ test('有 offer + 验证码配置：点领取 → 假 SDK 给 param → 带正�
     const claims = await stub(browser, { captchaAvailable: true, hasOffer: true });
     await openZcodeRow(screen, app);
 
-    await screen.getByRole('button', { name: '领取' }).click();
+    await screen.getByRole('button', { name: '领取额度' }).click();
 
     await expect(screen.getByText(/已领到/)).toBeVisible();
     expect(claims).toHaveLength(1);
@@ -192,7 +192,7 @@ test('假 SDK 报失败：显示「这台浏览器没能通过验证码」，不
     await openZcodeRow(screen, app);
     await browser.evaluate("window.__captchaMode = 'failure'");
 
-    await screen.getByRole('button', { name: '领取' }).click();
+    await screen.getByRole('button', { name: '领取额度' }).click();
 
     const status = screen.getByRole('status');
     await expect(status).toContainText('这台浏览器没能通过验证码');
@@ -209,7 +209,7 @@ test('验证码配置不可用时没有领取按钮（不知道不是没有）',
     account = await addAccount('zcode', '领取测试账号');
     await stub(browser, { captchaAvailable: false, hasOffer: true });
     await openZcodeRow(screen, app);
-    await expect(screen.getByRole('button', { name: '领取', exact: true })).toHaveCount(0);
+    await expect(screen.getByRole('button', { name: '领取额度', exact: true })).toHaveCount(0);
   } finally {
     if (account) await adminRpc('DeleteAccount', { id: account }).catch(() => {});
   }

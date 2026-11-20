@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { runTracelessVerification } from '@/features/upstreams/aliyun-captcha'
 import { wordingOf, wordingOfCaptcha } from '@/features/upstreams/claim-wording'
 import { useClaimZcodePlan, useZcodeClaimStatus } from '@/features/upstreams/claim'
+import { ZcodeClaimOutcome } from '@/gen/agentfacade/admin/v1/admin_pb'
 import type { Account } from '@/gen/agentfacade/admin/v1/admin_pb'
 import type { ClaimWording } from '@/features/upstreams/claim-wording'
 
@@ -14,8 +15,9 @@ import type { ClaimWording } from '@/features/upstreams/claim-wording'
  * 按钮与隐藏容器都在这个组件里：SDK 要求 element/button 两个节点真在页面上，
  * 所以点之前它们必须已经挂载，不能等回调里再建。
  *
- * 显示条件只看后端给的那份状态：`captchaAvailable` 为真且有 offer 才出现。
- * 配置不知道（没下发 / 问不到）时这里什么都不显示 —— 「不知道」不是「不能领」
+ * 本来就没有 offer（且这次没有结论）时才不显示 —— 那说明这里压根不该出现按钮。
+ * 领完后端可能把 offer 撤掉，此时这次的结论不能一起被抹掉：只剩「点了没反应」。
+ * 配置不知道（没下发 / 问不到）时也什么都不显示 —— 「不知道」不是「不能领」
  * 也不是「能领」。
  */
 export function ClaimButton({
@@ -38,6 +40,7 @@ export function ClaimButton({
   const elementRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const [result, setResult] = useState<ClaimWording | null>(null)
+  const [claimed, setClaimed] = useState(false)
   // SDK 只认 CSS 选择器字符串，节点 id 在同一页面里固定且唯一。
   const elementSelector = '#zcode-captcha-element'
   const buttonSelector = '#zcode-captcha-button'
@@ -46,9 +49,30 @@ export function ClaimButton({
   if (status.isPending || status.isError) return null
 
   const data = status.data
-  if (!data?.captchaAvailable || data.offers.length === 0) return null
+  const hasOffer = Boolean(data?.captchaAvailable) && (data?.offers.length ?? 0) > 0
+  // 没 offer 也没这次的结论 = 本来就不该显示；有结论就必须留得住。
+  if (!hasOffer && !result) return null
 
-  const offers = [...data.offers].sort((a, b) => a.priority - b.priority)
+  if (!hasOffer && result) {
+    return (
+      <span className='inline-flex flex-col items-end gap-0.5'>
+        {claimed ? (
+          <span className='text-xs text-muted-foreground'>
+            {t('upstreams.claimed')}
+          </span>
+        ) : null}
+        <span
+          role='status'
+          data-tone={result.error ? 'error' : 'neutral'}
+          className={`max-w-64 text-xs ${result.error ? 'text-destructive' : 'text-muted-foreground'}`}
+        >
+          {result.text}
+        </span>
+      </span>
+    )
+  }
+
+  const offers = [...(data?.offers ?? [])].sort((a, b) => a.priority - b.priority)
   const offer = offers[0]
   if (!offer || offer.alreadyClaimed) {
     return (
@@ -64,6 +88,7 @@ export function ClaimButton({
   const onClick = async () => {
     if (running || !captcha) return
     setResult(null)
+    setClaimed(false)
     if (!elementRef.current || !buttonRef.current) {
       setResult(wordingOfCaptcha('init', t))
       return
@@ -92,6 +117,7 @@ export function ClaimButton({
         captchaRegion: captcha.region,
       })
       const answerWording = wordingOf(answer, t)
+      setClaimed(answer.outcome === ZcodeClaimOutcome.CLAIMED)
       setResult(
         interactiveNotice
           ? {
