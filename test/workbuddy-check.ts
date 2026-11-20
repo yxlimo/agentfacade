@@ -689,7 +689,9 @@ console.log("the panel's numbers");
 
   const { parseWorkBuddyResources } = await import("../lib/workbuddy/resources.ts");
   const resources = parseWorkBuddyResources(SUMMARY, PACKAGES);
-  const with_ = kind?.quotas?.(row, { workbuddy: { "workbuddy-cn": { credits: null, resources } } } as any) ?? [];
+  // 快照里存的是结论，不是裸账本：账本读到了就是 ok。
+  const okResources = { state: "ok" as const, at: Date.now(), value: resources };
+  const with_ = kind?.quotas?.(row, { workbuddy: { "workbuddy-cn": { credits: null, resources: okResources } } } as any) ?? [];
   check("账本在时有一条额度", with_.length === 1, String(with_.length));
   const credits = with_[0]?.credits;
   check("剩余是平台的总积分", credits?.remaining === Number("1867.97000068"), String(credits?.remaining));
