@@ -860,6 +860,6 @@ export const en: Record<keyof typeof zh, string> = {
   'providerKeys.save': 'Save',
 
   'notFound.page': 'Page not found.',
-  'lang.zh': 'Chinese',
+  'lang.zh': '中文',
   'lang.en': 'English',
 }

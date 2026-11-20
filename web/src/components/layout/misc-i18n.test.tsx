@@ -16,8 +16,8 @@ describe('零散页面文案（英文）', () => {
     const user = userEvent.setup({ delay: null })
 
     await user.click(screen.getByRole('button', { name: 'Language' }))
-    expect(screen.getByRole('menuitem', { name: 'Chinese' })).toBeInTheDocument()
+    // 语言名用各自语言的自称，不随界面语言翻译。
+    expect(screen.getByRole('menuitem', { name: '中文' })).toBeInTheDocument()
     expect(screen.getByRole('menuitem', { name: 'English' })).toBeInTheDocument()
-    expect(screen.queryByText('中文')).not.toBeInTheDocument()
   })
 })
