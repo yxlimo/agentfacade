@@ -56,7 +56,7 @@ export function useLoginStatus(loginId: string) {
           const result = await client.getLoginStatus(
             create(GetLoginStatusRequestSchema, { loginId })
           )
-          assertOk(result, '查不到这次登录')
+          assertOk(result, i18n.t('login.statusFailed'))
           return result
         } catch (e) {
           lastError = e
@@ -90,7 +90,7 @@ export function useBeginLogin() {
           accountId: input.accountId ?? '',
         })
       )
-      assertOk(result, '没能开始登录')
+      assertOk(result, i18n.t('login.beginFailed'))
       return result.session
     },
     onError: (error) => {
@@ -107,7 +107,7 @@ export function useCancelLogin() {
       const result = await client.cancelLogin(
         create(CancelLoginRequestSchema, { loginId })
       )
-      assertOk(result, '没取消成')
+      assertOk(result, i18n.t('login.cancelFailed'))
       return result
     },
     onError: (error) => {
@@ -137,14 +137,14 @@ export function useLoginWithPassword() {
           remember: input.remember,
         })
       )
-      assertOk(result, '登录没成功')
+      assertOk(result, i18n.t('login.passwordFailed'))
       return result
     },
     onError: (error) => {
       toast.error(loginErrorText(error))
     },
     onSuccess: (result) => {
-      toast.success(result.message || '已登录')
+      toast.success(result.message || i18n.t('login.passwordDone'))
     },
     onSettled: () => {
       // 登录写成了一份凭据：账号那一行（状态、凭据条数）、平台那份答复、总览、
@@ -171,14 +171,14 @@ export function useExchangeLoginCode() {
           code: input.code,
         })
       )
-      assertOk(result, '换码没成功')
+      assertOk(result, i18n.t('login.exchangeFailed'))
       return result
     },
     onError: (error) => {
       toast.error(loginErrorText(error))
     },
     onSuccess: (result) => {
-      toast.success(result.message || '已切换')
+      toast.success(result.message || i18n.t('login.exchangeDone'))
     },
     onSettled: () => {
       // 换码换回来的是凭据，跟账号密码登录写的是同一处。
@@ -204,14 +204,14 @@ export function useImportLoginToken() {
           token: input.token,
         })
       )
-      assertOk(result, '导入没成功')
+      assertOk(result, i18n.t('login.importFailed'))
       return result
     },
     onError: (error) => {
       toast.error(loginErrorText(error))
     },
     onSuccess: (result) => {
-      toast.success(result.message || '已导入')
+      toast.success(result.message || i18n.t('login.importDone'))
     },
     onSettled: () => {
       // 贴回来的 token 也是一份凭据。

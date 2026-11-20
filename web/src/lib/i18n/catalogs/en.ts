@@ -836,4 +836,26 @@ export const en: Record<keyof typeof zh, string> = {
     'Removing this account also deletes its {{count}} credentials and cannot be undone. The platform and its client address stay unchanged.',
   'quotaPlugins.cancel': 'Cancel',
   'quotaPlugins.delete': 'Remove',
+
+  'login.statusFailed': 'Could not read the login status',
+  'login.beginFailed': 'Could not start the login',
+  'login.cancelFailed': 'Could not cancel the login',
+  'login.passwordFailed': 'Login failed',
+  'login.passwordDone': 'Logged in',
+  'login.exchangeFailed': 'Could not exchange the code',
+  'login.exchangeDone': 'Switched',
+  'login.importFailed': 'Could not import the token',
+  'login.importDone': 'Imported',
+
+  'credentialKind.session': 'Login session',
+  'credentialKind.api_key': 'Inference key',
+  'credentialKind.cookie': 'Quota cookie',
+  'credentialKind.openPlatform': 'Open platform',
+  'credentialKind.title': '{{label}} credentials',
+  'credentialKind.pluginHint': 'One credential required by quota plugin “{{label}}”',
+  'credentialKind.kindsFailed':
+    'Account types are unavailable, so the credential layout is unknown: {{message}}',
+  'providerKeys.hint': 'Leave a field empty to clear that credential.',
+  'providerKeys.cancel': 'Cancel',
+  'providerKeys.save': 'Save',
 }
