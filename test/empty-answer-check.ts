@@ -6,13 +6,16 @@
 // 用纯函数测，不起假上游、不碰数据库。
 
 import fs from "node:fs";
+import { EventEmitter } from "node:events";
 import os from "node:os";
 import path from "node:path";
+import type Koa from "koa";
 
 // 网关的模块加载时就会开库，所以先给它一个自己的数据目录。
 process.env.FACADE_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "buddy-empty-answer-"));
 
-const { isAllThinking, effectiveMaxTokens, budgetUsed } = await import("../lib/router/handle.ts");
+const { isAllThinking, effectiveMaxTokens, budgetUsed, emptyAnswerDetail } = await import("../lib/router/handle.ts");
+const { deliverOpenAIStream } = await import("../lib/router/deliver.ts");
 
 let pass = 0;
 let fail = 0;
@@ -67,6 +70,78 @@ check("两边都没有：未指定", effectiveMaxTokens({}, {}) === "未指定")
 check("用掉 100%", budgetUsed(32000, 32000) === "100%");
 check("用掉 96%", budgetUsed(30690, 32000) === "96%");
 check("上限不是数字：不知道", budgetUsed(100, "未指定") === "?");
+
+/* ------------------------------------------------------------------ *
+ * 上游答 200 但没正文：结束原因与片段结构
+ * ------------------------------------------------------------------ */
+
+class FakeRes extends EventEmitter {
+  writableEnded = false;
+  destroyed = false;
+  setHeader(): void {}
+  flushHeaders(): void {}
+  write(_chunk: string, cb?: (err?: Error | null) => void): boolean {
+    cb?.();
+    return true;
+  }
+  end(): void {
+    this.writableEnded = true;
+  }
+}
+
+function fakeCtx(): Koa.Context {
+  return { res: new FakeRes(), status: 200, respond: true, set(): void {} } as unknown as Koa.Context;
+}
+
+/** 假上游：只有结构，没有正文、思考或工具参数的内容 */
+function fakeStream(frames: unknown[]): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const frame of frames) controller.enqueue(encoder.encode(`data: ${JSON.stringify(frame)}\n\n`));
+      controller.close();
+    },
+  });
+}
+
+async function finishOf(frames: unknown[]): Promise<{ reason?: string; content?: number; thinking?: number; tool?: number }> {
+  const got: { reason?: string; content?: number; thinking?: number; tool?: number } = {};
+  await deliverOpenAIStream(
+    fakeCtx(),
+    fakeStream(frames),
+    "openai",
+    "fake-model",
+    (finish) => Object.assign(got, finish),
+  );
+  return got;
+}
+
+console.log("");
+console.log("上游空答复：结束原因与片段结构");
+
+const reasoningStop = await finishOf([
+  { choices: [{ delta: { reasoning_content: "x" }, finish_reason: null }] },
+  { choices: [{ delta: {}, finish_reason: "stop" }] },
+]);
+const stopDetail = emptyAnswerDetail({ lastFinish: { reason: reasoningStop.reason!, content: reasoningStop.content!, thinking: reasoningStop.thinking!, tool: reasoningStop.tool! } }, "pi");
+check("stop 的结束原因写进日志", stopDetail.includes("结束原因=stop"), stopDetail);
+check("正文0/思考1/工具0 写进日志", stopDetail.includes("片段=正文0/思考1/工具0"), stopDetail);
+console.log(`  log  [UPSTREAM] fake-model 答 200 但没有正文（${stopDetail}）`);
+
+const lengthFinish = await finishOf([
+  { choices: [{ delta: { reasoning_content: "x" }, finish_reason: null }] },
+  { choices: [{ delta: { reasoning_content: "y" }, finish_reason: "length" }] },
+]);
+const lengthDetail = emptyAnswerDetail({ lastFinish: { reason: lengthFinish.reason!, content: lengthFinish.content!, thinking: lengthFinish.thinking!, tool: lengthFinish.tool! } }, "pi");
+check("length 单独可辨", lengthDetail.includes("结束原因=length"), lengthDetail);
+check("length 的思考片段数是 2", lengthDetail.includes("片段=正文0/思考2/工具0"), lengthDetail);
+
+// 没给 usage：isAllThinking 仍然不判，日志字段也只是「未给」，不拿 0 冒充事实。
+const noUsage = { completionTokens: 0, reasoningTokens: 0 };
+check("没给 usage：不判", !isAllThinking(noUsage));
+const noFinishDetail = emptyAnswerDetail({}, "pi");
+check("没给结束原因：未给", noFinishDetail.includes("结束原因=未给"), noFinishDetail);
+check("没给片段：未给", noFinishDetail.includes("片段=未给"), noFinishDetail);
 
 console.log("");
 console.log("结果");
