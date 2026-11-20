@@ -10,6 +10,7 @@
 // 所以改前端必须带上 check:panel。
 
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -17,8 +18,11 @@ import {
   analyzePlan,
   matchRules,
   parseGateTests,
+  parseTomlTasks,
   planTasks,
 } from "../tools/verify-changes.ts";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 let pass = 0;
 let fail = 0;
@@ -71,6 +75,38 @@ check("README.md → 只有 privacy", sameTasks(planTasks(["README.md"]), ["priv
 
 check("mise.toml → check:misc", sameTasks(planTasks(["mise.toml"]), ["check:misc"]));
 
+// ── smoke.sh 里跑的脚本必须有 mise 任务 ──
+//
+// 2026-11-xx 的事故：test/workbuddy-check.ts 只在 smoke.sh 里跑，mise 里没有
+// 任务，反向依赖图建不到它。verify 因此选了 admin/routing/kinds/misc 全绿，
+// 六分钟后的 check 才在 workbuddy-check 的断言上红。守门的判据故意只限于
+// smoke.sh —— 别的脚本有各自的入口，不该被这条管到。
+
+const smokeText = readFileSync(path.join(ROOT, "test/smoke.sh"), "utf8");
+// 只抓「直接跑这个脚本」的行：test/serve.ts 是 smoke.sh 起的网关进程，
+// 后面跟着 --mock 等参数，它不是测试任务，也进不了反向依赖图。
+const smokeScripts = Array.from(
+  smokeText.matchAll(/(?:^|[^\w./-])node\s+--experimental-strip-types\s+(test\/[\w./-]+\.ts)\s*$/gm),
+  (m) => m[1]
+);
+const miseText = readFileSync(path.join(ROOT, "mise.toml"), "utf8");
+const tasks = parseTomlTasks(miseText);
+const scriptsWithTask = new Set(
+  tasks.filter((task) => task.name.startsWith("test:")).map((task) => /(test\/[\w./-]+\.ts)/.exec(task.run)?.[1] ?? "")
+);
+check(
+  "smoke.sh 里调的脚本非空（守门用例本身没瞎解析）",
+  smokeScripts.length > 0,
+  JSON.stringify(smokeScripts)
+);
+for (const script of smokeScripts) {
+  check(
+    `${script} 在 mise.toml 里有 test:* 任务`,
+    scriptsWithTask.has(script),
+    `smoke.sh 里跑了它，但反向依赖图看不到它`
+  );
+}
+
 check(
   "不认识的路径 → 全量 check",
   sameTasks(planTasks(["weird/thing.bin"]), ["check"])
@@ -109,6 +145,21 @@ check(
 check(
   "tools/verify-changes.ts → check:misc",
   sameTasks(planTasks(["tools/verify-changes.ts"]), ["check:misc"])
+);
+
+check(
+  "lib/workbuddy/resources.ts → check:kinds + check:misc（workbuddy-check 反向依赖漏组的事故）",
+  planTasks(["lib/workbuddy/resources.ts"]).includes("check:misc"),
+  planTasks(["lib/workbuddy/resources.ts"]).join(", ")
+);
+
+const workbuddyOutput = planOutput(["lib/workbuddy/resources.ts"]);
+check(
+  "计划里说清是哪条 test:* 任务把 check:misc 拉进来的",
+  workbuddyOutput.includes("test/workbuddy-check.ts") &&
+    workbuddyOutput.includes("经 test:workbuddy]") &&
+    workbuddyOutput.includes("check:misc"),
+  workbuddyOutput.trim()
 );
 
 // ── 面板 e2e 用例在仓库根的 tests/，不在 web/e2e/ ──
@@ -272,7 +323,7 @@ check("解析函数本身对坏输入抛错，而不是返回空图", parseThrew
 const realCatalogOutput = planOutput(["lib/router/handle.ts"]);
 check(
   "真实 mise.toml 的计划里有 import → 门禁的来路说明",
-  /import → check:[a-z]+\s+\[[^\]]+ 被 test\/[^ ]+ 直接 import\]/.test(realCatalogOutput),
+  /import → check:[a-z]+\s+\[[^\]]+ 被 test\/[^ ]+ 直接 import，经 test:[^ ]+\]/.test(realCatalogOutput),
   realCatalogOutput.trim()
 );
 

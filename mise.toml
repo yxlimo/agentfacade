@@ -342,6 +342,10 @@ run = "node --experimental-strip-types test/catalog-parity-check.ts"
 description = "Check that the settings the panel can change take effect at once (no restart)"
 run = "node --experimental-strip-types test/config-restart-check.ts"
 
+[tasks."test:config:sources"]
+description = "Check the settings' three sources and their order (database, environment, code default)"
+run = "node --experimental-strip-types test/config-check.ts"
+
 [tasks."test:admin:config"]
 description = "Check the settings on the panel: the list, the defaults of the timeout knobs, the environment winning over the panel"
 run = "node --experimental-strip-types test/admin-config-check.ts"
@@ -408,6 +412,10 @@ run = "node --experimental-strip-types test/qoder-models-check.ts"
 [tasks."test:workbuddy:catalog"]
 description = "Check the WorkBuddy catalogue in the database: it survives a restart, and a stale one still counts"
 run = "node --experimental-strip-types test/workbuddy-catalog-check.ts"
+
+[tasks."test:workbuddy"]
+description = "Check the WorkBuddy client's fingerprint parts that were aligned with the official one"
+run = "node --experimental-strip-types test/workbuddy-check.ts"
 
 [tasks."test:workbuddy:catalog:tool"]
 description = "Check the tool that writes the WorkBuddy cn table: the values, the filter, and a stable file"
@@ -626,7 +634,7 @@ run = "node --experimental-strip-types tools/verify-image.ts"
 
 [tasks."check:admin"]
 description = "Admin backend and account/credential/platform/model catalogues (lib/admin, lib/credential, lib/platforms, lib/model-catalog)"
-depends = ["test:admin", "test:admin:claimable", "test:admin:state", "test:admin:parity", "test:admin:contract", "test:admin:login", "test:admin:policy", "test:admin:config", "test:admin:regression", "test:cleanup:admin", "test:open-platform:admin", "test:open-platform:kind", "test:open-platform:account", "test:open-platforms", "test:credential:fault", "test:credential:plan", "test:platform:availability", "test:platform:migration", "test:platform:delete", "test:account-id", "test:account-weight", "test:login:record", "test:config", "test:quota:plugin", "test:quota:plugins:three", "test:quota:state", "test:quota", "test:catalog:billing", "test:catalog:billing:panel", "test:catalog:persist", "test:model-catalog", "test:model-overrides", "test:model-traits", "test:model-traits:tool", "test:model-traits:reference", "test:model:duplicate", "test:model-visibility"]
+depends = ["test:admin", "test:admin:claimable", "test:admin:state", "test:admin:parity", "test:admin:contract", "test:admin:login", "test:admin:policy", "test:admin:config", "test:admin:regression", "test:cleanup:admin", "test:open-platform:admin", "test:open-platform:kind", "test:open-platform:account", "test:open-platforms", "test:credential:fault", "test:credential:plan", "test:platform:availability", "test:platform:migration", "test:platform:delete", "test:account-id", "test:account-weight", "test:login:record", "test:config", "test:config:sources", "test:quota:plugin", "test:quota:plugins:three", "test:quota:state", "test:quota", "test:catalog:billing", "test:catalog:billing:panel", "test:catalog:persist", "test:model-catalog", "test:model-overrides", "test:model-traits", "test:model-traits:tool", "test:model-traits:reference", "test:model:duplicate", "test:model-visibility"]
 
 [tasks."check:routing"]
 description = "Account selection, fallback, cooldown, health, usage and the timer jobs (lib/router, lib/cooldown, lib/session, lib/periodic)"
@@ -642,7 +650,7 @@ depends = ["test:minimax:fallback", "test:minimax:credits", "test:minimax:credit
 
 [tasks."check:misc"]
 description = "Catalogue parity, cleanup rules, the helper scripts, the privacy scanner and the offline matrix (test/, helper/, check-privacy.ts)"
-depends = ["test:catalog-parity", "test:cleanup", "test:helper", "test:privacy", "test:verify", "test:probe", "test:fake-upstream", "test:e2e:matrix"]
+depends = ["test:catalog-parity", "test:cleanup", "test:helper", "test:privacy", "test:verify", "test:probe", "test:fake-upstream", "test:e2e:matrix", "test:workbuddy"]
 
 [tasks."test:verify"]
 description = "Check the diff-based gate chooser (which gates each change needs)"
