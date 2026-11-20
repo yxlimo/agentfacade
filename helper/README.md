@@ -1,65 +1,18 @@
 # buddy-helper
 
-两个小脚本，都只用 Python 3 标准库（不用装任何东西）：
+一个脚本，只用 Python 3 标准库（不用装任何东西）：
 
 | 脚本 | 干什么 |
 | --- | --- |
-| `buddy_sync.py` | 把网关公布的模型同步到 opencode / pi 的本地配置；还能只比对不写 |
 | `buddy_todo.py` | 盯着 MiniMax 的额度，额度回来（或到点）之后给当前目录的会话发一条消息 |
 
-跑法（都在主仓根目录下）：
+跑法（在主仓根目录下）：
 
 ```bash
-python3 helper/buddy_sync.py
 python3 helper/buddy_todo.py
 ```
 
-也可以用 mise：`mise run helper:sync`、`mise run helper:todo`。
-
-## 同步模型
-
-网关改了主路由公布的模型（上下文、输出上限、思考档位），客户端配置就悄悄过期了。
-跑一次就把这几处配置对齐：
-
-- `$OPENCODE_CONFIG` 指的那份（没设这个变量就是 `~/.config/opencode/opencode.jsonc`）—— WSL 的 opencode
-- `/mnt/c/Users/<你>/.config/opencode/opencode.jsonc`（Windows 的 opencode，没有这个文件就跳过）
-- `~/.pi/agent/models.json`（WSL 的 pi）
-
-### opencode 写哪一份
-
-opencode 的配置分几份，深合并、后来的覆盖前面的：远端 `.well-known/opencode`、
-全局 `~/.config/opencode/opencode.jsonc`、`$OPENCODE_CONFIG` 指的那份、项目级
-`opencode.jsonc` 与 `.opencode/`、`$OPENCODE_CONFIG_CONTENT`。
-
-全局那份由 nix 管（插件、MCP、compaction 这些基础设施），模型交给本脚本 ——
-写进 `$OPENCODE_CONFIG` 指的那份：
-
-```bash
-export OPENCODE_CONFIG=~/.config/opencode/shay-models.jsonc
-python3 helper/buddy_sync.py
-```
-
-那份文件归本脚本管：没有就建（跳过等于永远不生效），写出来只有 `$schema` 与
-`providers` —— 插件、MCP、compaction 那些在全局那份（nix 管）里，不往模型这份里抄。
-
-opencode 把几份配置深合并，同名键取后者：全局那份里已有的 provider 会被模型
-这份覆盖。
-
-```bash
-python3 helper/buddy_sync.py --dry-run     # 只说要改什么，不写
-python3 helper/buddy_sync.py --providers   # 主路由 + 各上游分组
-python3 helper/buddy_sync.py --check       # 只比对：有差异退出码 1，不写
-```
-
-`--check` 是用来发现「配置过期」的。输出长这样：
-
-```
-  opencode (WSL)  /home/<你>/.config/opencode/opencode.jsonc
-    random-work max_output_tokens: 网关 65536 / 本地 131072
-```
-
-网关地址默认 `http://127.0.0.1:6450`（连不上就试局域网里网关所在机器那份地址），
-`--gateway` 或环境变量 `FACADE_GATEWAY` 可以指定。
+也可以用 mise：`mise run helper:todo`。
 
 ## 盯额度 + 发消息
 
@@ -98,7 +51,7 @@ python3 helper/buddy_todo.py --dry-run    # 只打印要发的命令，不发
 
    自动化时用 `--session <编号或 id>` 跳过这步。
 4. 发出去。pi 走 `pi -p --session <transcript 的绝对路径> -- <内容>`，
-   opencode 走 `opencode run -s <id> --prompt <内容>`。
+   opencode 走 `opencode run -s <id> -- <内容>`。
 5. 发成功了 `.buddy-todo.md` 改名成 `.buddy-todo.sent-<YYYYMMDD-HHMMSS>.md` 存档；
    失败了原样留着，stderr 打印前 500 字。
 
