@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   type ColumnDef,
   type SortingState,
@@ -68,6 +69,7 @@ export function UsageTable({
   upstreamOptions,
   modelOptions,
 }: UsageTableProps) {
+  const { t } = useTranslation()
   const [sorting, setSorting] = useState<SortingState>([])
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({})
 
@@ -95,7 +97,7 @@ export function UsageTable({
       {
         id: 'ts',
         accessorKey: 'ts',
-        header: '时间',
+        header: t('usage.headerTime'),
         cell: ({ row }) => (
           <span className='font-mono text-xs whitespace-nowrap'>
             {formatDateTime(row.original.ts)}
@@ -105,7 +107,7 @@ export function UsageTable({
       {
         id: 'upstream',
         accessorKey: 'upstreamId',
-        header: '平台',
+        header: t('usage.headerPlatform'),
         filterFn: 'equalsString',
         cell: ({ row }) => (
           <span className='text-xs'>{row.original.upstreamId || '—'}</span>
@@ -114,7 +116,7 @@ export function UsageTable({
       {
         id: 'model',
         accessorKey: 'model',
-        header: '模型',
+        header: t('usage.headerModel'),
         filterFn: 'equalsString',
         cell: ({ row }) => (
           <span className='font-mono text-xs'>{row.original.model || '—'}</span>
@@ -123,7 +125,7 @@ export function UsageTable({
       {
         id: 'agent',
         accessorKey: 'agent',
-        header: 'agent',
+        header: t('usage.headerAgent'),
         cell: ({ row }) => (
           <span className='text-xs'>{row.original.agent || '—'}</span>
         ),
@@ -131,7 +133,7 @@ export function UsageTable({
       {
         id: 'session',
         accessorKey: 'sessionId',
-        header: '会话',
+        header: t('usage.headerSession'),
         cell: ({ row }) => (
           <span className='font-mono text-xs' title={row.original.sessionId}>
             {shortSession(row.original.sessionId)}
@@ -143,17 +145,19 @@ export function UsageTable({
         accessorKey: 'parentSessionId',
         // The direct parent of that request. The card above rolls the whole
         // chain up into the main session.
-        header: '上级会话',
+        header: t('usage.headerParentSession'),
         cell: ({ row }) => (
           <span className='font-mono text-xs' title={row.original.parentSessionId}>
-            {row.original.parentSessionId ? shortSession(row.original.parentSessionId) : '主代理'}
+            {row.original.parentSessionId
+              ? shortSession(row.original.parentSessionId)
+              : t('usage.mainAgent')}
           </span>
         ),
       },
       {
         id: 'agentName',
         accessorKey: 'agentName',
-        header: 'agent 名',
+        header: t('usage.headerAgentName'),
         cell: ({ row }) => (
           <span className='text-xs'>{row.original.agentName || '—'}</span>
         ),
@@ -161,14 +165,14 @@ export function UsageTable({
       {
         id: 'client',
         accessorKey: 'client',
-        header: '模拟客户端',
+        header: t('usage.headerClient'),
         cell: ({ row }) => (
           <span className='text-xs'>{row.original.client || '—'}</span>
         ),
       },
       {
         id: 'tokens',
-        header: 'token（入 / 出）',
+        header: t('usage.headerTokens'),
         cell: ({ row }) => (
           <span className='font-mono text-xs whitespace-nowrap'>
             {formatCompact(row.original.promptTokens)} /{' '}
@@ -182,7 +186,7 @@ export function UsageTable({
       {
         id: 'latency',
         accessorKey: 'latencyMs',
-        header: '耗时',
+        header: t('usage.headerLatency'),
         cell: ({ row }) => (
           <span className='font-mono text-xs whitespace-nowrap'>
             {formatMillis(row.original.latencyMs)}
@@ -192,7 +196,7 @@ export function UsageTable({
       {
         id: 'status',
         accessorKey: 'status',
-        header: '结果',
+        header: t('usage.headerStatus'),
         cell: ({ row }) => (
           <div className='grid gap-0.5'>
             <span className='text-xs'>{row.original.status || '—'}</span>
@@ -205,7 +209,7 @@ export function UsageTable({
         ),
       },
     ],
-    []
+    [t]
   )
 
   const table = useReactTable({
@@ -245,7 +249,7 @@ export function UsageTable({
     <div className='flex flex-col gap-4'>
       <DataTableToolbar
         table={table}
-        searchPlaceholder='搜索…'
+        searchPlaceholder={t('usage.searchPlaceholder')}
         extra={
           <>
             <Select
@@ -257,10 +261,10 @@ export function UsageTable({
               }
             >
               <SelectTrigger className='h-8 w-40'>
-                <SelectValue placeholder='全部平台' />
+                <SelectValue placeholder={t('usage.allPlatforms')} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={ALL}>全部平台</SelectItem>
+                <SelectItem value={ALL}>{t('usage.allPlatforms')}</SelectItem>
                 {upstreamOptions.map((option) => (
                   <SelectItem key={option.value} value={option.value}>
                     {option.label}
@@ -277,10 +281,10 @@ export function UsageTable({
               }
             >
               <SelectTrigger className='h-8 w-40'>
-                <SelectValue placeholder='全部模型' />
+                <SelectValue placeholder={t('usage.allModels')} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={ALL}>全部模型</SelectItem>
+                <SelectItem value={ALL}>{t('usage.allModels')}</SelectItem>
                 {modelOptions.map((option) => (
                   <SelectItem key={option.value} value={option.value}>
                     {option.label}
@@ -293,7 +297,7 @@ export function UsageTable({
       />
 
       {isPending ? (
-        <LoadingState label='正在加载明细…' />
+        <LoadingState label={t('usage.loadingEvents')} />
       ) : error ? (
         <ErrorState error={error} onRetry={onRetry} />
       ) : (
@@ -328,7 +332,7 @@ export function UsageTable({
                       colSpan={table.getAllColumns().length}
                       className='h-24 text-center text-muted-foreground'
                     >
-                      没有匹配的记录。
+                      {t('usage.noMatching')}
                     </TableCell>
                   </TableRow>
                 ) : (

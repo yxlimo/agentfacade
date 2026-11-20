@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+// 语言实例：测试里单点渲染时也要有 i18n（app 入口在 main.tsx 里引）。
+import '@/lib/i18n'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
@@ -56,6 +59,7 @@ export function LoginDialog({
   onOpenChange,
   onRestart,
 }: LoginDialogProps) {
+  const { t } = useTranslation()
   const status = useLoginStatus(loginId)
   const cancel = useCancelLogin()
   const session = status.data?.session
@@ -76,7 +80,7 @@ export function LoginDialog({
     // 「说一声」只说一次；关对话框每次都要做（同一个会话可能被重新打开）。
     if (announced.current !== session.loginId) {
       announced.current = session.loginId
-      toast.success(humanMessage(session.message) || '登录完成。')
+      toast.success(humanMessage(session.message) || t('login.loginDone'))
     }
     // 登录好了，账号那一行与平台的状态都变了（从「没登录」变成「就绪」）。
     invalidateServerData(queryClient, 'credentials')
@@ -84,10 +88,10 @@ export function LoginDialog({
   }, [session?.status, session?.loginId, session?.message, onOpenChange, queryClient])
 
   const title = useMemo(() => {
-    if (accountLabel) return `登录 ${accountLabel}`
-    if (session?.upstreamId) return `登录 ${session.upstreamId}`
-    return '登录'
-  }, [accountLabel, session?.upstreamId])
+    if (accountLabel) return t('login.loginAccount', { name: accountLabel })
+    if (session?.upstreamId) return t('login.loginAccount', { name: session.upstreamId })
+    return t('login.title')
+  }, [accountLabel, session?.upstreamId, t])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -109,23 +113,24 @@ export function LoginDialog({
         {!session && status.isPending ? (
           <p className='flex items-center gap-2 py-6 text-sm text-muted-foreground'>
             <Loader2 className='size-4 animate-spin' />
-            正在获取本次登录状态…
+            {t('login.fetchingStatus')}
           </p>
         ) : null}
 
         {!session && status.isError ? (
           <div className='grid gap-3 py-4'>
             <p className='text-sm text-destructive'>
-              本次登录无法继续：{humanMessage(
-                status.error instanceof Error
-                  ? status.error.message
-                  : ''
-              ) || '会话已失效。'}
+              {t('login.cannotContinue', {
+                reason:
+                  humanMessage(
+                    status.error instanceof Error ? status.error.message : ''
+                  ) || t('login.sessionGone'),
+              })}
             </p>
             {onRestart ? (
               <Button variant='outline' onClick={onRestart}>
                 <RotateCcw />
-                重新发起
+                {t('login.restart')}
               </Button>
             ) : null}
           </div>
@@ -134,24 +139,24 @@ export function LoginDialog({
         {session ? (
           <div className='grid gap-4'>
             {session.status === 'approved' ? (
-              <LoginResult ok message='登录完成。' />
+              <LoginResult ok message={t('login.loginDone')} />
             ) : null}
             {session.status === 'failed' ? (
               <LoginResult
                 ok={false}
-                message={humanMessage(session.message) || '登录未成功。'}
+                message={humanMessage(session.message) || t('login.loginFailed')}
                 onRestart={onRestart}
               />
             ) : null}
             {session.status === 'expired' ? (
               <LoginResult
                 ok={false}
-                message='登录窗口已过期，请重新发起登录。'
+                message={t('login.loginExpired')}
                 onRestart={onRestart}
               />
             ) : null}
             {session.status === 'cancelled' ? (
-              <LoginResult ok={false} message='登录已取消。' />
+              <LoginResult ok={false} message={t('login.loginCancelled')} />
             ) : null}
 
             {session.status === 'pending' ? (
@@ -174,7 +179,7 @@ export function LoginDialog({
             onClick={() => onOpenChange(false)}
             disabled={cancel.isPending}
           >
-            关闭
+            {t('common.close')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -192,6 +197,7 @@ function LoginResult({
   message: string
   onRestart?: () => void
 }) {
+  const { t } = useTranslation()
   return (
     <div className='grid gap-3 rounded-lg border p-3'>
       <p
@@ -209,7 +215,7 @@ function LoginResult({
       {onRestart ? (
         <Button variant='outline' size='sm' className='w-fit' onClick={onRestart}>
           <RotateCcw />
-          重新发起
+          {t('login.restart')}
         </Button>
       ) : null}
     </div>
@@ -295,12 +301,13 @@ function AuthorizationForm({
   cancelling: boolean
 }) {
   const remaining = useCountdown(session.expiresAt)
+  const { t } = useTranslation()
 
   return (
     <div className='grid gap-4'>
       {session.authorizationUrl ? (
         <div className='grid gap-1.5'>
-          <Label>授权链接</Label>
+          <Label>{t('login.authorizationUrl')}</Label>
           <a
             href={session.authorizationUrl}
             target='_blank'
@@ -311,19 +318,19 @@ function AuthorizationForm({
             <ExternalLink className='size-3 shrink-0' />
           </a>
           <p className='text-xs text-muted-foreground'>
-            点上面的链接，在你自己的浏览器里同意。
+            {t('login.openInBrowserHint')}
           </p>
         </div>
       ) : null}
 
       {session.userCode ? (
         <div className='grid gap-1.5'>
-          <Label>大字码</Label>
+          <Label>{t('login.userCode')}</Label>
           <p className='rounded-md border bg-muted/40 px-3 py-3 text-center font-mono text-3xl tracking-[0.3em]'>
             {session.userCode}
           </p>
           <p className='text-xs text-muted-foreground'>
-            授权页上要填这个码。
+            {t('login.userCodeHint')}
           </p>
         </div>
       ) : null}
@@ -331,12 +338,12 @@ function AuthorizationForm({
       <div className='grid gap-1'>
         <p className='flex items-center gap-2 text-sm'>
           <Loader2 className='size-4 animate-spin' />
-          正在等你在浏览器里同意…
+          {t('login.waitingApproval')}
         </p>
         <p className='text-xs text-muted-foreground'>
           {remaining > 0
-            ? `还剩 ${formatCountdown(remaining)}，过了就过期了。`
-            : '即将过期。'}
+            ? t('login.remaining', { time: formatCountdown(remaining) })
+            : t('login.expiringSoon')}
         </p>
       </div>
 
@@ -347,7 +354,7 @@ function AuthorizationForm({
         disabled={cancelling}
       >
         {cancelling ? <Loader2 className='animate-spin' /> : null}
-        取消这次登录
+        {t('login.cancelLogin')}
       </Button>
     </div>
   )
@@ -372,6 +379,7 @@ function PasswordForm({
   const [password, setPassword] = useState('')
   const [remember, setRemember] = useState(false)
   const login = useLoginWithPassword()
+  const { t } = useTranslation()
 
   // SenseNova 的 cookie 就是会话本身：留不留密码都一样用得上，后端那边
   // 登录完总是把存的密码擦掉、只留 cookie。所以这个上游不给「记住密码」
@@ -391,17 +399,17 @@ function PasswordForm({
       }}
     >
       <div className='grid gap-1.5'>
-        <Label htmlFor='login-username'>账号名</Label>
+        <Label htmlFor='login-username'>{t('login.username')}</Label>
         <Input
           id='login-username'
           value={username}
           autoComplete='username'
           onChange={(event) => setUsername(event.target.value)}
-          placeholder='平台账号名称'
+          placeholder={t('login.usernamePlaceholder')}
         />
       </div>
       <div className='grid gap-1.5'>
-        <Label htmlFor='login-password'>密码</Label>
+        <Label htmlFor='login-password'>{t('login.password')}</Label>
         <Input
           id='login-password'
           type='password'
@@ -416,12 +424,12 @@ function PasswordForm({
             checked={remember}
             onCheckedChange={(checked) => setRemember(checked === true)}
           />
-          记住密码吗（密码会保存在网关上）
+          {t('login.rememberPassword')}
         </label>
       ) : null}
       <Button type='submit' disabled={login.isPending} className='w-fit'>
         {login.isPending ? <Loader2 className='animate-spin' /> : <KeyRound />}
-        登录
+        {t('login.login')}
       </Button>
     </form>
   )
@@ -445,6 +453,7 @@ function TokenForm({
 }) {
   const [token, setToken] = useState('')
   const importToken = useImportLoginToken()
+  const { t } = useTranslation()
 
   return (
     <form
@@ -455,7 +464,7 @@ function TokenForm({
       }}
     >
       <div className='grid gap-1.5'>
-        <Label>SSO 登录链接</Label>
+        <Label>{t('login.ssoLink')}</Label>
         <a
           href={session.authorizationUrl}
           target='_blank'
@@ -468,26 +477,21 @@ function TokenForm({
       </div>
 
       <div className='rounded-md border border-amber-500/40 bg-amber-500/5 p-3'>
-        <p className='text-sm'>
-          人机验证需要在浏览器中完成，服务器无法代替：
-        </p>
+        <p className='text-sm'>{t('login.captchaNote')}</p>
         <ol className='mt-2 grid gap-1 text-xs text-muted-foreground'>
-          <li>1. 点击上方链接，在浏览器中完成登录（需通过人机验证）。</li>
-          <li>
-            2. 登录完成后，在同一浏览器中按 F12 打开开发者工具 → Application
-            （或 Storage）→ Cookies，找到 uaa-token 并复制其值。
-          </li>
-          <li>3. 将该值粘贴到下方，点击「导入 token」。</li>
+          <li>{t('login.captchaStep1')}</li>
+          <li>{t('login.captchaStep2')}</li>
+          <li>{t('login.captchaStep3')}</li>
         </ol>
       </div>
 
       <div className='grid gap-1.5'>
-        <Label htmlFor='login-token'>uaa-token</Label>
+        <Label htmlFor='login-token'>{t('login.tokenLabel')}</Label>
         <Input
           id='login-token'
           value={token}
           onChange={(event) => setToken(event.target.value)}
-          placeholder='从浏览器 Cookie 中复制的字符串'
+          placeholder={t('login.tokenPlaceholder')}
         />
       </div>
 
@@ -497,7 +501,7 @@ function TokenForm({
         ) : (
           <KeyRound />
         )}
-        导入 token
+        {t('login.importToken')}
       </Button>
     </form>
   )
@@ -517,6 +521,7 @@ function CodeForm({
 }) {
   const [code, setCode] = useState('')
   const exchange = useExchangeLoginCode()
+  const { t } = useTranslation()
 
   return (
     <form
@@ -527,7 +532,7 @@ function CodeForm({
       }}
     >
       <div className='grid gap-1.5'>
-        <Label>登录链接</Label>
+        <Label>{t('login.codeLink')}</Label>
         <a
           href={session.authorizationUrl}
           target='_blank'
@@ -540,12 +545,12 @@ function CodeForm({
       </div>
 
       <div className='grid gap-1.5'>
-        <Label htmlFor='login-code'>授权码</Label>
+        <Label htmlFor='login-code'>{t('login.authCode')}</Label>
         <Input
           id='login-code'
           value={code}
           onChange={(event) => setCode(event.target.value)}
-          placeholder='浏览器地址栏中的 code 参数'
+          placeholder={t('login.codePlaceholder')}
         />
       </div>
 
@@ -555,7 +560,7 @@ function CodeForm({
         ) : (
           <KeyRound />
         )}
-        登录
+        {t('login.login')}
       </Button>
     </form>
   )

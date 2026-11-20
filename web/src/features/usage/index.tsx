@@ -1,4 +1,5 @@
 import { getRouteApi } from '@tanstack/react-router'
+import { useTranslation } from 'react-i18next'
 import { PageShell } from '@/components/layout/page-shell'
 import {
   ErrorState,
@@ -34,16 +35,18 @@ const EVENTS_LIMIT = 500
 
 // 时间窗。契约里的取值：hour / day / week / month，空表示全部。
 // today 是从本地零点算起的一段 —— 早上八点看「今天」，要的是零点到现在。
+// 文案按 key 进词典，窗口值本身是路由参数。
 const WINDOWS = [
-  { value: 'today', label: '今日' },
-  { value: 'hour', label: '最近一小时' },
-  { value: 'day', label: '最近一天' },
-  { value: 'week', label: '最近一周' },
-  { value: 'month', label: '最近一个月' },
-  { value: 'all', label: '全部' },
-]
+  { value: 'today', label: 'usage.windowToday' },
+  { value: 'hour', label: 'usage.windowHour' },
+  { value: 'day', label: 'usage.windowDay' },
+  { value: 'week', label: 'usage.windowWeek' },
+  { value: 'month', label: 'usage.windowMonth' },
+  { value: 'all', label: 'usage.windowAll' },
+] as const
 
 export function UsagePage() {
+  const { t } = useTranslation()
   const search = route.useSearch()
   const navigate = route.useNavigate()
 
@@ -80,8 +83,8 @@ export function UsagePage() {
 
   return (
     <PageShell
-      title='用量'
-      description='token、耗时与明细，只统计真正发到平台的请求。'
+      title={t('usage.title')}
+      description={t('usage.description')}
       actions={
         <Select
           value={windowFilter}
@@ -96,12 +99,12 @@ export function UsagePage() {
           }
         >
           <SelectTrigger className='w-36'>
-            <SelectValue placeholder='时间窗' />
+            <SelectValue placeholder={t('usage.window')} />
           </SelectTrigger>
           <SelectContent>
             {WINDOWS.map((item) => (
               <SelectItem key={item.value} value={item.value}>
-                {item.label}
+                {t(item.label)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -109,34 +112,37 @@ export function UsagePage() {
       }
     >
       {summary.isPending ? (
-        <LoadingState label='正在加载用量…' />
+        <LoadingState label={t('usage.loadingUsage')} />
       ) : summary.isError ? (
         <ErrorState error={summary.error} onRetry={() => summary.refetch()} />
       ) : (
         <>
           <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
             <StatCard
-              title='请求'
+              title={t('usage.requests')}
               value={formatCount(total?.requests ?? 0n)}
-              hint={`成功 ${formatCount(total?.succeeded ?? 0n)} · 失败 ${formatCount(
-                total?.failed ?? 0n
-              )}`}
+              hint={t('common.successFailed', {
+                ok: formatCount(total?.succeeded ?? 0n),
+                bad: formatCount(total?.failed ?? 0n),
+              })}
             />
             <StatCard
-              title='输出 token'
+              title={t('usage.outputTokens')}
               value={formatCompact(total?.completionTokens ?? 0n)}
               hint={
                 total && total.reasoningTokens > 0n
-                  ? `其中推理 ${formatCompact(total.reasoningTokens)}`
+                  ? t('usage.reasoningHint', {
+                      tokens: formatCompact(total.reasoningTokens),
+                    })
                   : undefined
               }
             />
             <StatCard
-              title='输入 token'
+              title={t('usage.inputTokens')}
               value={formatCompact(total?.promptTokens ?? 0n)}
             />
             <StatCard
-              title='总耗时'
+              title={t('usage.totalLatency')}
               value={
                 total && total.requests > 0n
                   ? `${Math.round(
@@ -144,42 +150,51 @@ export function UsagePage() {
                     )} ms`
                   : '—'
               }
-              hint='平均每次'
+              hint={t('usage.perRequestHint')}
             />
           </div>
 
           <div className='grid gap-4 lg:grid-cols-2'>
             <BreakdownCard
-              title='按平台'
+              title={t('usage.byPlatform')}
               buckets={summary.data?.byUpstream ?? []}
             />
-            <BreakdownCard title='按模型' buckets={summary.data?.byModel ?? []} />
+            <BreakdownCard
+              title={t('usage.byModel')}
+              buckets={summary.data?.byModel ?? []}
+            />
           </div>
 
           <div className='grid gap-4 lg:grid-cols-2'>
-            <BreakdownCard title='按 agent' buckets={summary.data?.byAgent ?? []} />
+            <BreakdownCard
+              title={t('usage.byAgent')}
+              buckets={summary.data?.byAgent ?? []}
+            />
             <DaySeries buckets={summary.data?.byDay ?? []} />
           </div>
 
           <div className='grid gap-4 lg:grid-cols-2'>
             {/* 会话太多，只列用得最多的那几个。 */}
             <BreakdownCard
-              title='按会话'
+              title={t('usage.bySession')}
               buckets={(summary.data?.bySession ?? []).slice(0, 10)}
               total={(summary.data?.bySession ?? []).length}
             />
             {/* 主会话：子代理的请求并进主代理那一档。 */}
             <BreakdownCard
-              title='按主会话'
+              title={t('usage.byParentSession')}
               buckets={parentSession.shown}
               total={parentSession.total}
             />
           </div>
 
           <div className='grid gap-4 lg:grid-cols-2'>
-            <BreakdownCard title='按 agent 名' buckets={summary.data?.byAgentName ?? []} />
             <BreakdownCard
-              title='按子代理'
+              title={t('usage.byAgentName')}
+              buckets={summary.data?.byAgentName ?? []}
+            />
+            <BreakdownCard
+              title={t('usage.bySubagent')}
               buckets={subagent.shown}
               total={subagent.total}
             />
@@ -189,8 +204,10 @@ export function UsagePage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className='text-base'>明细</CardTitle>
-          <CardDescription>最近 {EVENTS_LIMIT} 条。</CardDescription>
+          <CardTitle className='text-base'>{t('usage.events')}</CardTitle>
+          <CardDescription>
+            {t('usage.eventsRecent', { count: EVENTS_LIMIT })}
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <UsageTable
@@ -247,20 +264,24 @@ export function BreakdownCard({
     }
   }[]
 }) {
+  const { t } = useTranslation()
   return (
     <Card>
       <CardHeader>
         <CardTitle className='text-base'>{title}</CardTitle>
         {total !== undefined && total > buckets.length ? (
           <CardDescription>
-            共 {total} 条，显示前 {USAGE_TOP_LIMIT}
+            {t('usage.entriesShown', {
+              count: total,
+              shown: USAGE_TOP_LIMIT,
+            })}
           </CardDescription>
         ) : null}
       </CardHeader>
       <CardContent className='grid gap-2'>
         {buckets.length === 0 ? (
           <p className='py-6 text-center text-sm text-muted-foreground'>
-            暂无数据
+            {t('usage.noData')}
           </p>
         ) : (
           buckets.map((bucket) => (
@@ -270,9 +291,11 @@ export function BreakdownCard({
             >
               <span className='truncate font-mono text-xs'>{bucket.key}</span>
               <span className='whitespace-nowrap font-mono text-sm text-muted-foreground'>
-                {formatCount(bucket.summary?.requests ?? 0n)} 次 · 入{' '}
-                {formatCompact(bucket.summary?.promptTokens ?? 0n)} / 出{' '}
-                {formatCompact(bucket.summary?.completionTokens ?? 0n)}
+                {t('usage.requestsTimes', {
+                  count: Number(bucket.summary?.requests ?? 0n),
+                  in: formatCompact(bucket.summary?.promptTokens ?? 0n),
+                  out: formatCompact(bucket.summary?.completionTokens ?? 0n),
+                })}
               </span>
             </div>
           ))
@@ -287,6 +310,7 @@ function DaySeries({
 }: {
   buckets: { key: string; summary?: { requests: bigint } }[]
 }) {
+  const { t } = useTranslation()
   const max = buckets.reduce(
     (peak, bucket) => Math.max(peak, Number(bucket.summary?.requests ?? 0n)),
     0
@@ -295,13 +319,13 @@ function DaySeries({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className='text-base'>按天</CardTitle>
-        <CardDescription>每天的请求数。</CardDescription>
+        <CardTitle className='text-base'>{t('usage.byDay')}</CardTitle>
+        <CardDescription>{t('usage.byDayDescription')}</CardDescription>
       </CardHeader>
       <CardContent>
         {buckets.length === 0 ? (
           <p className='py-6 text-center text-sm text-muted-foreground'>
-            暂无数据
+            {t('usage.noData')}
           </p>
         ) : (
           <div className='flex items-end gap-1 overflow-x-auto pb-2'>
@@ -312,7 +336,10 @@ function DaySeries({
                 <div
                   key={bucket.key}
                   className='flex min-w-10 flex-col items-center gap-1'
-                  title={`${bucket.key}：${value} 次`}
+                  title={t('usage.bucketTitle', {
+                    key: bucket.key,
+                    count: value,
+                  })}
                 >
                   <div
                     className='w-full rounded-t bg-primary/70'
