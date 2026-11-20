@@ -5,6 +5,7 @@
 
 import { minimaxCatalogModels } from "../catalog-models.ts";
 import {
+  currentHealthSnapshot,
   fromUpstreamStatus,
   isIgnoredPlanWindow,
   refusedByCurrentSession,
@@ -36,7 +37,7 @@ function minimaxProbes(providerId: string, snapshot: HealthSnapshot | null | und
 
 /** 上游拒的是不是现在这一把令牌。 */
 function minimaxRefused(providerId: string, snapshot?: HealthSnapshot | null): boolean {
-  const probes = minimaxProbes(providerId, snapshot);
+  const probes = minimaxProbes(providerId, snapshot ?? currentHealthSnapshot());
   return refusedByCurrentSession([probes.balance, probes.plan], minimaxLoginAtMs(providerId));
 }
 

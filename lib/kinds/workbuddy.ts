@@ -5,6 +5,7 @@
 
 import { workbuddyCatalogModels } from "../catalog-models.ts";
 import {
+  currentHealthSnapshot,
   fromUpstreamStatus,
   refusedByCurrentSession,
   registerKind,
@@ -34,7 +35,7 @@ function workbuddyProbe(providerId: string, snapshot: HealthSnapshot | null | un
 
 function workbuddyRefused(providerId: string, snapshot?: HealthSnapshot | null): boolean {
   const loginAtMs = Number(loadWorkBuddySession(providerId)?.loginAtMs ?? 0);
-  return refusedByCurrentSession([workbuddyProbe(providerId, snapshot)], loginAtMs);
+  return refusedByCurrentSession([workbuddyProbe(providerId, snapshot ?? currentHealthSnapshot())], loginAtMs);
 }
 
 function workbuddyQuotas(provider: ProviderRow, snapshot: HealthSnapshot): QuotaView[] {

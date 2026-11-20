@@ -5,6 +5,7 @@
 
 import { qoderCatalogModels } from "../catalog-models.ts";
 import {
+  currentHealthSnapshot,
   fromUpstreamStatus,
   refusedByCurrentSession,
   registerKind,
@@ -30,7 +31,7 @@ function qoderProbe(providerId: string, snapshot: HealthSnapshot | null | undefi
 /** 上游拒的是不是现在这一把令牌。 */
 function qoderRefused(providerId: string, snapshot?: HealthSnapshot | null): boolean {
   const loginAtMs = Number(loadQoderSession(providerId)?.loginAtMs ?? 0);
-  return refusedByCurrentSession([qoderProbe(providerId, snapshot)], loginAtMs);
+  return refusedByCurrentSession([qoderProbe(providerId, snapshot ?? currentHealthSnapshot())], loginAtMs);
 }
 
 function qoderQuotas(provider: ProviderRow, snapshot: HealthSnapshot): QuotaView[] {

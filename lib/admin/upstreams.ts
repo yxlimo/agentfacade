@@ -527,6 +527,15 @@ export async function refreshHealthSnapshot(): Promise<void> {
  * 对不上插件（地址认不出）、或者认出的插件没登记：不写。那不是「问过了」，
  * 是没人去问。
  */
+/**
+ * 单账号探测，给离线测试用：它只填这一行，不碰进程里的全局快照。
+ */
+export async function refreshOneForTest(row: ProviderRow): Promise<HealthSnapshot> {
+  const snapshot = emptySnapshot();
+  await refreshOne(snapshot, row);
+  return snapshot;
+}
+
 async function refreshPluginQuota(snapshot: HealthSnapshot, row: ProviderRow): Promise<void> {
   const pluginId = quotaPluginIdOf(row);
   if (!pluginId) return;

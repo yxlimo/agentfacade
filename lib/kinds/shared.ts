@@ -15,6 +15,7 @@ import { openPlatformOf } from "../open-platforms.ts";
 import { quotaPluginOfAccount } from "../quota-state.ts";
 import { pluginFieldOf, writePluginField } from "../quota-plugin-credentials.ts";
 import { openPlatformKeyOf, writeOpenPlatformKey } from "../open-platform-credentials.ts";
+import { peekHealthSnapshot } from "../health-cache.ts";
 
 export {
   fromUpstreamStatus,
@@ -41,6 +42,11 @@ export {
 } from "../provider-kinds.ts";
 export { isIgnoredPlanWindow } from "../cooldown.ts";
 export type { ProviderRow } from "../providers.ts";
+
+/** 进程里当前那份快照（不落库，重启即无）。 */
+export function currentHealthSnapshot(): HealthSnapshot | null {
+  return peekHealthSnapshot<HealthSnapshot>()?.data ?? null;
+}
 
 /**
  * 上游拒的是不是现在这一把凭据。
