@@ -237,6 +237,10 @@ export const en: Record<keyof typeof zh, string> = {
   'upstreams.policyCurrent': '{{label}} (current)',
 
   'upstreams.claimed': 'Quota claimed',
+  'upstreams.claimableWithName': 'Quota available: {{name}}',
+  'upstreams.claimable': 'Quota available',
+  'upstreams.claimOffer': 'Available: {{name}}',
+  'upstreams.claimedWithName': 'Quota claimed: {{name}}',
   'upstreams.claiming': 'Claiming…',
   'upstreams.claim': 'Claim quota',
   'upstreams.interactiveNotice':

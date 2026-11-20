@@ -251,6 +251,39 @@ describe('上游页的平台列表', () => {
     expect(screen.getByText('没登录')).toBeInTheDocument()
   })
 
+  it('平台行：服务端说有账号可领时显示活动名，0 时什么都不显示', async () => {
+    const client = clientWith([
+      platform({
+        id: 'with-name',
+        label: '活动平台',
+        claimableAccounts: 2,
+        claimableLabel: 'ZCODE WEEKEND BUILD',
+      }),
+      platform({
+        id: 'no-name',
+        label: '无名活动平台',
+        claimableAccounts: 1,
+        claimableLabel: '',
+      }),
+      platform({
+        id: 'none',
+        label: '不可领平台',
+        claimableAccounts: 0,
+        claimableLabel: '',
+      }),
+    ])
+
+    renderWithClient({ client, children: <UpstreamsPage /> })
+
+    expect(
+      await screen.findByText('有额度可领：ZCODE WEEKEND BUILD')
+    ).toBeInTheDocument()
+    expect(screen.getByText('有额度可领')).toBeInTheDocument()
+    const noneRow = screen.getByText('不可领平台').closest('tr')
+    if (!noneRow) throw new Error('找不到那一行')
+    expect(within(noneRow).queryByText(/有额度可领/)).not.toBeInTheDocument()
+  })
+
   it('界面上不提「重启后生效」：开关是热的', async () => {
     const client = clientWith([platform()])
 

@@ -5,6 +5,7 @@ import { useIsFetching } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { ChevronRight, Plus } from 'lucide-react'
 import { PageShell } from '@/components/layout/page-shell'
+import { Badge } from '@/components/ui/badge'
 import {
   EmptyState,
   ErrorState,
@@ -345,6 +346,19 @@ export function UpstreamsPage() {
                           {/* 能不能接由后端说：有开着的账号就是开着的。 */}
                           <div className='grid min-w-24 max-lg:min-w-20 gap-0.5'>
                             <UpstreamStateBadge state={upstream.state} />
+                            {/* 名下有没有账号可领由服务端数好；活动名是上游原话，原样显示。 */}
+                            {upstream.claimableAccounts > 0 ? (
+                              <Badge
+                                variant='outline'
+                                className='w-fit max-w-full whitespace-normal border-amber-500/60 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200'
+                              >
+                                {upstream.claimableLabel
+                                  ? t('upstreams.claimableWithName', {
+                                      name: upstream.claimableLabel,
+                                    })
+                                  : t('upstreams.claimable')}
+                              </Badge>
+                            ) : null}
                             {/* 后端拼好的一句话：为什么现在不能接。 */}
                             {upstream.stateReason ? (
                               <span className='text-xs text-muted-foreground'>

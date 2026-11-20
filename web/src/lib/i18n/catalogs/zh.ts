@@ -229,6 +229,10 @@ export const zh = {
   'upstreams.policyCurrent': '{{label}}（当前）',
 
   'upstreams.claimed': '已领取额度',
+  'upstreams.claimableWithName': '有额度可领：{{name}}',
+  'upstreams.claimable': '有额度可领',
+  'upstreams.claimOffer': '可领：{{name}}',
+  'upstreams.claimedWithName': '已领取额度：{{name}}',
   'upstreams.claiming': '领取额度中',
   'upstreams.claim': '领取额度',
   'upstreams.interactiveNotice': '这台浏览器不支持无感验证，已用交互式验证码通过',

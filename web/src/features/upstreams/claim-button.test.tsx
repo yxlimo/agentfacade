@@ -142,6 +142,46 @@ describe('ZCode 账号行的领取按钮', () => {
     window.history.replaceState(null, '', '/')
   })
 
+  it('offer 带名字时，按钮旁显示可领的活动名', async () => {
+    const user = userEvent.setup({ delay: null })
+    const { client } = setup({
+      status: {
+        captchaAvailable: true,
+        offers: [{
+          campaignId: 'camp-1', planId: 'plan-1', name: 'ZCODE WEEKEND BUILD',
+          priority: 10, alreadyClaimed: false,
+        }],
+      },
+    })
+    renderWithClient({ client, children: <UpstreamsPage /> })
+    await open(user)
+    expect(
+      await screen.findByText('可领：ZCODE WEEKEND BUILD')
+    ).toBeInTheDocument()
+  })
+
+  it('领取成功后 offer 变空：已领取额度那一行仍带活动名', async () => {
+    const user = userEvent.setup({ delay: null })
+    runTraceless.mockResolvedValue(verification('param-TESTONLY'))
+    const { client, statusControl } = setup({
+      planName: 'ZCODE WEEKEND BUILD',
+      status: {
+        captchaAvailable: true,
+        offers: [{
+          campaignId: 'camp-1', planId: 'plan-1', name: 'ZCODE WEEKEND BUILD',
+          priority: 10, alreadyClaimed: false,
+        }],
+      },
+      onClaim: () => statusControl.setOffers([]),
+    })
+    renderWithClient({ client, children: <UpstreamsPage /> })
+    await open(user)
+    await user.click(await screen.findByRole('button', { name: '领取额度' }))
+    expect(
+      await screen.findByText('已领取额度：ZCODE WEEKEND BUILD')
+    ).toBeInTheDocument()
+  })
+
   it('验证码配置不可用时没有领取按钮', async () => {
     const user = userEvent.setup({ delay: null })
     const { client } = setup({ status: { captchaAvailable: false } })
@@ -190,7 +230,7 @@ describe('ZCode 账号行的领取按钮', () => {
     await open(user)
     await user.click(await screen.findByRole('button', { name: '领取额度' }))
 
-    expect(await screen.findByText('已领取额度')).toBeInTheDocument()
+    expect(await screen.findByText(/已领取额度/)).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('已领到')
     expect(screen.queryByRole('button', { name: '领取额度' })).not.toBeInTheDocument()
   })

@@ -41,6 +41,8 @@ export function ClaimButton({
   const buttonRef = useRef<HTMLButtonElement>(null)
   const [result, setResult] = useState<ClaimWording | null>(null)
   const [claimed, setClaimed] = useState(false)
+  // 领取成功后 offer 会被撤掉，名字要留着给「已领取额度」那一行用。
+  const [lastOfferName, setLastOfferName] = useState('')
   // SDK 只认 CSS 选择器字符串，节点 id 在同一页面里固定且唯一。
   const elementSelector = '#zcode-captcha-element'
   const buttonSelector = '#zcode-captcha-button'
@@ -56,7 +58,11 @@ export function ClaimButton({
   if (!hasOffer && result) {
     return (
       <span className='inline-flex flex-col items-end gap-0.5'>
-        {claimed ? (
+        {claimed && lastOfferName ? (
+          <span className='text-xs text-muted-foreground'>
+            {t('upstreams.claimedWithName', { name: lastOfferName })}
+          </span>
+        ) : claimed ? (
           <span className='text-xs text-muted-foreground'>
             {t('upstreams.claimed')}
           </span>
@@ -89,6 +95,7 @@ export function ClaimButton({
     if (running || !captcha) return
     setResult(null)
     setClaimed(false)
+    setLastOfferName('')
     if (!elementRef.current || !buttonRef.current) {
       setResult(wordingOfCaptcha('init', t))
       return
@@ -118,6 +125,9 @@ export function ClaimButton({
       })
       const answerWording = wordingOf(answer, t)
       setClaimed(answer.outcome === ZcodeClaimOutcome.CLAIMED)
+      if (answer.outcome === ZcodeClaimOutcome.CLAIMED) {
+        setLastOfferName(offer.name)
+      }
       setResult(
         interactiveNotice
           ? {
@@ -159,6 +169,11 @@ export function ClaimButton({
         {running ? <Loader2 className='animate-spin' /> : null}
         {running ? t('upstreams.claiming') : t('upstreams.claim')}
       </Button>
+      {offer.name ? (
+        <span className='text-xs text-muted-foreground'>
+          {t('upstreams.claimOffer', { name: offer.name })}
+        </span>
+      ) : null}
       {result ? (
         <span
           role='status'
