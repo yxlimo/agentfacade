@@ -1,14 +1,15 @@
-[English](README.md) | 中文
-
 # AgentFacade
 
-一个立面，十一个平台。调用方只看到一张模型清单；平台、账号、方言、冷却、配额都在立面之后。OpenAI 与 Anthropic 两种方言用同一个端口。
+[English](README.md) | 中文
+
+一个立面，挡在多个模型平台前面。调用方只看到一张模型清单；平台、账号、方言、冷却、配额都在立面之后。OpenAI 与 Anthropic 两种方言共用一个端口。
 
 ## 你能得到什么
 
-- **一个 URL 接十一个平台。**
+- **开箱六个平台类型，另加你自己接的。**
   MiniMax Code、ZCode、Qoder（国际与国内）、WorkBuddy（国内与国际）、
-  TokenRhythm、SenseNova、书生·端砚、七牛云、讯飞星火。
+  其它任何 OpenAI 或 Anthropic 兼容的端点，在面板里加一行就是一个平台，
+  自己的地址、自己的 key。
   根路由提供一张发布的模型清单；每个平台另有自己的路由与模型名。
 - **两种方言，流式与非流式都过。**
   OpenAI 的 `/v1/chat/completions` 与 Anthropic 的 `/v1/messages`

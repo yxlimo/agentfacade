@@ -1,17 +1,17 @@
-English | [中文](README.zh.md)
-
 # AgentFacade
 
-One facade in front of eleven model platforms. Callers see a single model list;
+English | [中文](README.zh.md)
+One facade in front of many model platforms. Callers see a single model list;
 platforms, accounts, dialects, cooldowns and quotas stay behind it. OpenAI and
 Anthropic clients share one port.
 
 ## What you get
 
-- **One URL for eleven platforms.** MiniMax Code, ZCode, Qoder (global and
-  China), WorkBuddy (China and international), TokenRhythm, SenseNova,
-  书生·端砚, 七牛云 and 讯飞星火. The root route carries a published model list;
-  each platform also has its own route with its own model ids.
+- **Six platform kinds out of the box, plus your own.** MiniMax Code, ZCode,
+  Qoder (global and China), WorkBuddy (China and international). Any other
+  OpenAI- or Anthropic-compatible endpoint is a platform row you add in the
+  panel, with its own base url and key. The root route carries a published
+  model list; each platform also has its own route with its own model ids.
 - **Both dialects, streaming and not.** OpenAI `/v1/chat/completions` and
   Anthropic `/v1/messages` are accepted on the root route and on every platform
   route. Tool calls and the thinking channel are converted in both directions.
@@ -53,7 +53,7 @@ mise run serve    # node router-proxy.ts, on http://localhost:6450
 The gateway answers on `http://<host>:6450`; the panel is at
 `http://<host>:6450/admin/`. Sign in with the token in `<FACADE_DATA_DIR>/admin-token`,
 written on first start. No account is enabled initially — add one in the panel's
-上游 tab before sending requests.
+Upstreams tab before sending requests.
 
 Everything the service keeps lives in `FACADE_DATA_DIR`: `~/.agentfacade` by
 default (or `/data` in Docker), with the database file `agentfacade.db`. Keep
@@ -85,8 +85,8 @@ Anthropic : base_url = "http://<host>:6450"   # the SDK appends /v1/messages
 ```
 
 The key goes in `Authorization: Bearer <key>` for OpenAI and `x-api-key: <key>`
-for Anthropic. A fresh installation accepts any key unless the deployment
-requires one.
+for Anthropic. A fresh installation is in public mode: any key, or none, gets
+in. Set `REQUIRE_API_KEY=true` to lock the front door.
 
 ```bash
 # OpenAI dialect
@@ -116,7 +116,7 @@ Install:
 
 ```text
 pi                  pi install npm:pi-agentfacade
-OpenCode (2.x)      opencode.jsonc 的 plugins 里加 "opencode-agentfacade@latest"
+OpenCode (2.x)      add "opencode-agentfacade@latest" to plugins in opencode.jsonc
 DeepSeek Harness    dsh plugin --profile <profile> add dsh-agentfacade
 ```
 
