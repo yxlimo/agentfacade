@@ -4,3 +4,5 @@
 - 每 2–3 个文件跑相关单测并提交一次；分支提交不推
 - config 页 39 处用户可见串迁到 configPage.*，新增 config-i18n.test.tsx；配置目录 7 files/26 tests 绿
 - 环境缺 web/.gen，跑过 mise run proto 生成（生成物未提交）
+- quota-plugins 页 16 处迁到 quotaPlugins.*，新增 quota-plugins-i18n.test.tsx；3 files/11 tests 绿
+- 复核发现原派单计数的多数文件（upstreams/index、provider-accounts、platform-dialog、models 等）用户可见串已在前几片迁完，只剩 JSX 注释里的中文

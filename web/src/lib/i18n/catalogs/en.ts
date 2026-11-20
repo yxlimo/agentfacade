@@ -817,4 +817,23 @@ export const en: Record<keyof typeof zh, string> = {
   'configPage.group.gateway': 'Gateway',
   'configPage.group.benefits': 'Check-in',
   'configPage.group.qoder': 'Qoder',
+
+  'quotaPlugins.title': 'Plugins',
+  'quotaPlugins.description':
+    'Quota plugins registered by the gateway. Plugins match platforms by base URL; platforms without a match have no quota endpoint.',
+  'quotaPlugins.empty': 'The gateway registered no quota plugins',
+  'quotaPlugins.listAria': 'Plugin list',
+  'quotaPlugins.itemAria': 'Quota plugin {{label}}',
+  'quotaPlugins.expandAria': '{{action}} platforms and accounts for {{label}}',
+  'quotaPlugins.expand': 'Expand',
+  'quotaPlugins.collapse': 'Collapse',
+  'quotaPlugins.noBaseUrl': 'No base URL declared',
+  'quotaPlugins.noPlatforms': 'No platforms use this plugin',
+  'quotaPlugins.accountNotFound': 'Account not found',
+  'quotaPlugins.accountNotInList': '{{id}} is not in the platform list',
+  'quotaPlugins.deleteTitle': 'Remove {{name}}',
+  'quotaPlugins.deleteDescription':
+    'Removing this account also deletes its {{count}} credentials and cannot be undone. The platform and its client address stay unchanged.',
+  'quotaPlugins.cancel': 'Cancel',
+  'quotaPlugins.delete': 'Remove',
 }

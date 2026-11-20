@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useIsFetching } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { ChevronRight } from 'lucide-react'
@@ -48,6 +49,7 @@ import type { Account, QuotaPluginPlatform, Upstream } from '@/gen/agentfacade/a
  * 走），不另造表单。
  */
 export function QuotaPluginsPage() {
+  const { t } = useTranslation()
   const pluginsQuery = useQuotaPlugins()
   const upstreams = useUpstreams()
   const providerKindsQuery = useProviderKinds()
@@ -143,17 +145,17 @@ export function QuotaPluginsPage() {
 
   return (
     <PageShell
-      title='插件列表'
-      description='服务端登记的额度插件：插件按平台地址自动匹配，对不上任何插件的平台没有额度接口。'
+      title={t('quotaPlugins.title')}
+      description={t('quotaPlugins.description')}
     >
       <Card>
         <CardContent className='px-0'>
           {plugins.length === 0 ? (
-            <EmptyState title='服务端没有登记任何额度插件' />
+            <EmptyState title={t('quotaPlugins.empty')} />
           ) : (
             <div
               role='list'
-              aria-label='插件列表'
+              aria-label={t('quotaPlugins.listAria')}
               className='grid gap-0'
             >
               {plugins.map((plugin) => {
@@ -163,15 +165,22 @@ export function QuotaPluginsPage() {
                   <div
                     key={plugin.id}
                     role='listitem'
-                    aria-label={`额度插件 ${plugin.label}`}
+                    aria-label={t('quotaPlugins.itemAria', {
+                      label: plugin.label,
+                    })}
                     className='border-b last:border-b-0'
                   >
                     <button
                       type='button'
                       aria-expanded={isExpanded}
-                      aria-label={`${
-                        isExpanded ? '收起' : '展开'
-                      } ${plugin.label} 的平台与账号`}
+                      aria-label={t('quotaPlugins.expandAria', {
+                        action: t(
+                          isExpanded
+                            ? 'quotaPlugins.collapse'
+                            : 'quotaPlugins.expand'
+                        ),
+                        label: plugin.label,
+                      })}
                       onClick={() =>
                         setExpanded(isExpanded ? null : plugin.id)
                       }
@@ -196,7 +205,7 @@ export function QuotaPluginsPage() {
                         ))
                       ) : (
                         <span className='text-xs text-muted-foreground'>
-                          没有声明地址
+                          {t('quotaPlugins.noBaseUrl')}
                         </span>
                       )}
                     </div>
@@ -204,7 +213,7 @@ export function QuotaPluginsPage() {
                       <div className='grid gap-4 px-4 pb-4 ps-10'>
                         {matched.length === 0 ? (
                           <p className='text-sm text-muted-foreground'>
-                            暂无平台使用这个插件
+                            {t('quotaPlugins.noPlatforms')}
                           </p>
                         ) : (
                           matched.map((upstream) => (
@@ -263,9 +272,15 @@ export function QuotaPluginsPage() {
                                 onManageKeys={(account) => {
                                   // 账号不在列表里了：不要把 key 写到别处去。
                                   if (!findAccount(platforms, account.id)) {
-                                    toast.error('找不到这个账号', {
-                                      description: `${account.id} 不在平台列表里`,
-                                    })
+                                    toast.error(
+                                      t('quotaPlugins.accountNotFound'),
+                                      {
+                                        description: t(
+                                          'quotaPlugins.accountNotInList',
+                                          { id: account.id }
+                                        ),
+                                      }
+                                    )
                                     return
                                   }
                                   setKeysFor(account.id)
@@ -326,15 +341,22 @@ export function QuotaPluginsPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              注销 {deleteTarget ? deleteTarget.alias || deleteTarget.id : ''}
+              {t('quotaPlugins.deleteTitle', {
+                name: deleteTarget
+                  ? deleteTarget.alias || deleteTarget.id
+                  : '',
+              })}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              删除该账号会同时删除其名下的 {deleteTarget?.credentialCount ?? 0}{' '}
-              条凭据，且不可恢复。平台本身保留，客户端的地址不变
+              {t('quotaPlugins.deleteDescription', {
+                count: deleteTarget?.credentialCount ?? 0,
+              })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogCancel>
+              {t('quotaPlugins.cancel')}
+            </AlertDialogCancel>
             <AlertDialogAction
               variant='destructive'
               onClick={() => {
@@ -344,7 +366,7 @@ export function QuotaPluginsPage() {
                 deleteAccount.mutate({ id: target.id })
               }}
             >
-              注销
+              {t('quotaPlugins.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

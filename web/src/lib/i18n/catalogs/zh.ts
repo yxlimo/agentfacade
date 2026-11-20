@@ -803,4 +803,23 @@ export const zh = {
   'configPage.group.gateway': '网关',
   'configPage.group.benefits': '签到',
   'configPage.group.qoder': 'Qoder',
+
+  'quotaPlugins.title': '插件列表',
+  'quotaPlugins.description':
+    '服务端登记的额度插件：插件按平台地址自动匹配，对不上任何插件的平台没有额度接口。',
+  'quotaPlugins.empty': '服务端没有登记任何额度插件',
+  'quotaPlugins.listAria': '插件列表',
+  'quotaPlugins.itemAria': '额度插件 {{label}}',
+  'quotaPlugins.expandAria': '{{action}} {{label}} 的平台与账号',
+  'quotaPlugins.expand': '展开',
+  'quotaPlugins.collapse': '收起',
+  'quotaPlugins.noBaseUrl': '没有声明地址',
+  'quotaPlugins.noPlatforms': '暂无平台使用这个插件',
+  'quotaPlugins.accountNotFound': '找不到这个账号',
+  'quotaPlugins.accountNotInList': '{{id}} 不在平台列表里',
+  'quotaPlugins.deleteTitle': '注销 {{name}}',
+  'quotaPlugins.deleteDescription':
+    '删除该账号会同时删除其名下的 {{count}} 条凭据，且不可恢复。平台本身保留，客户端的地址不变',
+  'quotaPlugins.cancel': '取消',
+  'quotaPlugins.delete': '注销',
 }
