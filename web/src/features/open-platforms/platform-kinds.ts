@@ -1,5 +1,6 @@
 import type { PlatformKind } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { describeError } from '@/lib/errors'
+import i18n from '@/lib/i18n'
 
 /**
  * 建平台时能选的类型（方言）清单的状态。
@@ -115,9 +116,9 @@ export function platformKindReadout(
 function listNotice(list: PlatformKindList): string | null {
   switch (list.status) {
     case 'pending':
-      return '类型清单还在加载'
+      return i18n.t('openPlatforms.kindsPending')
     case 'error':
-      return `类型清单取不到：${list.message}`
+      return i18n.t('openPlatforms.kindsErrorHint', { message: list.message })
     default:
       return null
   }
@@ -139,12 +140,15 @@ function kindNotice(
 ): { placeholder: string; hint: string | null } | null {
   switch (list.status) {
     case 'pending':
-      return { placeholder: '类型清单还在加载', hint: null }
+      return { placeholder: i18n.t('openPlatforms.kindsPending'), hint: null }
     case 'error':
-      return { placeholder: '类型清单取不到', hint: listNotice(list) }
+      return {
+        placeholder: i18n.t('openPlatforms.kindsError'),
+        hint: listNotice(list),
+      }
     default:
       return list.kinds.length === 0
-        ? { placeholder: '没有能选的类型', hint: null }
+        ? { placeholder: i18n.t('openPlatforms.kindsEmpty'), hint: null }
         : null
   }
 }

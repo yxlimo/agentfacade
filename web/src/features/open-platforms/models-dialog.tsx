@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Plus, X } from 'lucide-react'
 import type { Upstream } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { Button } from '@/components/ui/button'
@@ -81,6 +82,7 @@ export function PlatformModelsDialog({
   platform: Upstream
   onOpenChange: (open: boolean) => void
 }) {
+  const { t } = useTranslation()
   const platformId = platform.id
   // 关着的时候不取：弹窗是常驻组件，不该在后台发请求。
   const catalog = useCatalogModels(open ? platformId : '', platform.state)
@@ -165,12 +167,16 @@ export function PlatformModelsDialog({
       : catalog.isError
         ? {
             status: 'failed',
-            message: `模型目录取不到：${describeError(catalog.error)}`,
+            message: t('openPlatforms.catalogError', {
+              message: describeError(catalog.error),
+            }),
           }
         : overrides.isError
           ? {
               status: 'failed',
-              message: `自定义那部分取不到：${describeError(overrides.error)}`,
+              message: t('openPlatforms.overridesError', {
+                message: describeError(overrides.error),
+              }),
             }
           : { status: 'ready' }
 
@@ -409,16 +415,18 @@ export function PlatformModelsDialog({
       <DialogContent className='sm:max-w-2xl'>
         <DialogHeader>
           <DialogTitle>
-            自定义模型 · {platform.label || platform.id}
+            {t('openPlatforms.modelsDialogTitle', {
+              name: platform.label || platform.id,
+            })}
           </DialogTitle>
           <DialogDescription>
-            选中一条改它，没改的格子不写进去
+            {t('openPlatforms.modelsDialogDescription')}
           </DialogDescription>
         </DialogHeader>
 
         {data.status === 'loading' ? (
           <p className='py-8 text-center text-sm text-muted-foreground'>
-            正在取模型目录与自定义那部分
+            {t('openPlatforms.modelsLoading')}
           </p>
         ) : data.status === 'failed' ? (
           <div className='grid justify-items-center gap-2 py-8'>
@@ -433,16 +441,18 @@ export function PlatformModelsDialog({
                 void overrides.refetch()
               }}
             >
-              重试
+              {t('openPlatforms.retry')}
             </Button>
           </div>
         ) : (
           <div className='grid gap-3'>
             <div className='grid gap-1'>
               <div className='flex items-baseline gap-2'>
-                <Label htmlFor='model-id'>模型 id</Label>
+                <Label htmlFor='model-id'>
+                  {t('openPlatforms.modelIdLabel')}
+                </Label>
                 <span className='text-xs text-muted-foreground'>
-                  共 {listed.length} 个模型
+                  {t('openPlatforms.modelListedCount', { count: listed.length })}
                 </span>
               </div>
               <div className='flex items-center gap-2'>
@@ -450,7 +460,7 @@ export function PlatformModelsDialog({
                   <Select value={selected} onValueChange={pick}>
                     <SelectTrigger
                       id='model-id'
-                      aria-label='模型 id'
+                      aria-label={t('openPlatforms.modelIdLabel')}
                       aria-invalid={problemIds.has('id') ? true : undefined}
                       aria-describedby={problemIds.get('id')}
                       className='w-72 font-mono text-sm'
@@ -471,7 +481,7 @@ export function PlatformModelsDialog({
                               aria-hidden='true'
                               className='text-xs text-muted-foreground'
                             >
-                              已改
+                              {t('openPlatforms.rowChanged')}
                             </span>
                           ) : null}
                         </SelectItem>
@@ -482,7 +492,7 @@ export function PlatformModelsDialog({
                   <Input
                     id='model-id'
                     className='w-72 font-mono text-sm'
-                    placeholder='新 id'
+                    placeholder={t('openPlatforms.newModelIdPlaceholder')}
                     aria-invalid={problemIds.has('id') ? true : undefined}
                     aria-describedby={problemIds.get('id')}
                     value={idText}
@@ -491,24 +501,26 @@ export function PlatformModelsDialog({
                 )}
                 <Button size='sm' variant='outline' onClick={addModel}>
                   <Plus />
-                  新增模型
+                  {t('openPlatforms.addModel')}
                 </Button>
                 {removable ? (
                   <Button
                     size='sm'
                     variant='outline'
                     className='text-destructive'
-                    aria-label={`删除 ${base?.id || row?.id || ''}`}
+                    aria-label={t('openPlatforms.deleteModel', {
+                      id: base?.id || row?.id || '',
+                    })}
                     disabled={removing}
                     onClick={removeModel}
                   >
-                    删除
+                    {t('openPlatforms.delete')}
                   </Button>
                 ) : null}
               </div>
               {picking ? null : (
                 <p className='text-xs text-muted-foreground'>
-                  这个 id 还不在列表里，保存后加进目录
+                  {t('openPlatforms.newModelHint')}
                 </p>
               )}
             </div>
@@ -528,7 +540,7 @@ export function PlatformModelsDialog({
               />
             ) : (
               <p className='py-6 text-center text-sm text-muted-foreground'>
-                目录里还没有模型
+                {t('openPlatforms.noCatalogModels')}
               </p>
             )}
 
@@ -553,13 +565,15 @@ export function PlatformModelsDialog({
         <DialogFooter>
           {/* 没改动就不发请求：说一句，别让人对着一个灰按钮猜。 */}
           {data.status === 'ready' && !dirty ? (
-            <p className='me-auto text-xs text-muted-foreground'>没有改动</p>
+            <p className='me-auto text-xs text-muted-foreground'>
+              {t('openPlatforms.noChanges')}
+            </p>
           ) : null}
           <Button variant='outline' onClick={() => onOpenChange(false)}>
-            取消
+            {t('openPlatforms.cancel')}
           </Button>
           <Button disabled={saveDisabled} onClick={submit}>
-            保存
+            {t('openPlatforms.save')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -594,6 +608,7 @@ function ModelFields({
   onChangeBillingMode: (value: BillingModeChoice) => void
   onChangeBillingCurrency: (value: string) => void
 }) {
+  const { t } = useTranslation()
   // 哪几格现在有毛病：标红并指到下面那句话。
   const contextProblem = problemId('contextWindow')
   const outputProblem = problemId('maxOutputTokens')
@@ -608,7 +623,9 @@ function ModelFields({
     <div className='grid gap-2 rounded-md border p-3'>
       <div className='grid gap-2 sm:grid-cols-2'>
         <div className='grid gap-1'>
-          <Label htmlFor='model-display-name'>显示名</Label>
+          <Label htmlFor='model-display-name'>
+            {t('openPlatforms.displayNameLabel')}
+          </Label>
           <Input
             id='model-display-name'
             value={row.text.displayName}
@@ -618,7 +635,9 @@ function ModelFields({
           />
         </div>
         <div className='grid gap-1'>
-          <Label htmlFor='model-context'>上下文</Label>
+          <Label htmlFor='model-context'>
+            {t('openPlatforms.contextLabel')}
+          </Label>
           <Input
             id='model-context'
             inputMode='numeric'
@@ -631,7 +650,9 @@ function ModelFields({
           />
         </div>
         <div className='grid gap-1'>
-          <Label htmlFor='model-output'>输出上限</Label>
+          <Label htmlFor='model-output'>
+            {t('openPlatforms.maxOutputLabel')}
+          </Label>
           <Input
             id='model-output'
             inputMode='numeric'
@@ -644,7 +665,9 @@ function ModelFields({
           />
         </div>
         <div className='grid gap-1'>
-          <Label htmlFor='model-credits'>倍率</Label>
+          <Label htmlFor='model-credits'>
+            {t('openPlatforms.creditsLabel')}
+          </Label>
           <Input
             id='model-credits'
             inputMode='decimal'
@@ -664,7 +687,9 @@ function ModelFields({
       {billingText === null ? null : (
         <p className='text-sm text-muted-foreground'>
           <span className='me-1 text-xs'>
-            {billing?.overridden ? '人工填写' : '平台报价'}
+            {billing?.overridden
+              ? t('openPlatforms.sourceManual')
+              : t('openPlatforms.sourcePlatform')}
           </span>
           {billingText}
         </p>
@@ -680,7 +705,9 @@ function ModelFields({
 
       <div className='grid gap-2 sm:grid-cols-2'>
         <div className='grid gap-1'>
-          <Label htmlFor='model-thinking'>是否支持 thinking</Label>
+          <Label htmlFor='model-thinking'>
+            {t('openPlatforms.thinkingLabel')}
+          </Label>
           <Select
             // `unset`（人工新填的一条，目录里没有它）摆成「不支持 thinking」：
             // 没动过就不写进人工条目，用户选了才真写下去。
@@ -691,33 +718,43 @@ function ModelFields({
           >
             <SelectTrigger
               id='model-thinking'
-              aria-label='是否支持 thinking'
+              aria-label={t('openPlatforms.thinkingLabel')}
             >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value='none'>不支持 thinking</SelectItem>
-              <SelectItem value='fixed'>固定档位</SelectItem>
-              <SelectItem value='levels'>档位可选</SelectItem>
+              <SelectItem value='none'>
+                {t('openPlatforms.thinkingNone')}
+              </SelectItem>
+              <SelectItem value='fixed'>
+                {t('openPlatforms.thinkingFixed')}
+              </SelectItem>
+              <SelectItem value='levels'>
+                {t('openPlatforms.thinkingLevels')}
+              </SelectItem>
             </SelectContent>
           </Select>
         </div>
         <div className='grid gap-1'>
-          <Label htmlFor='model-tool-call'>是否支持 Tool Call</Label>
+          <Label htmlFor='model-tool-call'>
+            {t('openPlatforms.toolCallLabel')}
+          </Label>
           <Select
             value={row.toolCall}
             onValueChange={(value) => onChangeToolCall(value as TriState)}
           >
             <SelectTrigger
               id='model-tool-call'
-              aria-label='是否支持 Tool Call'
+              aria-label={t('openPlatforms.toolCallLabel')}
             >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value='inherit'>用原来的值</SelectItem>
-              <SelectItem value='yes'>是</SelectItem>
-              <SelectItem value='no'>否</SelectItem>
+              <SelectItem value='inherit'>
+                {t('openPlatforms.inherit')}
+              </SelectItem>
+              <SelectItem value='yes'>{t('openPlatforms.yes')}</SelectItem>
+              <SelectItem value='no'>{t('openPlatforms.no')}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -737,10 +774,13 @@ function ModelFields({
 }
 
 /** 按 token 计费那三个格。基数写进标签：这三个数是每百万 token 的价。 */
-const PRICE_FIELDS: { field: EditableText; label: string }[] = [
-  { field: 'billingInput', label: '输入 每百万 token' },
-  { field: 'billingOutput', label: '输出 每百万 token' },
-  { field: 'billingCacheRead', label: '缓存读 每百万 token' },
+const PRICE_FIELDS: {
+  field: EditableText
+  label: 'openPlatforms.billingInputLabel' | 'openPlatforms.billingOutputLabel' | 'openPlatforms.billingCacheReadLabel'
+}[] = [
+  { field: 'billingInput', label: 'openPlatforms.billingInputLabel' },
+  { field: 'billingOutput', label: 'openPlatforms.billingOutputLabel' },
+  { field: 'billingCacheRead', label: 'openPlatforms.billingCacheReadLabel' },
 ]
 
 /**
@@ -763,29 +803,45 @@ function BillingFields({
   onChangeMode: (value: BillingModeChoice) => void
   onChangeCurrency: (value: string) => void
 }) {
+  const { t } = useTranslation()
   return (
     <div className='grid gap-2'>
       <div className='grid gap-1 sm:w-56'>
-        <Label htmlFor='model-billing-mode'>计费方式</Label>
+        <Label htmlFor='model-billing-mode'>
+          {t('openPlatforms.billingModeLabel')}
+        </Label>
         <Select
           value={row.billingMode}
           onValueChange={(value) => onChangeMode(value as BillingModeChoice)}
         >
-          <SelectTrigger id='model-billing-mode' aria-label='计费方式'>
+          <SelectTrigger
+            id='model-billing-mode'
+            aria-label={t('openPlatforms.billingModeLabel')}
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value='unset'>不设置</SelectItem>
-            <SelectItem value='none'>不收费</SelectItem>
-            <SelectItem value='multiplier'>按倍率</SelectItem>
-            <SelectItem value='token'>按 token</SelectItem>
+            <SelectItem value='unset'>
+              {t('openPlatforms.billingModeUnset')}
+            </SelectItem>
+            <SelectItem value='none'>
+              {t('openPlatforms.billingModeNone')}
+            </SelectItem>
+            <SelectItem value='multiplier'>
+              {t('openPlatforms.billingModeMultiplier')}
+            </SelectItem>
+            <SelectItem value='token'>
+              {t('openPlatforms.billingModeToken')}
+            </SelectItem>
           </SelectContent>
         </Select>
       </div>
 
       {row.billingMode === 'multiplier' ? (
         <div className='grid gap-1 sm:w-56'>
-          <Label htmlFor='model-billing-multiplier'>计费倍率</Label>
+          <Label htmlFor='model-billing-multiplier'>
+            {t('openPlatforms.billingMultiplierLabel')}
+          </Label>
           <Input
             id='model-billing-multiplier'
             inputMode='decimal'
@@ -802,12 +858,17 @@ function BillingFields({
       {row.billingMode === 'token' ? (
         <div className='grid gap-2 sm:grid-cols-4'>
           <div className='grid gap-1'>
-            <Label htmlFor='model-billing-currency'>币种</Label>
+            <Label htmlFor='model-billing-currency'>
+              {t('openPlatforms.currencyLabel')}
+            </Label>
             <Select
               value={row.billingCurrency}
               onValueChange={onChangeCurrency}
             >
-              <SelectTrigger id='model-billing-currency' aria-label='币种'>
+              <SelectTrigger
+                id='model-billing-currency'
+                aria-label={t('openPlatforms.currencyLabel')}
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -821,7 +882,7 @@ function BillingFields({
           </div>
           {PRICE_FIELDS.map(({ field, label }) => (
             <div key={field} className='grid gap-1'>
-              <Label htmlFor={`model-${field}`}>{label}</Label>
+              <Label htmlFor={`model-${field}`}>{t(label)}</Label>
               <Input
                 id={`model-${field}`}
                 inputMode='decimal'
@@ -862,6 +923,7 @@ function LevelsField({
   problemId: string | undefined
   onChange: (levels: string[]) => void
 }) {
+  const { t } = useTranslation()
   /** 刚敲进来的那一档，还没加。 */
   const [text, setText] = useState('')
   const pickedSet = new Set(picked)
@@ -879,10 +941,10 @@ function LevelsField({
 
   return (
     <div className='grid gap-1'>
-      <Label>可选档位</Label>
+      <Label>{t('openPlatforms.levelsLabel')}</Label>
       <div
         role='group'
-        aria-label='可选档位'
+        aria-label={t('openPlatforms.levelsLabel')}
         aria-invalid={problemId ? true : undefined}
         aria-describedby={problemId}
         className='grid gap-2'
@@ -890,7 +952,7 @@ function LevelsField({
         {catalogLevels.length > 0 ? (
           <div
             role='group'
-            aria-label='目录报的档位'
+            aria-label={t('openPlatforms.levelsCatalog')}
             className='flex flex-wrap gap-x-4 gap-y-2'
           >
             {catalogLevels.map((level) => (
@@ -914,7 +976,7 @@ function LevelsField({
         {manual.length > 0 ? (
           <div
             role='group'
-            aria-label='手工加的档位'
+            aria-label={t('openPlatforms.levelsManual')}
             className='flex flex-wrap items-center gap-2'
           >
             {manual.map((level) => (
@@ -927,7 +989,7 @@ function LevelsField({
                   type='button'
                   size='icon-xs'
                   variant='ghost'
-                  aria-label={`移除档位 ${level}`}
+                  aria-label={t('openPlatforms.removeLevel', { level })}
                   onClick={() =>
                     commit(picked.filter((item) => item !== level))
                   }
@@ -940,9 +1002,9 @@ function LevelsField({
         ) : null}
         <div className='flex items-center gap-2'>
           <Input
-            aria-label='新档位'
+            aria-label={t('openPlatforms.newLevelLabel')}
             className='h-8 w-40 font-mono text-sm'
-            placeholder='比如 xhigh'
+            placeholder={t('openPlatforms.levelPlaceholder')}
             value={text}
             onChange={(event) => setText(event.target.value)}
             onKeyDown={(event) => {
@@ -958,14 +1020,14 @@ function LevelsField({
             disabled={!canAdd}
             onClick={add}
           >
-            添加
+            {t('openPlatforms.addLevel')}
           </Button>
         </div>
       </div>
       <p className='text-xs text-muted-foreground'>
         {catalogLevels.length > 0
-          ? '目录报的档位可勾选，也能自己加'
-          : '目录没报这个模型的档位，自己加'}
+          ? t('openPlatforms.levelsHintCatalog')
+          : t('openPlatforms.levelsHintManual')}
       </p>
     </div>
   )
@@ -978,11 +1040,12 @@ function LevelsField({
  * 开关，父组件不用记「现在开的是哪个平台」。
  */
 export function PlatformModelsButton({ platform }: { platform: Upstream }) {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   return (
     <>
       <Button size='sm' variant='outline' onClick={() => setOpen(true)}>
-        自定义模型
+        {t('openPlatforms.customModelsTitle')}
       </Button>
       <PlatformModelsDialog
         open={open}

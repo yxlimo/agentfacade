@@ -15,6 +15,8 @@ const RESERVED_IDS = ['v1', 'admin', 'health', 'healthz', 'metrics']
 /** 平台 id 的字面：小写字母与数字开头，后面是它们与连字符（与 lib/open-platforms.ts 同一份）。 */
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/
 
+import i18n from '@/lib/i18n'
+
 /** 哪一格有问题。跟界面上的格子一一对应。 */
 export type PlatformField = 'id' | 'label' | 'baseUrl'
 
@@ -22,10 +24,14 @@ export type PlatformField = 'id' | 'label' | 'baseUrl'
 export type PlatformProblems = Partial<Record<PlatformField, string>>
 
 /** 三格「没填」的那句话：行内提示与页脚那份「还差什么」取同一份。 */
-export const MISSING_TEXT: Readonly<Record<PlatformField, string>> = {
-  id: '平台 id 没有填',
-  label: '平台名没有填',
-  baseUrl: '地址没有填',
+const MISSING_KEYS = {
+  id: 'openPlatforms.missingId',
+  label: 'openPlatforms.missingLabel',
+  baseUrl: 'openPlatforms.missingBaseUrl',
+} as const satisfies Readonly<Record<PlatformField, string>>
+
+export function missingText(field: PlatformField): string {
+  return i18n.t(MISSING_KEYS[field])
 }
 
 /**
@@ -40,11 +46,11 @@ export function platformIdProblem(input: {
   accountIds: readonly string[]
 }): string | null {
   const id = input.id.trim()
-  if (!id) return MISSING_TEXT.id
-  if (!ID_PATTERN.test(id)) return '平台 id 只能用小写字母、数字和连字符'
-  if (RESERVED_IDS.includes(id)) return '这个 id 是网关自用的'
-  if (input.accountIds.includes(id)) return '这个 id 已经是账号名'
-  if (input.takenIds.includes(id)) return '这个平台 id 已经被占用'
+  if (!id) return missingText('id')
+  if (!ID_PATTERN.test(id)) return i18n.t('openPlatforms.idFormat')
+  if (RESERVED_IDS.includes(id)) return i18n.t('openPlatforms.idReserved')
+  if (input.accountIds.includes(id)) return i18n.t('openPlatforms.idAccountName')
+  if (input.takenIds.includes(id)) return i18n.t('openPlatforms.idTaken')
   return null
 }
 
@@ -57,17 +63,17 @@ export function platformIdProblem(input: {
  */
 export function baseUrlProblem(value: string): string | null {
   const baseUrl = value.trim()
-  if (!baseUrl) return MISSING_TEXT.baseUrl
+  if (!baseUrl) return missingText('baseUrl')
   let url: URL
   try {
     url = new URL(baseUrl)
   } catch {
-    return '地址不是以 http:// 或 https:// 开头的完整网址'
+    return i18n.t('openPlatforms.badUrl')
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    return '地址不是以 http:// 或 https:// 开头的完整网址'
+    return i18n.t('openPlatforms.badUrl')
   }
-  if (!url.hostname) return '地址不是以 http:// 或 https:// 开头的完整网址'
+  if (!url.hostname) return i18n.t('openPlatforms.badUrl')
   return null
 }
 
@@ -96,7 +102,7 @@ export function platformProblems(input: {
     })
     if (id) problems.id = id
   }
-  if (!input.label.trim()) problems.label = MISSING_TEXT.label
+  if (!input.label.trim()) problems.label = missingText('label')
   if (input.baseUrl !== undefined) {
     const baseUrl = baseUrlProblem(input.baseUrl)
     if (baseUrl) problems.baseUrl = baseUrl

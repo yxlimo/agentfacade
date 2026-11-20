@@ -18,6 +18,7 @@ import { useAdminClient } from '@/features/auth/client-provider'
 import { assertOk, describeError } from '@/lib/errors'
 import { queryKeys } from '@/lib/query-keys'
 import { invalidateServerData } from '@/lib/server-data'
+import i18n from '@/lib/i18n'
 
 /** 额度插件登记表的查询键。键本身在 `lib/query-keys.ts` 里。 */
 export const quotaPluginKeys = queryKeys.quotaPlugins
@@ -85,7 +86,7 @@ export function useAddPlatform() {
       return await client.addPlatform(create(AddPlatformRequestSchema, init))
     },
     onSuccess: () => {
-      toast.success('已新增')
+      toast.success(i18n.t('openPlatforms.toastAdded'))
     },
     onSettled: () => {
       // 平台表多了一行。
@@ -132,7 +133,7 @@ export function useUpdatePlatform() {
       )
     },
     onSuccess: () => {
-      toast.success('已保存')
+      toast.success(i18n.t('openPlatforms.toastSaved'))
     },
     onSettled: () => {
       // 名字、地址都是平台那一行上的字段。
@@ -160,7 +161,7 @@ export function useDeletePlatform() {
       toast.error(describeError(error))
     },
     onSuccess: () => {
-      toast.success('已删除')
+      toast.success(i18n.t('openPlatforms.toastDeleted'))
     },
     onSettled: () => {
       // 服务端连它名下的账号、凭据、额度一起删了。失败也可能是删了一半
@@ -193,7 +194,7 @@ export function useRefreshPlatformModels() {
           platformId: input.platformId,
         })
       )
-      assertOk(result, '刷新模型目录失败')
+      assertOk(result, i18n.t('openPlatforms.refreshModelsFailed'))
       return result
     },
     onSettled: () => {
