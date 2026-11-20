@@ -6,7 +6,7 @@
 // the same shape — and because the video windows are dropped in one place.
 
 import type { CredentialField, CredentialForm, CredentialOwner, CredentialPlan, CredentialSlot } from "../provider-kinds.ts";
-import { vendorProbeOf, type TokenPlanView, type VendorProbe } from "../provider-kinds.ts";
+import type { HealthSnapshot, TokenPlanView, VendorProbe } from "../provider-kinds.ts";
 import { isIgnoredPlanWindow } from "../cooldown.ts";
 import { providerSecretId } from "../credential-ids.ts";
 import { deadSession } from "../session.ts";
@@ -66,8 +66,6 @@ export function refusedByCurrentSession(
   if (!login) return true;
   return refused.at > login;
 }
-
-
 
 /* ------------------------------------------------------------------ *
  * The credential slots every kind builds from
