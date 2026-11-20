@@ -47,6 +47,7 @@ process.env.FACADE_DATA_DIR = DATA_DIR;
 /** 投放接口这一轮怎么答。 */
 type TouchMode =
   | "offer"
+  | "two-offers"
   | "offer-other-campaign"
   | "empty"
   | "close-only"
@@ -114,6 +115,7 @@ const OFFER_DELIVERY = {
 /** 另一个投放（新的 campaign_id）：用来验「换了一个活动照领不误」。 */
 const OTHER_DELIVERY = {
   ...OFFER_DELIVERY,
+  priority: 70,
   campaign_id: "camp-2",
   banner: {
     ...OFFER_DELIVERY.banner,
@@ -237,6 +239,15 @@ const fake = http.createServer((req, res) => {
                 banner: { buttons: [{ action: { type: "claim_zcode_plan", args: {} } }] },
               },
             ],
+          },
+        });
+      case "two-offers":
+        return send(200, {
+          code: 0,
+          msg: "",
+          data: {
+            server_time: 1795092086,
+            deliveries: [OFFER_DELIVERY, OTHER_DELIVERY],
           },
         });
       case "offer-other-campaign":
@@ -1148,6 +1159,83 @@ check(
   "auto-claim.ts 的判据是投放接口",
   autoClaimSource.includes("fetchTouch"),
   "",
+);
+
+/* ------------------------------------------------------------------ *
+ * 十四、快照记下「这一轮问到了几个可领」
+ * ------------------------------------------------------------------ */
+
+section("十四、快照记下「这一轮问到了几个可领」");
+
+reset("two-offers");
+const twoOffers = await claimOnce(ACCOUNT_ID);
+check(
+  "问到 2 个可领投放 → 快照记 offers=2",
+  twoOffers?.offers === 2 && zcodeClaimSnapshot(ACCOUNT_ID)?.offers === 2,
+  JSON.stringify(twoOffers),
+);
+check(
+  "活动名来自投放：priority 最小的那条（ALPHA PLAN）",
+  twoOffers?.offerName === "ALPHA PLAN" &&
+    twoOffers?.offerPriority === 50 &&
+    zcodeClaimSnapshot(ACCOUNT_ID)?.offerName === "ALPHA PLAN",
+  JSON.stringify(twoOffers),
+);
+
+reset("empty");
+const emptyOffers = await claimOnce(ACCOUNT_ID);
+check(
+  "问到 0 个 → 快照记 offers=0（问到了，不是不知道）",
+  emptyOffers?.offers === 0 &&
+    zcodeClaimSnapshot(ACCOUNT_ID)?.offers === 0 &&
+    emptyOffers.offerName === undefined,
+  JSON.stringify(emptyOffers),
+);
+
+reset("offer");
+const unknownDevice = await claimOnce(NO_DEVICE_ID);
+check(
+  "没有设备标识（问不到）→ 快照里没有 offers 这一格",
+  unknownDevice?.state === "missing_device" &&
+    unknownDevice.offers === undefined &&
+    unknownDevice.offerName === undefined &&
+    zcodeClaimSnapshot(NO_DEVICE_ID)?.offers === undefined,
+  JSON.stringify(unknownDevice),
+);
+
+reset("unauthorized");
+const unknownAuth = await claimOnce(ACCOUNT_ID);
+check(
+  "凭据被拒（问不到）→ 快照里没有 offers 这一格",
+  unknownAuth?.state === "unauthorized" &&
+    unknownAuth.offers === undefined &&
+    unknownAuth.offerName === undefined,
+  JSON.stringify(unknownAuth),
+);
+
+reset("server-error");
+const unknownNetwork = await claimOnce(ACCOUNT_ID);
+check(
+  "上游报错（问不到）→ 快照里没有 offers 这一格",
+  unknownNetwork?.state === "failed" &&
+    unknownNetwork.offers === undefined &&
+    unknownNetwork.offerName === undefined,
+  JSON.stringify(unknownNetwork),
+);
+
+// 整个快照还没写出来时结论先放在 pending（见第十二节）；并进快照的那条
+// 路径也得把 offers 带过去，否则刚启动那半小时面板会看到空白。
+reset("two-offers");
+clearHealthSnapshot();
+const pendingOffers = await claimOnce(ACCOUNT_ID);
+const mergedSnapshot = fullSnapshot();
+mergePendingClaims(mergedSnapshot);
+check(
+  "pending 并进快照时带上 offers 与活动名",
+  pendingOffers?.offers === 2 &&
+    mergedSnapshot.zcode[ACCOUNT_ID]?.claim?.offers === 2 &&
+    mergedSnapshot.zcode[ACCOUNT_ID]?.claim?.offerName === "ALPHA PLAN",
+  JSON.stringify(mergedSnapshot.zcode[ACCOUNT_ID]?.claim),
 );
 
 const { closeStore } = await import("../lib/store.ts");

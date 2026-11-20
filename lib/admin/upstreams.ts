@@ -53,6 +53,7 @@ import type {
   HealthSnapshot,
   QuotaView,
   TokenPlanView,
+  ZcodeClaimSnapshot,
 } from "../provider-kinds.ts";
 
 // The panel's own view of these shapes comes from here.
@@ -94,17 +95,37 @@ function accountsFor(id: string): ProviderRow[] {
  * 可能是上一轮留下的，这轮再提醒只会是假的。
  */
 export function claimableAccounts(rows: ProviderRow[]): number {
+  return claimableClaims(rows).length;
+}
+
+/**
+ * 活动名：几个账号都可领时，取 offer priority 最小的那个的名字。
+ *
+ * 名字来自快照里记下的投放名（marketing/touch 原话），不在这里编。
+ * 没有可领的账号就是空串 —— 面板据此不显示提醒。
+ */
+export function claimableLabel(rows: ProviderRow[]): string {
+  let best: ZcodeClaimSnapshot | null = null;
+  for (const claim of claimableClaims(rows)) {
+    if (!claim.offerName) continue;
+    if (!best || Number(claim.offerPriority ?? 0) < Number(best.offerPriority ?? 0)) best = claim;
+  }
+  return best?.offerName ?? "";
+}
+
+/** 快照里「还提醒得上」的那几份领取结论。 */
+function claimableClaims(rows: ProviderRow[]): ZcodeClaimSnapshot[] {
   const live = peekHealthSnapshot<HealthSnapshot>()?.data;
-  if (!live) return 0;
-  let count = 0;
+  if (!live) return [];
+  const out: ZcodeClaimSnapshot[] = [];
   for (const row of rows) {
     if (row.kind !== "zcode") continue;
     const claim = live.zcode?.[row.id]?.claim;
     if (!claim || claim.offers === undefined || claim.offers <= 0) continue;
     if (claim.state === "claimed" || claim.state === "already") continue;
-    count++;
+    out.push(claim);
   }
-  return count;
+  return out;
 }
 
 /** 一个上游的开关状态。 */

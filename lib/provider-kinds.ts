@@ -398,6 +398,13 @@ export interface ZcodeClaimSnapshot {
    * 悄悄丢掉。0 是「问到了，没有」，undefined 是「不知道」。
    */
   offers?: number;
+  /**
+   * 这一轮里优先级最高（priority 最小）的投放名，原样来自 marketing/touch。
+   * 没有可领就不写这一格 —— 面板的空串由平台层给。
+   */
+  offerName?: string;
+  /** offerName 那条投放的 priority（跨账号挑活动名时要用）。 */
+  offerPriority?: number;
   /** 领到的计划名。 */
   planName?: string;
   /** 计划什么时候开始算数（ISO）。 */

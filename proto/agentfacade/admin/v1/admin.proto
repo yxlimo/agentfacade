@@ -119,6 +119,9 @@ message Upstream {
   // 名下有几个账号此刻有可领的活动额度（ZCode 这类）。
   // 0 = 没有，或者没问过 —— 面板据此不显示提醒；别把「不知道」写成「没有」。
   int32 claimable_accounts = 35;
+  // 那几份可领额度的活动名（上游给的，比如「ZCODE WEEKEND BUILD」）。
+  // 多个账号可领时给优先级最高的那个的名字；没有可领就空串。
+  string claimable_label = 36;
 }
 
 // provider 的生效策略：上游名下的多个账号（租户）里，先调谁、失败后换谁。

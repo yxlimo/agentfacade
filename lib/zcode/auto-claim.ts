@@ -177,11 +177,7 @@ export function mergePendingClaims(snapshot: HealthSnapshot): void {
  * pending 里，等下一份快照写出来时并进去。**不造**一份半份快照 —— 造出来的
  * 那个形状不对（少了 qoder / minimax 那些桶），读它的人会崩。
  */
-function record(
-  providerId: string,
-  snapshot: ZcodeClaimSnapshot,
-  offers?: number,
-): void {
+function record(providerId: string, snapshot: ZcodeClaimSnapshot): void {
   const live = peekHealthSnapshot<HealthSnapshot>()?.data ?? null;
   const previous =
     live?.zcode?.[providerId]?.claim ?? pendingClaims.get(providerId)?.claim;
@@ -189,13 +185,9 @@ function record(
   const claimed = Array.from(
     new Set([...(previous?.claimedKeys ?? []), ...(snapshot.claimedKeys ?? [])]),
   );
-  // 问到了就把可领的条数带上（0 也是问到了）。问不到的路径不传，快照里
-  // 就没有这一格 —— 面板据此分「没有」与「不知道」。
-  const merged: ZcodeClaimSnapshot = {
-    ...snapshot,
-    ...(!claimed.length ? {} : { claimedKeys: claimed }),
-    ...(offers === undefined ? {} : { offers }),
-  };
+  const merged: ZcodeClaimSnapshot = claimed.length
+    ? { ...snapshot, claimedKeys: claimed }
+    : snapshot;
   if (!live) {
     pendingClaims.set(providerId, { snapshot: null, claim: merged });
     return;
@@ -230,6 +222,34 @@ function pickOffer<T extends { priority: number }>(offers: T[]): T | null {
     if (Number(offer?.priority ?? 0) > Number(best?.priority ?? 0)) best = offer;
   }
   return best;
+}
+
+/**
+ * 给面板显示的活动名：投放里 priority 最小的那个。
+ *
+ * 与 pickOffer 不是同一个判据 —— 领哪一个按上游的领取次序（priority 大的
+ * 先），显示哪一个按面板的约定（最小的那个）。名字原样来自投放，不编。
+ */
+function labelOfferOf<T extends { priority: number; name: string | null }>(offers: T[]): T | null {
+  let best: T | null = null;
+  for (const offer of offers) {
+    if (!offer.name) continue;
+    if (!best || Number(offer.priority ?? 0) < Number(best.priority ?? 0)) best = offer;
+  }
+  return best;
+}
+
+/** 快照里的「这一轮问到了什么」那一格。问不到时调用方根本不写它。 */
+function offerFactsOf(offers: ZcodeMarketingOffer[]): Pick<
+  ZcodeClaimSnapshot,
+  "offers" | "offerName" | "offerPriority"
+> {
+  const best = labelOfferOf(offers);
+  return {
+    offers: offers.length,
+    offerName: best?.name ?? undefined,
+    offerPriority: best ? Number(best.priority ?? 0) : undefined,
+  };
 }
 
 /**
@@ -334,8 +354,13 @@ export async function claimOnce(providerId: string): Promise<ZcodeClaimSnapshot 
       action: "none",
       state: "none",
     });
-    const snapshot: ZcodeClaimSnapshot = { at: touch.at, state: "none", message: "" };
-    record(providerId, snapshot, offers.length);
+    const snapshot: ZcodeClaimSnapshot = {
+      at: touch.at,
+      state: "none",
+      message: "",
+      ...offerFactsOf(offers),
+    };
+    record(providerId, snapshot);
     return snapshot;
   }
   const offer = pickOffer(offers);
@@ -347,8 +372,13 @@ export async function claimOnce(providerId: string): Promise<ZcodeClaimSnapshot 
       action: "none",
       state: "none",
     });
-    const snapshot: ZcodeClaimSnapshot = { at: touch.at, state: "none", message: "" };
-    record(providerId, snapshot, offers.length);
+    const snapshot: ZcodeClaimSnapshot = {
+      at: touch.at,
+      state: "none",
+      message: "",
+      ...offerFactsOf(offers),
+    };
+    record(providerId, snapshot);
     return snapshot;
   }
   const action = describeClaimedPlan(offer.name || offer.planId, offer.planId);
@@ -389,6 +419,7 @@ export async function claimOnce(providerId: string): Promise<ZcodeClaimSnapshot 
       at: result.at,
       state: "claimed",
       message: "",
+      ...offerFactsOf(offers),
       planName: offer.name || result.plan.planId,
       effectiveAt,
       planId: offer.planId,
@@ -396,7 +427,7 @@ export async function claimOnce(providerId: string): Promise<ZcodeClaimSnapshot 
       code: 0,
       claimedKeys: [...claimedKeysOf(providerId), key],
     };
-    record(providerId, snapshot, offers.length);
+    record(providerId, snapshot);
     return snapshot;
   }
   if (result.state === "missing") {
@@ -437,13 +468,14 @@ export async function claimOnce(providerId: string): Promise<ZcodeClaimSnapshot 
     at: result.at,
     state: result.state,
     message,
+    ...offerFactsOf(offers),
     planId: offer.planId,
     campaignId: offer.campaignId,
     code,
     planName: offer.name ?? undefined,
     claimedKeys: terminal ? [...claimedKeysOf(providerId), key] : undefined,
   };
-  record(providerId, snapshot, offers.length);
+  record(providerId, snapshot);
   return snapshot;
 }
 
