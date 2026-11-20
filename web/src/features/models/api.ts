@@ -12,6 +12,7 @@ import { useAdminClient } from '@/features/auth/client-provider'
 import { assertOk, describeError } from '@/lib/errors'
 import { queryKeys } from '@/lib/query-keys'
 import { invalidateServerData } from '@/lib/server-data'
+import i18n from '@/lib/i18n'
 
 export function usePublishedModels() {
   const client = useAdminClient()
@@ -43,7 +44,7 @@ export function useSavePublishedModel() {
       toast.error(describeError(error))
     },
     onSuccess: () => {
-      toast.success('已保存')
+      toast.success(i18n.t('models.saved'))
     },
     onSettled: () => {
       // 主路由模型是一份答复：发布与改都是那一份里的东西。
@@ -61,14 +62,14 @@ export function useDeletePublishedModel() {
       const result = await client.deletePublishedModel(
         create(DeletePublishedModelRequestSchema, { id: input.id })
       )
-      assertOk(result, '删除失败')
+      assertOk(result, i18n.t('models.deleteFailed'))
       return result
     },
     onError: (error) => {
       toast.error(describeError(error))
     },
     onSuccess: (result) => {
-      toast.success(result.message || '已删除')
+      toast.success(result.message || i18n.t('models.deleted'))
     },
     onSettled: () => {
       // 主路由模型是一份答复：发布与改都是那一份里的东西。

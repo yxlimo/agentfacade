@@ -1,4 +1,6 @@
 import { useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
+import i18n from '@/lib/i18n'
 import { useUpstreams } from '@/features/upstreams/api'
 import {
   UPSTREAM_STATE_HINTS,
@@ -31,13 +33,16 @@ function optionText(upstream: Upstream): string {
   const label = upstream.label || upstream.id
   const models =
     upstream.modelCount > 0
-      ? `${formatCount(upstream.modelCount)} 个模型`
-      : '没有模型'
+      ? i18n.t('models.optionModels', {
+          count: formatCount(upstream.modelCount),
+        })
+      : i18n.t('models.optionNoModels')
   if (isUpstreamReady(upstream.state)) {
-    return `${label}（${models}）`
+    return i18n.t('models.optionWithModels', { label, models })
   }
-  const hint = UPSTREAM_STATE_HINTS[upstream.state] ?? '现在不能用'
-  return `${label}（${hint}，${models}）`
+  const hint =
+    UPSTREAM_STATE_HINTS[upstream.state] ?? i18n.t('models.optionUnavailable')
+  return i18n.t('models.optionUnavailableWithModels', { label, hint, models })
 }
 
 /**
@@ -50,6 +55,7 @@ function optionText(upstream: Upstream): string {
  * 显示的是给人看的名字（上游的 label）加一句模型数；存的是组名。
  */
 export function GroupPicker({ value, onChange, id }: GroupPickerProps) {
+  const { t } = useTranslation()
   const upstreams = useUpstreams()
 
   const all = upstreams.data?.upstreams ?? []
@@ -70,7 +76,7 @@ export function GroupPicker({ value, onChange, id }: GroupPickerProps) {
       <div className='grid gap-1'>
         <Select disabled value=''>
           <SelectTrigger id={id} className='w-full'>
-            <SelectValue placeholder='正在加载平台…' />
+            <SelectValue placeholder={t('models.groupLoading')} />
           </SelectTrigger>
         </Select>
       </div>
@@ -85,11 +91,13 @@ export function GroupPicker({ value, onChange, id }: GroupPickerProps) {
         disabled={all.length === 0}
       >
         <SelectTrigger id={id} className='w-full'>
-          <SelectValue placeholder='选一个平台' />
+          <SelectValue placeholder={t('models.groupPlaceholder')} />
         </SelectTrigger>
         <SelectContent>
           {missing ? (
-            <SelectItem value={value}>{value}（没有这个平台）</SelectItem>
+            <SelectItem value={value}>
+              {value}{t('models.optionMissingSuffix')}
+            </SelectItem>
           ) : null}
           {ordered.map((upstream) => (
             <SelectItem
@@ -109,12 +117,12 @@ export function GroupPicker({ value, onChange, id }: GroupPickerProps) {
 
       {all.length === 0 ? (
         <p className='text-xs text-muted-foreground'>
-          {'还没有可用的平台，先在平台页新增并登录。'}
+          {t('models.groupNoPlatforms')}
         </p>
       ) : null}
       {missing ? (
         <p className='text-xs text-muted-foreground'>
-          现在选的这个组不能用（平台列表里没有它），换一个吧。
+          {t('models.groupMissing')}
         </p>
       ) : null}
     </div>

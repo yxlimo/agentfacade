@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { create } from '@bufbuild/protobuf'
 import { Pause, Pencil, Plus, Rocket, Trash2 } from 'lucide-react'
 import {
@@ -54,13 +55,17 @@ import { formatCount, formatDate, formatLocalMoment } from '@/lib/format'
  * 这里也不重复。
  */
 function NoTargetLine({ model }: { model: PublishedModel }) {
+  const { t } = useTranslation()
   if (model.targets.length > 0) return null
   return (
-    <span className='text-xs text-muted-foreground'>当前没有可用目标</span>
+    <span className='text-xs text-muted-foreground'>
+      {t('models.noTargets')}
+    </span>
   )
 }
 
 export function PublishedModelsPage() {
+  const { t } = useTranslation()
   const models = usePublishedModels()
   const save = useSavePublishedModel()
   const remove = useDeletePublishedModel()
@@ -140,32 +145,35 @@ export function PublishedModelsPage() {
 
   return (
     <PageShell
-      title='主路由模型'
-      description='对外公布一个模型 id，背后挂一个或多个平台模型。'
+      title={t('models.pageTitle')}
+      description={t('models.pageDescription')}
       actions={
         <Button onClick={openCreate}>
           <Plus />
-          新增
+          {t('models.add')}
         </Button>
       }
     >
       <Card>
         <CardHeader>
-          <CardTitle className='text-base'>模型列表</CardTitle>
+          <CardTitle className='text-base'>{t('models.listTitle')}</CardTitle>
           <CardDescription>
             <span>
-              主路由当前公布 {publishedCount} 个（共 {list.length} 个）。
+              {t('models.publishedCount', {
+                published: publishedCount,
+                total: list.length,
+              })}
             </span>
           </CardDescription>
         </CardHeader>
         <CardContent className='px-0'>
           {list.length === 0 ? (
             <EmptyState
-              title='暂无主路由模型'
+              title={t('models.emptyTitle')}
               action={
                 <Button onClick={openCreate}>
                   <Plus />
-                  新增一个
+                  {t('models.addOne')}
                 </Button>
               }
             />
@@ -173,14 +181,20 @@ export function PublishedModelsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>对外 id</TableHead>
-                  <TableHead>显示名</TableHead>
-                  <TableHead>策略</TableHead>
-                  <TableHead>上下文 / 输出 token</TableHead>
-                  <TableHead>平台目标</TableHead>
-                  <TableHead className='text-right'>请求</TableHead>
-                  <TableHead className='text-right'>更新时间</TableHead>
-                  <TableHead className='text-right'>操作</TableHead>
+                  <TableHead>{t('models.headPublicId')}</TableHead>
+                  <TableHead>{t('models.headDisplayName')}</TableHead>
+                  <TableHead>{t('models.headStrategy')}</TableHead>
+                  <TableHead>{t('models.headContextOutput')}</TableHead>
+                  <TableHead>{t('models.headTargets')}</TableHead>
+                  <TableHead className='text-right'>
+                    {t('models.headRequests')}
+                  </TableHead>
+                  <TableHead className='text-right'>
+                    {t('models.headUpdated')}
+                  </TableHead>
+                  <TableHead className='text-right'>
+                    {t('models.headActions')}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -193,7 +207,9 @@ export function PublishedModelsPage() {
                         </span>
                         <div className='flex flex-wrap gap-1'>
                           {!model.enabled ? (
-                            <Badge variant='secondary'>已停用</Badge>
+                            <Badge variant='secondary'>
+                              {t('models.disabledBadge')}
+                            </Badge>
                           ) : null}
                           {/* 库里有不等于根路由公布了：上游关着、或者目标
                               模型的上游没了，都没人能接。published 说
@@ -201,9 +217,15 @@ export function PublishedModelsPage() {
                           {model.published ? null : (
                             <Badge
                               variant='outline'
-                              title='先启用该模型并登录对应的平台，再发布。'
+                              title={t('models.unpublishedHint')}
                             >
-                              {`未公布：${UNPUBLISHED_REASON_LABELS[model.unpublishedReason ?? UnpublishedReason.UNSPECIFIED] ?? '原因未知'}`}
+                              {t('models.unpublishedReason', {
+                                reason:
+                                  UNPUBLISHED_REASON_LABELS[
+                                    model.unpublishedReason ??
+                                      UnpublishedReason.UNSPECIFIED
+                                  ] ?? t('models.reasonUnknown'),
+                              })}
                             </Badge>
                           )}
                         </div>
@@ -212,7 +234,9 @@ export function PublishedModelsPage() {
                     <TableCell>{model.displayName || '—'}</TableCell>
                     <TableCell>
                       <Badge variant='outline'>
-                        {model.strategy === 'fallback' ? '依次回退' : '单一目标'}
+                        {model.strategy === 'fallback'
+                          ? t('models.strategyFallback')
+                          : t('models.strategySingle')}
                       </Badge>
                     </TableCell>
                     <TableCell>
@@ -222,11 +246,11 @@ export function PublishedModelsPage() {
                       <span className='font-mono text-xs'>
                         {model.effective?.contextWindow
                           ? formatCount(model.effective.contextWindow)
-                          : '继承'}
+                          : t('models.inherit')}
                         {' / '}
                         {model.effective?.maxOutputTokens
                           ? formatCount(model.effective.maxOutputTokens)
-                          : '继承'}
+                          : t('models.inherit')}
                       </span>
                     </TableCell>
                     <TableCell>
@@ -258,18 +282,26 @@ export function PublishedModelsPage() {
                                     className='rounded border border-red-500/40 px-1 text-[10px] font-medium text-red-600 dark:text-red-400'
                                     title={target.blockedReason}
                                   >
-                                    接不了：{target.blockedReason}
+                                    {t('models.targetBlocked', {
+                                      reason: target.blockedReason,
+                                    })}
                                   </span>
                                 ) : null}
                               </div>
                               <span className='text-xs text-muted-foreground'>
-                                {formatCount(target.requests)} 次
+                                {t('models.requestCount', {
+                                  count: formatCount(target.requests),
+                                })}
                                 {target.failed > 0n
-                                  ? ` · 失败 ${formatCount(target.failed)}`
+                                  ? t('models.failedCount', {
+                                      count: formatCount(target.failed),
+                                    })
                                   : ''}
-                                {!target.enabled ? ' · 已停用' : ''}
+                                {!target.enabled ? t('models.targetDisabled') : ''}
                                 {target.blocked && target.recoversAtMs > 0n
-                                  ? ` · 恢复 ${formatLocalMoment(target.recoversAtMs)}`
+                                  ? t('models.recoversAt', {
+                                      at: formatLocalMoment(target.recoversAtMs),
+                                    })
                                   : ''}
                               </span>
                             </div>
@@ -298,7 +330,7 @@ export function PublishedModelsPage() {
                             onClick={() => setDisabling(model)}
                           >
                             <Pause />
-                            停用
+                            {t('models.disable')}
                           </Button>
                         ) : (
                           <Button
@@ -308,14 +340,14 @@ export function PublishedModelsPage() {
                             onClick={() => void setEnabled(model, true)}
                           >
                             <Rocket />
-                            发布
+                            {t('models.publish')}
                           </Button>
                         )}
                         <Button
                           variant='outline'
                           size='icon'
-                          title='编辑'
-                          aria-label='编辑'
+                          title={t('models.edit')}
+                          aria-label={t('models.edit')}
                           onClick={() => openEdit(model)}
                         >
                           <Pencil />
@@ -323,8 +355,8 @@ export function PublishedModelsPage() {
                         <Button
                           variant='ghost'
                           size='icon'
-                          title='删除'
-                          aria-label='删除'
+                          title={t('models.delete')}
+                          aria-label={t('models.delete')}
                           onClick={() => setDeleting(model)}
                         >
                           <Trash2 />
@@ -355,10 +387,10 @@ export function PublishedModelsPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>确认停用该模型？</DialogTitle>
+            <DialogTitle>{t('models.disableTitle')}</DialogTitle>
             <DialogDescription>
               <span className='font-mono'>{disabling?.id}</span>{' '}
-              停用后根路由不再公布该模型，客户端将无法看到。
+              {t('models.disableDescription')}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -367,7 +399,7 @@ export function PublishedModelsPage() {
               onClick={() => setDisabling(undefined)}
               disabled={busy}
             >
-              取消
+              {t('models.cancel')}
             </Button>
             <Button
               onClick={() => {
@@ -378,7 +410,7 @@ export function PublishedModelsPage() {
               }}
               disabled={busy}
             >
-              停用
+              {t('models.disable')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -392,10 +424,10 @@ export function PublishedModelsPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>确认删除该模型？</DialogTitle>
+            <DialogTitle>{t('models.deleteTitle')}</DialogTitle>
             <DialogDescription>
               <span className='font-mono'>{deleting?.id}</span>{' '}
-              删除后客户端将无法看到该模型。
+              {t('models.deleteDescription')}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -404,14 +436,14 @@ export function PublishedModelsPage() {
               onClick={() => setDeleting(undefined)}
               disabled={busy}
             >
-              取消
+              {t('models.cancel')}
             </Button>
             <Button
               variant='destructive'
               disabled={busy}
               onClick={() => void confirmDelete()}
             >
-              删除
+              {t('models.delete')}
             </Button>
           </DialogFooter>
         </DialogContent>

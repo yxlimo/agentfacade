@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Plus, Trash2 } from 'lucide-react'
 import { create } from '@bufbuild/protobuf'
 import {
@@ -30,7 +31,23 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { DragSortList } from '@/components/drag-sort-list'
 import { ModelPicker } from '@/features/models/model-picker'
 import { GroupPicker } from '@/features/models/group-picker'
-import { intFieldProblem } from '@/lib/int-field'
+import { intFieldProblem, MAX_INT32 } from '@/lib/int-field'
+import i18n from '@/lib/i18n'
+
+/**
+ * 整数格子的判据仍在 lib/int-field 那份；这里只把那半句话翻成面板语言。
+ * 认不出的原文原样透出（那句话不是面板写的）。
+ */
+function translatedIntProblem(text: string): string | null {
+  const problem = intFieldProblem(text)
+  if (problem === null) return null
+  if (problem === '要填整数') return i18n.t('models.intNeedInteger')
+  if (problem === '不能是负数') return i18n.t('models.intNotNegative')
+  if (problem === `不能超过 ${MAX_INT32}`) {
+    return i18n.t('models.intExceedsMax', { max: MAX_INT32 })
+  }
+  return problem
+}
 import { newUid } from '@/lib/uid'
 import { cn } from '@/lib/utils'
 
@@ -175,8 +192,8 @@ export function toDraft(model: PublishedModel | undefined): ModelDraft {
 
 /** 继承时把现在实际的值显示出来。 */
 function inheritedHint(value: number | undefined): string {
-  if (value === undefined) return '继承平台'
-  return `继承平台，当前 ${value.toLocaleString()}`
+  if (value === undefined) return i18n.t('models.inheritToggle')
+  return i18n.t('models.inheritHint', { value: value.toLocaleString() })
 }
 
 function toTriState(value: boolean | undefined): TriState {
@@ -245,6 +262,7 @@ export function ModelDialog({
   onSubmit,
   busy,
 }: ModelDialogProps) {
+  const { t } = useTranslation()
   const [draft, setDraft] = useState<ModelDraft>(() => toDraft(model))
   const [tab, setTab] = useState('basic')
   /** 排序模式：目标压成一行只看「平台组 / 上游模型」，拖着排完再回卡片。 */
@@ -324,10 +342,10 @@ export function ModelDialog({
   // 两个整数格：继承时不判（那两格灰着，值不属于这一单），填了才判。
   const contextProblem = draft.contextWindowInherit
     ? null
-    : intFieldProblem(draft.contextWindow)
+    : translatedIntProblem(draft.contextWindow)
   const outputProblem = draft.maxOutputTokensInherit
     ? null
-    : intFieldProblem(draft.maxOutputTokens)
+    : translatedIntProblem(draft.maxOutputTokens)
 
   const valid =
     !basicMissing &&
@@ -341,55 +359,59 @@ export function ModelDialog({
       <DialogContent className='max-h-[90vh] overflow-y-auto sm:max-w-2xl'>
         <DialogHeader>
           <DialogTitle>
-            {model ? '编辑主路由模型' : '新增主路由模型'}
+            {model ? t('models.dialogEditTitle') : t('models.dialogAddTitle')}
           </DialogTitle>
           <DialogDescription>
-            对外公布一个 id，背后挂一个或多个平台模型。
+            {t('models.dialogDescription')}
           </DialogDescription>
         </DialogHeader>
 
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList>
             <TabsTrigger value='basic'>
-              基本
+              {t('models.tabBasic')}
               {basicMissing ? <RequiredDot /> : null}
             </TabsTrigger>
             <TabsTrigger value='targets'>
-              平台目标
+              {t('models.tabTargets')}
               {targetsProblem ? <RequiredDot /> : null}
             </TabsTrigger>
           </TabsList>
 
           <TabsContent value='basic' className='grid gap-4'>
             <div className='grid gap-2'>
-              <Label htmlFor='model-id'>对外 id</Label>
+              <Label htmlFor='model-id'>{t('models.headPublicId')}</Label>
               <Input
                 id='model-id'
                 value={draft.id}
                 disabled={Boolean(model)}
                 aria-invalid={basicMissing || undefined}
                 onChange={(event) => patch({ id: event.target.value })}
-                placeholder='比如 qoder-max'
+                placeholder={t('models.idPlaceholder')}
               />
               {basicMissing ? (
                 <p className='text-xs text-destructive'>
-                  对外 id 是必填的。
+                  {t('models.idRequired')}
                 </p>
               ) : null}
             </div>
             <div className='grid gap-2'>
-              <Label htmlFor='model-name'>显示名</Label>
+              <Label htmlFor='model-name'>
+                {t('models.headDisplayName')}
+              </Label>
               <Input
                 id='model-name'
                 value={draft.displayName}
                 onChange={(event) =>
                   patch({ displayName: event.target.value })
                 }
-                placeholder='留空则与对外 id 相同'
+                placeholder={t('models.namePlaceholder')}
               />
             </div>
             <div className='grid gap-2'>
-              <Label htmlFor='model-strategy'>策略</Label>
+              <Label htmlFor='model-strategy'>
+                {t('models.headStrategy')}
+              </Label>
               <Select
                 value={draft.strategy}
                 onValueChange={(value) => patch({ strategy: value })}
@@ -398,15 +420,21 @@ export function ModelDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value='single'>单一目标</SelectItem>
-                  <SelectItem value='fallback'>依次回退</SelectItem>
+                  <SelectItem value='single'>
+                    {t('models.strategySingle')}
+                  </SelectItem>
+                  <SelectItem value='fallback'>
+                    {t('models.strategyFallback')}
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
             <div className='grid gap-4 sm:grid-cols-2'>
               <div className='grid gap-2'>
-                <Label htmlFor='model-ctx'>上下文长度</Label>
+                <Label htmlFor='model-ctx'>
+                  {t('models.contextLabel')}
+                </Label>
                 <Input
                   id='model-ctx'
                   inputMode='numeric'
@@ -418,7 +446,7 @@ export function ModelDialog({
                   placeholder={
                     draft.contextWindowInherit
                       ? inheritedHint(draft.effectiveContextWindow)
-                      : '留空则继承平台'
+                      : t('models.leaveEmptyInherit')
                   }
                   value={draft.contextWindow}
                   onChange={(event) =>
@@ -435,7 +463,7 @@ export function ModelDialog({
                 ) : null}
                 <InheritToggle
                   id='model-ctx-inherit'
-                  label='继承平台'
+                  label={t('models.inheritToggle')}
                   checked={draft.contextWindowInherit}
                   onChange={(checked) =>
                     patch({
@@ -446,7 +474,9 @@ export function ModelDialog({
                 />
               </div>
               <div className='grid gap-2'>
-                <Label htmlFor='model-out'>最大输出</Label>
+                <Label htmlFor='model-out'>
+                  {t('models.outputLabel')}
+                </Label>
                 <Input
                   id='model-out'
                   inputMode='numeric'
@@ -458,7 +488,7 @@ export function ModelDialog({
                   placeholder={
                     draft.maxOutputTokensInherit
                       ? inheritedHint(draft.effectiveMaxOutputTokens)
-                      : '留空则继承平台'
+                      : t('models.leaveEmptyInherit')
                   }
                   value={draft.maxOutputTokens}
                   onChange={(event) =>
@@ -475,7 +505,7 @@ export function ModelDialog({
                 ) : null}
                 <InheritToggle
                   id='model-out-inherit'
-                  label='继承平台'
+                  label={t('models.inheritToggle')}
                   checked={draft.maxOutputTokensInherit}
                   onChange={(checked) =>
                     patch({
@@ -489,7 +519,9 @@ export function ModelDialog({
 
             <div className='grid gap-4 sm:grid-cols-2'>
               <div className='grid gap-2'>
-                <Label htmlFor='model-reasoning'>是否支持推理</Label>
+                <Label htmlFor='model-reasoning'>
+                  {t('models.reasoningLabel')}
+                </Label>
                 <Select
                   value={draft.reasoning}
                   onValueChange={(value) =>
@@ -500,14 +532,20 @@ export function ModelDialog({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value='inherit'>继承平台</SelectItem>
-                    <SelectItem value='yes'>支持</SelectItem>
-                    <SelectItem value='no'>不支持</SelectItem>
+                    <SelectItem value='inherit'>
+                      {t('models.inheritToggle')}
+                    </SelectItem>
+                    <SelectItem value='yes'>{t('models.supported')}</SelectItem>
+                    <SelectItem value='no'>
+                      {t('models.notSupported')}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div className='grid gap-2'>
-                <Label htmlFor='model-tool-call'>是否支持工具调用</Label>
+                <Label htmlFor='model-tool-call'>
+                  {t('models.toolCallLabel')}
+                </Label>
                 <Select
                   value={draft.toolCall}
                   onValueChange={(value) =>
@@ -518,16 +556,22 @@ export function ModelDialog({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value='inherit'>继承平台</SelectItem>
-                    <SelectItem value='yes'>支持</SelectItem>
-                    <SelectItem value='no'>不支持</SelectItem>
+                    <SelectItem value='inherit'>
+                      {t('models.inheritToggle')}
+                    </SelectItem>
+                    <SelectItem value='yes'>{t('models.supported')}</SelectItem>
+                    <SelectItem value='no'>
+                      {t('models.notSupported')}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
 
             <div className='grid gap-2'>
-              <Label htmlFor='model-effort'>推理档位（逗号分隔）</Label>
+              <Label htmlFor='model-effort'>
+                {t('models.effortLabel')}
+              </Label>
               <Input
                 id='model-effort'
                 value={draft.effortOptions}
@@ -535,7 +579,7 @@ export function ModelDialog({
                 placeholder='low, medium, high'
               />
               <p className='text-xs text-muted-foreground'>
-                留空 = 继承目标支持的档位。
+                {t('models.effortHint')}
               </p>
             </div>
 
@@ -544,20 +588,20 @@ export function ModelDialog({
                 checked={draft.enabled}
                 onCheckedChange={(checked) => patch({ enabled: checked })}
               />
-              启用
+              {t('models.enabledLabel')}
             </label>
           </TabsContent>
 
           <TabsContent value='targets' className='grid gap-3'>
             {targetsMissing && !sorting ? (
               <p className='text-xs text-destructive'>
-                至少要有一个填全的目标：平台组和平台模型 id 都要填。
+                {t('models.targetsRequired')}
               </p>
             ) : null}
             {sorting ? (
               <>
                 <p className='text-xs text-muted-foreground'>
-                  拖动行调整顺序，排在前面的先接
+                  {t('models.sortHint')}
                 </p>
                 {/* 排序模式下每行只留「平台组 / 上游模型」，拖拽、让位动画与
                     Alt + 上/下箭头都走共用那套（DragSortList）。草稿不动：
@@ -567,19 +611,22 @@ export function ModelDialog({
                   // 草稿里的稳定 id：排序的落位过渡按它在前后两帧对上同一行。
                   // 用下标当 id 的话重排后每个位置拿到的 id 不变，位移差恒为零。
                   getId={(target) => target.uid}
-                  ariaLabel='目标顺序'
+                  ariaLabel={t('models.targetOrderLabel')}
                   rowProps={(_, index) => ({
                     'data-target-row': String(index),
-                    'aria-label': `目标 ${index + 1}`,
+                    'aria-label': t('models.targetHeading', {
+                      index: index + 1,
+                    }),
                   })}
                   renderItem={(target) => (
                     <>
                       <span className='font-mono text-sm font-medium'>
-                        {target.groupName.trim() || '平台组未填'}
+                        {target.groupName.trim() || t('models.groupUnfilled')}
                       </span>
                       <span className='font-mono text-xs break-all text-muted-foreground'>
                         {' / '}
-                        {target.upstreamModel.trim() || '平台模型未填'}
+                        {target.upstreamModel.trim() ||
+                          t('models.modelUnfilled')}
                       </span>
                     </>
                   )}
@@ -591,13 +638,13 @@ export function ModelDialog({
                   className='w-fit'
                   onClick={() => setSorting(false)}
                 >
-                  完成排序
+                  {t('models.sortDone')}
                 </Button>
               </>
             ) : (
               <>
                 <p className='text-xs text-muted-foreground'>
-                  顺序就是先后，排在前面的先接。要拖动排序就点下面的按钮
+                  {t('models.orderHint')}
                 </p>
                 <Button
                   variant='outline'
@@ -605,32 +652,39 @@ export function ModelDialog({
                   className='w-fit'
                   onClick={() => setSorting(true)}
                 >
-                  排序
+                  {t('models.sortStart')}
                 </Button>
-                <ul aria-label='目标顺序' className='grid gap-2'>
+                <ul
+                  aria-label={t('models.targetOrderLabel')}
+                  className='grid gap-2'
+                >
                   {draft.targets.map((target, index) => {
                     const weight = weights.get(index)
                     return (
                       <li
                         key={index}
                         data-target-row={index}
-                        aria-label={`目标 ${index + 1}`}
+                        aria-label={t('models.targetHeading', {
+                          index: index + 1,
+                        })}
                         className='grid gap-2 rounded-lg border p-3'
                       >
                         <div className='flex flex-wrap items-center gap-2'>
                           <span className='text-sm font-medium'>
-                            目标 {index + 1}
+                            {t('models.targetHeading', { index: index + 1 })}
                           </span>
                           {weight === undefined ? null : (
                             <span className='text-xs text-muted-foreground'>
-                              权重 {weight}
+                              {t('models.targetWeight', { weight })}
                             </span>
                           )}
                           <span className='ms-auto flex items-center gap-1'>
                             <Button
                               variant='ghost'
                               size='sm'
-                              aria-label={`删除目标 ${index + 1}`}
+                              aria-label={t('models.removeTarget', {
+                                index: index + 1,
+                              })}
                               disabled={draft.targets.length === 1}
                               onClick={() =>
                                 setDraft((prev) => ({
@@ -642,14 +696,14 @@ export function ModelDialog({
                               }
                             >
                               <Trash2 />
-                              删除
+                              {t('models.delete')}
                             </Button>
                           </span>
                         </div>
                         <div className='grid gap-2 sm:grid-cols-2'>
                           <div className='grid gap-2'>
                             <Label htmlFor={`target-group-${index}`}>
-                              平台组
+                              {t('models.groupColumn')}
                             </Label>
                             <GroupPicker
                               id={`target-group-${index}`}
@@ -665,7 +719,7 @@ export function ModelDialog({
                           </div>
                           <div className='grid gap-2'>
                             <Label htmlFor={`target-model-${index}`}>
-                              平台模型 id
+                              {t('models.modelIdColumn')}
                             </Label>
                             <ModelPicker
                               id={`target-model-${index}`}
@@ -680,12 +734,16 @@ export function ModelDialog({
                         </div>
                         {duplicated.has(index) ? (
                           <p className='text-xs text-destructive'>
-                            {`${target.groupName.trim()} / ${target.upstreamModel.trim()} 已经有一行了（第 ${(duplicated.get(index) ?? 0) + 1} 个目标）`}
+                            {t('models.duplicateTarget', {
+                              group: target.groupName.trim(),
+                              model: target.upstreamModel.trim(),
+                              index: (duplicated.get(index) ?? 0) + 1,
+                            })}
                           </p>
                         ) : null}
                         {!targetFilled(target) ? (
                           <p className='text-xs text-destructive'>
-                            这一行还没填全：平台组和平台模型 id 都要填。
+                            {t('models.targetIncomplete')}
                           </p>
                         ) : null}
                       </li>
@@ -706,20 +764,20 @@ export function ModelDialog({
               }
             >
               <Plus />
-              加一个目标
+              {t('models.addTarget')}
             </Button>
           </TabsContent>
         </Tabs>
 
         <DialogFooter>
           <Button variant='outline' onClick={() => onOpenChange(false)}>
-            取消
+            {t('models.cancel')}
           </Button>
           <Button
             disabled={!valid || busy}
             onClick={() => onSubmit(fromDraft(draft))}
           >
-            保存
+            {t('models.save')}
           </Button>
         </DialogFooter>
       </DialogContent>
