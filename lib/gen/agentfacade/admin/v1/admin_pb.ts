@@ -2720,7 +2720,9 @@ export type PublishedModel = Message<"agentfacade.admin.v1.PublishedModel"> & {
   unpublishedReason?: UnpublishedReason | undefined;
 
   /**
-   * single / fallback
+   * single / fallback / balance。balance 下 weight 是份额：会话按
+   * 加权一致性哈希（weighted rendezvous）分摊到各目标，weight 越大分到的
+   * 会话越多；single/fallback 下 weight 是优先级，越大越先试。
    *
    * @generated from field: string strategy = 5;
    */

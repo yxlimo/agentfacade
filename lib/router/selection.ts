@@ -12,8 +12,9 @@
 // every failure as "try the next one", the upstream side only moves on when
 // the account itself is the problem.
 
-/** How the candidates are used. */
 import { createHash } from "node:crypto";
+
+/** How the candidates are used. */
 
 export type SelectionStrategy = "single" | "fallback" | "balance";
 
