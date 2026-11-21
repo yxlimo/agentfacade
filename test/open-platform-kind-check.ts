@@ -1272,9 +1272,18 @@ setRowAuto("gate-probe", true);
 
 // 代码里不再有按厂商写死的名单：加一家平台不需要动 store（模板表加一条就行）。
 // 只查那一句真删干净了 —— 判据从此只存在库里（models_auto 那一列）。
-const storeSource = fs.readFileSync(new URL("../lib/store.ts", import.meta.url), "utf8");
+// store 也拆成了门面 + lib/store/ 分片，按整个 store 模块搜，不认文件位置。
+const storeDir = path.join(import.meta.dirname, "..", "lib", "store");
+const storeSource = [
+  path.join(import.meta.dirname, "..", "lib", "store.ts"),
+  ...fs.existsSync(storeDir)
+    ? fs.readdirSync(storeDir, { recursive: true })
+        .filter((f) => String(f).endsWith(".ts"))
+        .map((f) => path.join(storeDir, String(f)))
+    : [],
+].map((f) => fs.readFileSync(f, "utf8")).join("\n");
 check(
-  "store.ts 里没有按 kind 写死的目录名单",
+  "store 模块里没有按 kind 写死的目录名单",
   !storeSource.includes("UPSTREAM_CATALOG_KINDS"),
   storeSource.split("\n").filter((line) => line.includes("UPSTREAM_CATALOG_KINDS")).join(" | "),
 );
