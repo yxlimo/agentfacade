@@ -310,7 +310,6 @@ export const zh = {
   'upstreams.stateReasonExpired': '凭据已过期：等待自动刷新，或重新登录',
   'upstreams.stateReasonRejected': '凭据被拒绝：重新登录',
   'upstreams.stateReasonQueued': '上游把模型排进队列，暂时发不出去：这里改不了什么，等它自己放行',
-  'upstreams.stateReasonLoggingIn': '正在登录',
   'upstreams.enabledAccounts_one': '{{count}} 个账号里 {{detail}}',
   'upstreams.enabledAccounts_other': '{{count}} 个账号里 {{detail}}',
   'upstreams.accountsCooling_one': '{{count}} 个冷却到 {{time}}',

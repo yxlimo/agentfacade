@@ -324,7 +324,6 @@ export const en: Record<keyof typeof zh, string> = {
   'upstreams.stateReasonExpired': 'Credential expired: wait for a refresh or log in again',
   'upstreams.stateReasonRejected': 'Credential rejected: log in again',
   'upstreams.stateReasonQueued': 'The upstream queued the model and cannot send it yet: nothing to change here, wait for it to be released',
-  'upstreams.stateReasonLoggingIn': 'Logging in',
   'upstreams.enabledAccounts_one': 'Of {{count}} account, {{detail}}',
   'upstreams.enabledAccounts_other': 'Of {{count}} accounts, {{detail}}',
   'upstreams.accountsCooling_one': '{{count}} account cooling until {{time}}',

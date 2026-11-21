@@ -1,6 +1,6 @@
 import { create, type MessageInitShape } from '@bufbuild/protobuf'
 import { describe, expect, it } from 'vitest'
-import { screen } from '@testing-library/react'
+import { screen, within } from '@testing-library/react'
 import {
   ListUpstreamsResponseSchema,
   ProviderPolicy,
@@ -87,8 +87,30 @@ describe('上游页的状态徽章', () => {
 
     expect(await screen.findByText('登录过期了')).toBeInTheDocument()
     expect(screen.getByText('登录被拒了')).toBeInTheDocument()
-    // 徽章与原因都写「正在登录」。
-    expect(screen.getAllByText('正在登录')).toHaveLength(2)
+    // 徽标说「正在登录」一次；原因句不再重复同一句。
+    expect(screen.getAllByText('正在登录')).toHaveLength(1)
+  })
+
+  it('正在登录：徽标说一次，原因句不再重复', async () => {
+    const client = mockAdminClient({
+      ListUpstreams: () =>
+        create(ListUpstreamsResponseSchema, {
+          upstreams: [platform('logging', '登录中的', UpstreamState.LOGGING_IN)],
+        }),
+    })
+
+    renderWithClient({ client, children: <UpstreamsPage /> })
+
+    await screen.findByText('登录中的')
+    const row = screen.getByText('登录中的').closest('tr')
+    if (!row) throw new Error('找不到那一行')
+
+    // 状态格里「正在登录」只出现一次 —— 徽标那一处。
+    expect(within(row).getAllByText('正在登录')).toHaveLength(1)
+    // 状态格除了徽标没有第二段原因文字（连未翻译的 key 也不许漏出来）。
+    const stateCell = within(row).getByText('正在登录').closest('td')
+    if (!stateCell) throw new Error('找不到状态格')
+    expect(stateCell).toHaveTextContent(/^正在登录$/)
   })
 
   it('冷却中：徽章说冷却中，还说为什么、到什么时候', async () => {
@@ -247,8 +269,8 @@ describe('上游页的状态徽章', () => {
         '上游把模型排进队列，暂时发不出去：这里改不了什么，等它自己放行'
       )
     ).toBeInTheDocument()
-    // 徽章与原因都写「正在登录」。
-    expect(screen.getAllByText('正在登录')).toHaveLength(2)
+    // 徽标说「正在登录」一次；原因句不再重复同一句。
+    expect(screen.getAllByText('正在登录')).toHaveLength(1)
   })
 
   it('面板不自己拼状态：后端说没登录，就显示没登录', async () => {

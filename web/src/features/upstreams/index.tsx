@@ -145,7 +145,7 @@ function upstreamStateReason(upstream: Upstream, t: TFunction): string {
       reason = t('upstreams.stateReasonQueued')
       break
     case UpstreamState.LOGGING_IN:
-      reason = t('upstreams.stateReasonLoggingIn')
+      // 徽标已经说了「正在登录」，原因句不再重复同一句话。
       break
     case UpstreamState.READY:
       reason = readyAccountsReason(upstream, t)
