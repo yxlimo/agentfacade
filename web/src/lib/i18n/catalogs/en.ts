@@ -379,7 +379,7 @@ export const en: Record<keyof typeof zh, string> = {
   'openPlatforms.namePlaceholder': 'for example My Gateway',
   'openPlatforms.addressLabel': 'Address',
   'openPlatforms.headersLabel': 'Injected headers',
-  'openPlatforms.headersHint': 'Headers are applied in row order, overriding same-named request headers. A {session-id} in a value is replaced with this request's session identifier; other braces are sent literally, for example x-opencode-session = {session-id}',
+  'openPlatforms.headersHint': 'Headers are applied in row order, overriding same-named request headers. A {session-id} in a value is replaced with the session identifier of this request; other braces are sent literally, for example x-opencode-session = {session-id}',
   'openPlatforms.headerName': 'Header name {{n}}',
   'openPlatforms.headerValue': 'Header value {{n}}',
   'openPlatforms.headerRemove': 'Remove header {{n}}',

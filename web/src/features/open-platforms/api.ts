@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
   AddPlatformRequestSchema,
+  HeaderTemplateListSchema,
+  HeaderTemplateSchema,
   DeletePlatformRequestSchema,
   DeleteModelOverrideRequestSchema,
   ListModelOverridesRequestSchema,
@@ -13,6 +15,7 @@ import {
   SetModelOverridesRequestSchema,
   UpdatePlatformRequestSchema,
 } from '@/gen/agentfacade/admin/v1/admin_pb'
+import type { HeaderField } from '@/features/open-platforms/templates'
 import type { OverrideInput } from '@/features/open-platforms/model-overrides'
 import { useAdminClient } from '@/features/auth/client-provider'
 import { assertOk, describeErrorText } from '@/lib/errors'
@@ -76,12 +79,20 @@ export function useAddPlatform() {
       baseUrl: string
       /** 用哪一类适配器：清单里的一个 kind。 */
       kind: string
+      /** 转发时注入的头：每次都发完整列表（开放平台才有）。 */
+      headers?: HeaderField[]
     }) => {
       const init: MessageInitShape<typeof AddPlatformRequestSchema> = {
         id: input.id,
         label: input.label,
         baseUrl: input.baseUrl,
         kind: input.kind,
+        headers: (input.headers ?? []).map((header) =>
+          create(HeaderTemplateSchema, {
+            name: header.name,
+            value: header.value,
+          })
+        ),
       }
       return await client.addPlatform(create(AddPlatformRequestSchema, init))
     },
@@ -118,6 +129,11 @@ export function useUpdatePlatform() {
       label: string
       baseUrl?: string
       traitsFromCommon?: boolean
+      /**
+       * 注入头完整列表：没给 = 这一格别动；给了空列表 = 清空。
+       * 开放平台每次保存都带，模拟客户端这一族不带。
+       */
+      headers?: HeaderField[]
     }) => {
       const init: MessageInitShape<typeof UpdatePlatformRequestSchema> = {
         id: input.id,
@@ -127,6 +143,17 @@ export function useUpdatePlatform() {
       // optional bool：不放就是「别动这一格」。关掉时给的是 false，与不放不一样。
       if (input.traitsFromCommon !== undefined) {
         init.traitsFromCommon = input.traitsFromCommon
+      }
+      // HeaderTemplateList 包一层：没给 = 别动这一格；给了空列表 = 清空。
+      if (input.headers !== undefined) {
+        init.headers = create(HeaderTemplateListSchema, {
+          items: input.headers.map((header) =>
+            create(HeaderTemplateSchema, {
+              name: header.name,
+              value: header.value,
+            })
+          ),
+        })
       }
       return await client.updatePlatform(
         create(UpdatePlatformRequestSchema, init)
