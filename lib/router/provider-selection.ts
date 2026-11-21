@@ -237,6 +237,15 @@ export interface UpstreamFailure {
   status: number | null;
   /** A short word for the log. */
   kind: string;
+  /**
+   * Does an immediate retry on the same account make sense?
+   *
+   * `retryable` only answers whether trying this account again right now is
+   * worth it — it does not answer whether to come back after a wait
+   * (rate-limit windows, cooldowns and the client's own timeout decision each
+   * have their own path)
+   */
+  retryable: boolean;
 }
 
 /**
@@ -272,7 +281,7 @@ export function classifyUpstreamError(error: unknown): UpstreamFailure {
   // criterion: an HTML gateway page can arrive with any status, so deciding
   // here by status would misclassify the next vendor's page.
   if (error instanceof GatewayPageError) {
-    return { degradable: true, status: error.upstreamStatus, kind: "refused" };
+    return { degradable: true, status: error.upstreamStatus, kind: "refused", retryable: false };
   }
   // The upstream parked the model in a queue and waiting it out did not help.
   //
@@ -284,33 +293,33 @@ export function classifyUpstreamError(error: unknown): UpstreamFailure {
   // No status: the queue answer arrives inside a 200 stream, so the upstream
   // never sent one. The 429 the client finally sees is the gateway's own
   // answer, not the upstream's.
-  if (isQueued(error)) return { degradable: true, status: null, kind: "queued" };
+  if (isQueued(error)) return { degradable: true, status: null, kind: "queued", retryable: false };
   // The platform's own code says more than the status does.
   const code = businessCodeOf(error);
   // 「这个免费模型被限流」：换账号没用（限的是模型），也不该把整个账号下线
   // （别的模型还好好的）。所以它既不降级也不冷却 —— 与分组拒绝同一类。
-  if (isFreeModelRateLimit(error)) return { degradable: false, status, kind: "model" };
+  if (isFreeModelRateLimit(error)) return { degradable: false, status, kind: "model", retryable: false };
   const byCode = code === null ? null : classifyBusinessCode(code);
-  if (byCode) return { degradable: byCode.degradable, status, kind: byCode.kind };
+  if (byCode) return { degradable: byCode.degradable, status, kind: byCode.kind, retryable: false };
   // 「模型不在这个 key 的分组里」：信封里没解出这个码时，正文里写着也算。
   // 状态码这时是 403 —— 按凭据被拒处理会把整个账号冷却掉，而账号没有坏。
-  if (isModelGroupDenied(error)) return { degradable: false, status, kind: "model" };
+  if (isModelGroupDenied(error)) return { degradable: false, status, kind: "model", retryable: false };
   if (status !== null) {
-    if (status === 401 || status === 403) return { degradable: true, status, kind: "credential" };
-    if (status === 402) return { degradable: true, status, kind: "no-balance" };
-    if (status === 429) return { degradable: true, status, kind: "rate-limit" };
-    if (status === 408) return { degradable: true, status, kind: "timeout" };
-    if (status >= 500) return { degradable: true, status, kind: "server" };
+    if (status === 401 || status === 403) return { degradable: true, status, kind: "credential", retryable: false };
+    if (status === 402) return { degradable: true, status, kind: "no-balance", retryable: false };
+    if (status === 429) return { degradable: true, status, kind: "rate-limit", retryable: false };
+    if (status === 408) return { degradable: true, status, kind: "timeout", retryable: false };
+    if (status >= 500) return { degradable: true, status, kind: "server", retryable: true };
     // 400, 404, 413 and the rest: the request itself.
-    return { degradable: false, status, kind: "request" };
+    return { degradable: false, status, kind: "request", retryable: false };
   }
   // The network failure keeps its own name: "the host does not resolve" is a
   // different problem from "the connection broke", and the two are handled
-  // differently (see TRANSIENT_KINDS in upstreams/policy.ts and
+  // differently (see the retryable field above and
   // cooldownForFailure in account-cooldown.ts).
   const network = networkReason(error);
-  if (network) return { degradable: true, status: null, kind: network };
-  return { degradable: false, status: null, kind: "unknown" };
+  if (network) return { degradable: true, status: null, kind: network, retryable: network === "connection" };
+  return { degradable: false, status: null, kind: "unknown", retryable: false };
 }
 
 /** The failure in one line: the kind and the status, for the log. */

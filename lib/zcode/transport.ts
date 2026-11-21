@@ -14,6 +14,7 @@ import crypto from "node:crypto";
 import { configString } from "../config.ts";
 import { AuthError } from "../credential.ts";
 import { scrubForClient, scrubForLog } from "../log-scrub.ts";
+import { withUpstreamStatus } from "../upstream-status.ts";
 import { GatewayPageError, isGatewayPage } from "../upstream-gateway-page.ts";
 import { ZCODE_BASE, ZCODE_VERSION, loadSession, type ZcodeSession } from "./auth.ts";
 import { matchZcodeModel, zcodeEffortFor } from "./models.ts";
@@ -308,11 +309,14 @@ export async function zcodeChat(
     // 只能靠这一行（405 那次就是因为没它才查不下去）。
     console.warn(`[ZCODE] 上游 ${response.status} ${ZCODE_MESSAGES_URL}：${scrubForLog(text, 500)}`);
     if (gatewayPage) throw new GatewayPageError(response.status, text);
-    throw new AuthError(
-      `upstream HTTP ${response.status}`,
-      // 客户端看到的是这一句：上游正文里可能带着账号标识，抹一遍再放上去。
-      `ZCode 上游返回 ${response.status}：${scrubForClient(text, 300)}`,
-      502,
+    throw withUpstreamStatus(
+      new AuthError(
+        `upstream HTTP ${response.status}`,
+        // 客户端看到的是这一句：上游正文里可能带着账号标识，抹一遍再放上去。
+        `ZCode 上游返回 ${response.status}：${scrubForClient(text, 300)}`,
+        502,
+      ),
+      response.status,
     );
   }
   // 上游会用 200 带业务码报错误（额度用尽是 code 1005）。这不是答复。
