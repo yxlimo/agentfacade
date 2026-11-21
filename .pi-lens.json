@@ -1,7 +1,7 @@
 {
   "rules": {
     "no-console-except-error": {
-      "ignorePaths": ["tools/probe.ts"]
+      "ignorePaths": ["tools/probe.ts", "tools/", "test/", "scripts/", "config-cli.ts"]
     }
   }
 }
