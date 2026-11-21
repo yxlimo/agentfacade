@@ -151,6 +151,11 @@ function platformMessage(
     // 空与 0（0 的意思是「没拉过」，不是「没有模型」）。
     models: open?.models.items ?? [],
     modelsFetchedAtMs: BigInt(open?.models.fetchedAt ?? 0),
+    // 注入头：只有开放平台有这一格。open 已把模拟客户端那一族滤掉，所以有行
+    // 不等于有头 —— 模板平台与模拟客户端照空，不给面板回填任何值。
+    headers: (open?.headers ?? []).map((h) =>
+      create(HeaderTemplateSchema, { name: h.name, value: h.value })
+    ),
     // 人给这些模型写的元数据：模板平台也有（目录是代码的，人写的那一层同样是
     // 人写的那一层），所以不跟着 open 走。
     modelOverrides: listModelOverrides(id).map(modelOverrideMessage),

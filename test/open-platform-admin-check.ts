@@ -39,6 +39,8 @@
 //  16. 目录写不进去：models / modelsAuto 那几格在写入口（数据层）被
 //      忽略（不报错，按现值留着），同一单里别的格照常保存；面板那条路端到端
 //      也写不坏；同一格在开放平台上照常生效（对照组）
+//  17. ListUpstreams 的注入头（headers）：开放平台报平台行里的那份（顺序
+//      原样）、模拟客户端那一族有行但照空、改头之后再列读到的是库里的新值
 //
 // 断言里不写死平台的个数：一律跟表里的行数比。
 
@@ -1418,6 +1420,61 @@ check(
   (controlRow?.models.items ?? []).length === 0,
   show(controlRow?.models),
 );
+
+/* ------------------------------------------------------------------ *
+ * 17. ListUpstreams 的注入头：开放平台报的是平台行里的那份（顺序原样），
+ *     模拟客户端那一族有行但不是开放平台，照空；改头之后再列，读到的是
+ *     库里的新值，不是哪一份缓存。
+ * ------------------------------------------------------------------ */
+
+section("注入头");
+
+const headersAdded = await guard(() =>
+  addPlatform({
+    id: "acme-headers",
+    label: "Acme Headers",
+    baseUrl: "https://api.acme.test/v1",
+    headers: [
+      { name: "X-First", value: "one" },
+      { name: "X-Second", value: "two" },
+    ],
+  }),
+);
+check("带头模板的平台加得进去", headersAdded !== null, `${errCode()} ${errDetail()}`);
+const listedHeaders = (await listUpstreams()).find((u) => u.id === "acme-headers")?.headers ?? [];
+check(
+  "ListUpstreams 报的两条头与建的时候一致（顺序原样）",
+  JSON.stringify(listedHeaders.map((h: any) => [h.name, h.value])) ===
+    JSON.stringify([
+      ["X-First", "one"],
+      ["X-Second", "two"],
+    ]),
+  show(listedHeaders),
+);
+check(
+  "模拟客户端那一族有行但报空列表（zcode）",
+  ((await listUpstreams()).find((u) => u.id === "zcode")?.headers ?? null)?.length === 0,
+  show((await listUpstreams()).find((u) => u.id === "zcode")?.headers),
+);
+
+const headersUpdated = await guard(() =>
+  updatePlatform({
+    id: "acme-headers",
+    headers: { items: [{ name: "X-First", value: "changed" }] },
+  }),
+);
+check("改头那一单走得通", headersUpdated !== null, `${errCode()} ${errDetail()}`);
+const afterHeaderUpdate =
+  (await listUpstreams()).find((u) => u.id === "acme-headers")?.headers ?? [];
+check(
+  "改头之后再列，读到的是库里的新值",
+  JSON.stringify(afterHeaderUpdate.map((h: any) => [h.name, h.value])) ===
+    JSON.stringify([["X-First", "changed"]]),
+  show(afterHeaderUpdate),
+);
+
+// 收尾：把这一个删掉，别的断言如果按平台个数比也不受影响。
+await deletePlatform({ id: "acme-headers" });
 
 /* ------------------------------------------------------------------ *
  * 收尾
