@@ -30,6 +30,7 @@ import os from "node:os";
 import path from "node:path";
 import type { PlatformAvailability } from "../lib/router/availability.ts";
 import type { ProviderRow } from "../lib/providers.ts";
+import { captureLog } from "./log-capture.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "policy-check-"));
 process.env.FACADE_DATA_DIR = tmp;
@@ -720,16 +721,13 @@ console.log("重试：没有人可换时无限重试，有人可换时试三次�
     };
   };
 
-  /** 记下这期间 console.log 打出来的 [ROUTE] 行，其他的照旧打出来。 */
-  const logs: string[] = [];
-  const realLog = console.log;
-  console.log = (...parts: unknown[]) => {
-    const line = parts.map(String).join(" ");
-    if (line.startsWith("[ROUTE]")) logs.push(line);
-    else realLog(...parts);
-  };
+  /** 记下这期间 log.info 打出来的 [ROUTE] 行，其他的照旧打出来。 */
+  const captured = captureLog({
+    methods: ["info"],
+    forward: (line) => !line.startsWith("[ROUTE]"),
+  });
   const stopLogging = () => {
-    console.log = realLog;
+    captured.restore();
   };
 
   // 1. 503 一次后成功：客户端拿到答复，冷却没有。
@@ -1533,6 +1531,7 @@ console.log("重试：没有人可换时无限重试，有人可换时试三次�
   }
 
   stopLogging();
+  const logs = captured.all.filter((line) => line.startsWith("[ROUTE]"));
 
   // 18. 日志：每次重试一行，最后一次失败照旧交给策略。
   {

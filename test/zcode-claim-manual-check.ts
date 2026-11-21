@@ -32,6 +32,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { startFakeUpstream, type CapturedRequest } from "./fake-upstream.ts";
+import { captureLog } from "./log-capture.ts";
 
 // 会话层在模块求值时读配置，所以数据目录与假上游的地址要设好才能 import
 // （与 test/zcode-claim-check.ts 同一套做法）。
@@ -338,11 +339,8 @@ check(
 section("二、上游拒了验证码（3007）");
 
 reset("ok", "offer", "captcha", "camp-captcha");
-const logs: string[] = [];
-const realLog = console.log;
-const realWarn = console.warn;
-console.log = (...args: unknown[]) => logs.push(args.map(String).join(" "));
-console.warn = (...args: unknown[]) => logs.push(args.map(String).join(" "));
+const captured = captureLog({ methods: ["info", "warn"] });
+const logs = captured.all;
 let rejected: Awaited<ReturnType<typeof claimZcodePlanManually>>;
 try {
   rejected = await claimZcodePlanManually(ACCOUNT_ID, {
@@ -352,8 +350,7 @@ try {
     captchaRegion: "cn",
   });
 } finally {
-  console.log = realLog;
-  console.warn = realWarn;
+  captured.restore();
 }
 check("3007 → captcha_rejected", rejected.outcome === "captcha_rejected", JSON.stringify(rejected));
 check("结论带着业务码 3007", rejected.code === 3007, JSON.stringify(rejected.code));

@@ -9,6 +9,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { captureLog } from "./log-capture.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "periodic-off-"));
 process.env.FACADE_DATA_DIR = tmp;
@@ -82,13 +83,10 @@ check("没有扫余额", scanned.length === 0, JSON.stringify(scanned));
 console.log("");
 console.log("startPeriodic 也不起定时器");
 
-const logs: string[] = [];
-const originalLog = console.log;
-console.log = (...args: unknown[]) => {
-  logs.push(args.map(String).join(" "));
-};
+const captured = captureLog({ methods: ["info"] });
 startPeriodic();
-console.log = originalLog;
+const logs = captured.all;
+captured.restore();
 await new Promise((r) => setTimeout(r, 300));
 check("没有换令牌", refreshed.length === 0, JSON.stringify(refreshed));
 check("说了为什么不动", logs.some((l) => l.includes("PERIODIC_ENABLED")), JSON.stringify(logs));

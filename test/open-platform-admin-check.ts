@@ -46,6 +46,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { captureLog } from "./log-capture.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "open-platform-admin-"));
 process.env.FACADE_DATA_DIR = tmp;
@@ -160,12 +161,8 @@ function errDetail(): string {
  * 下来给断言看：光转发不改输出，跑起来还是原来那些行。
  * ------------------------------------------------------------------ */
 
-const logLines: string[] = [];
-const realLog = console.log.bind(console);
-console.log = (...args: unknown[]): void => {
-  logLines.push(args.map((one) => String(one)).join(" "));
-  realLog(...args);
-};
+const captured = captureLog({ methods: ["info"], forward: true });
+const logLines = captured.all;
 
 /** 到目前为止服务写过的日志。 */
 function routerLog(): string {
@@ -1429,6 +1426,7 @@ check(
 upstream.close();
 fs.rmSync(tmp, { recursive: true, force: true });
 
+captured.restore();
 console.log("");
 if (fail === 0) {
   console.log(`全部通过（${pass} 项）`);
