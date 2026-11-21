@@ -509,6 +509,25 @@ export function cancelLogin(loginId: string): { ok: boolean; message: string } {
   return { ok: true, message: "登录已取消。" };
 }
 
+/**
+ * 删账号时把这个账号的登录会话全部清掉，包括还在轮询的那几条。
+ *
+ * 账号 id 会被复用：留一条 pending 会话，下一个顶着这个 id 的账号就会显示
+ * 「正在登录」，明明没人在登。先把会话标记取消（在途的轮询看到不是 pending
+ * 就不会写回凭据），再删掉缓存行 —— 顺序反过来，轮询回调可能又把会话写回来。
+ * 账已经不在了，这些会话没有任何人还需要它。
+ */
+export function forgetLogins(accountId: string): number {
+  const sessions = loginsOf(accountId);
+  for (const session of sessions) {
+    // 先停：把在途轮询的会话合上，回调醒来就不会再写凭据。
+    if (session.status === "pending") cancelLogin(session.loginId);
+    // 再删行：一条不留，id 会被下一个账号复用。
+    deleteCached(cacheKey(session.loginId));
+  }
+  return sessions.length;
+}
+
 /* ------------------------------------------------------------------ *
  * 账号密码
  * ------------------------------------------------------------------ */

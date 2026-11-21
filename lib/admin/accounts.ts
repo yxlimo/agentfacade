@@ -27,6 +27,7 @@ import { openPlatformOf } from "../open-platforms.ts";
 import { fetchOpenPlatformModels } from "../open-platform-catalog.ts";
 import { forgetAccountSnapshot } from "./upstreams.ts";
 import { clearCooldown } from "../cooldown.ts";
+import { forgetLogins } from "./login.ts";
 import { CredentialState } from "../gen/agentfacade/admin/v1/admin_pb.ts";
 import { quotaPluginOfAccount } from "../quota-state.ts";
 import { credentialStateText, hasUsableCredential, openPlatformOfAccount, parseCredentialId } from "./credentials.ts";
@@ -309,6 +310,9 @@ export function logoutAccount(accountId: string): { ok: boolean; message: string
  * 带着旧身份回来 —— 快照里的额度会继续显示着一个已经不存在的账号。
  */
 export function forgetAccountRecords(accountId: string): number {
+  // 登录会话先停再删：账号 id 会被复用，留一条 pending 会话就等于把
+  // 「正在登录」送给下一个顶着这个 id 的账号（面板该说「没有可用凭据」）。
+  forgetLogins(accountId);
   let removed = deleteProviderCredentials(accountId);
   // 开放平台的凭据自己清一遍：那把 key 是这个账号的全部身份，删账号就得删它
   // —— 不然它就成了一条没人认领的孤儿记录（存凭据的地方换了位置也不怕）。
