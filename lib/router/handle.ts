@@ -21,7 +21,8 @@ import { upstreamStatusOf } from "../upstream-status.ts";
 import { kindOf } from "../provider-kinds.ts";
 import { recordAggregateUsage } from "../aggregate.ts";
 import type { AggregateEntry } from "./catalog.ts";
-import { select, SelectionStop, byWeight } from "./selection.ts";
+import { select, SelectionStop, byWeight, balanceOrder } from "./selection.ts";
+import { extractSessionKey, sessionKeyFingerprint, sessionHeaderNames } from "./session-key.ts";
 import { classifyUpstreamError, describeUpstreamError } from "./provider-selection.ts";
 import { recordUsage, maxTotals, usageTotals } from "../usage.ts";
 import { clientForwardHeaders, detectAgent, detectSession, type SessionInfo } from "../agent.ts";
@@ -206,9 +207,34 @@ async function handleAggregate(
     },
   }));
 
-  // The order the candidates are tried in: the heaviest first. The log needs
-  // it to say which target takes over.
-  const ordered = byWeight(candidates);
+  // The order the candidates are tried in. `balance` orders them per
+  // session (weighted rendezvous): the same session always meets the same
+  // order, so its prompt cache keeps hitting on one upstream. The other two
+  // strategies are priority orders: the heaviest first.
+  //
+  // 取不到会话就答 400：balance 没有会话标识就没有粘性可言，而答案一旦写出去
+  // 就没有换目标的机会 —— 所以这个判断必须发生在任何上游调用之前。只有这一个
+  // 模型（这一个请求）受影响，也不记成上游失败：上游什么都没收到。
+  let ordered: typeof candidates;
+
+  if (entry.strategy === "balance") {
+    const key = extractSessionKey(ctx.request.headers, body);
+    if (!key) {
+      sendError(
+        ctx,
+        new AuthError(
+          `model ${entry.id} requires a session id`,
+          sessionRequiredHint(),
+          400,
+        ),
+      );
+      return;
+    }
+    log.info(`[ROUTE] ${entry.id}：按会话负载均衡，${sessionKeyFingerprint(key)}`);
+    ordered = balanceOrder(candidates, key.id);
+  } else {
+    ordered = byWeight(candidates);
+  }
 
   // 试过的失败，按尝试的先后记着：给客户端看哪一个由它们决定，不由最后一个决定。
   // 记的是「哪个目标」与「它的错」：客户端要知道每个目标各自为什么失败。
@@ -281,6 +307,23 @@ async function handleAggregate(
   } catch (e) {
     sendError(ctx, e);
   }
+}
+
+/**
+ * balance 模型没有会话标识时给客户端的话：它得知道缺什么、能配上什么。
+ */
+function sessionRequiredHint(): string {
+  return [
+    "这个模型配置了按会话负载均衡（balance）：同一个会话的请求会固定打到同一个上游，",
+    "但这次请求里找不到会话标识。",
+    "",
+    "请求头按顺序找过这些（命中即用）：",
+    ...sessionHeaderNames().map((name) => `  - ${name}`),
+    "都没有时再看请求体里的 prompt_cache_key 与 metadata.user_id。",
+    "",
+    "如果客户端用别的头名带会话标识，可以在面板（或 config）里把 SESSION_HEADER",
+    "设成那个头名（可逗号分隔多个）；它是追加在最后，不会抢上面任何内置头。",
+  ].join("\n");
 }
 
 /**

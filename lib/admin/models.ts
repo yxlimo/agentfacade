@@ -430,7 +430,9 @@ export function savePublishedModel(input: PublishedModelInput): AdminResult & { 
   if (!input.targets?.length) {
     return { ok: false, id, code: "MODEL_HAS_NO_TARGET", message: `model ${id} has no target` };
   }
-  const strategy: AggregateStrategy = input.strategy === "fallback" ? "fallback" : "single";
+  // 面板给的策略只认这三个：别的（漏传、拼错）都按单一目标兜底。
+  const strategy: AggregateStrategy =
+    input.strategy === "fallback" || input.strategy === "balance" ? input.strategy : "single";
   // 权重从大到小。权重一样时排序是稳定的，面板给的先后留着。
   const sorted = [...input.targets].sort((a, b) => (b.weight ?? 1) - (a.weight ?? 1));
   const targets: AggregateTarget[] = sorted.map((target, index) => ({

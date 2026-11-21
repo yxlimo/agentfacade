@@ -8,7 +8,7 @@
 // the prefixed form (`/qoder-cn/v1/models`) with one upstream, and the model
 // ids are the real ones there — the path already says where the model lives.
 
-import type { AggregateModel } from "../aggregate.ts";
+import type { AggregateModel, AggregateStrategy } from "../aggregate.ts";
 import type { CatalogModel } from "../catalog-models.ts";
 import type { ModelBilling } from "../catalog-billing.ts";
 import { allPlatforms } from "../platforms.ts";
@@ -123,7 +123,7 @@ export interface AggregateEntry {
   billing?: ModelBilling;
   /** 平台报的模态。只带上游报了的那一侧。 */
   modalities?: { input?: string[]; output?: string[] };
-  strategy: "single" | "fallback";
+  strategy: AggregateStrategy;
   targets: AggregateTargetSpec[];
 }
 /**

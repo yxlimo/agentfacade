@@ -878,7 +878,9 @@ message PublishedModel {
   bool published = 4;
   // 没公布的原因。公布了就是 UNSPECIFIED。
   optional UnpublishedReason unpublished_reason = 13;
-  // single / fallback
+  // single / fallback / balance。balance 下 weight 是份额：会话按
+  // 加权一致性哈希（weighted rendezvous）分摊到各目标，weight 越大分到的
+  // 会话越多；single/fallback 下 weight 是优先级，越大越先试。
   string strategy = 5;
   // 不给表示继承目标的值。给了就用这个值。
   optional int32 context_window = 6;
