@@ -11,7 +11,6 @@
 import { clientForwardHeaders, type HeaderBag } from "../agent.ts";
 import type { Json } from "../json.ts";
 import { log } from "../log.ts";
-import { openPlatformOf } from "../open-platforms.ts";
 import { extractSessionKey } from "../session-id.ts";
 import {
   missingSessionMessage,
@@ -39,11 +38,12 @@ export type HeaderInjection =
 export function resolveForwardedHeaders(
   platformId: string,
   platformLabel: string,
+  /** 调用方已经查过的模板（platformOfAny 带出来的）：这里不再读库 */
+  templates: readonly HeaderTemplate[],
   requestHeaders: HeaderBag,
   body: Json,
 ): HeaderInjection {
   const forwarded = clientForwardHeaders(requestHeaders);
-  const templates: HeaderTemplate[] = openPlatformOf(platformId)?.headers ?? [];
   if (!templates.length) return { ok: true, headers: forwarded };
 
   // 先在渲染之前把会话取到，取不到一次就打回，不用逐条试。

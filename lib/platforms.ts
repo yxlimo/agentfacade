@@ -79,7 +79,10 @@ export function platformOfAny(id: string): Platform | null {
   const template = BY_ID.get(id);
   if (template) return template;
   const row = openPlatformOf(id);
-  return row ? { id: row.id, kind: row.kind, label: row.label, region: row.region } : null;
+  // headers 原样带出：转发路径要用它注入，调用方刚查完这一行就不该再读一次库
+  return row
+    ? { id: row.id, kind: row.kind, label: row.label, region: row.region, headers: row.headers }
+    : null;
 }
 
 /**

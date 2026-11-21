@@ -177,13 +177,31 @@ export function listOpenPlatforms(): OpenPlatformRow[] {
 }
 
 /** 某一个开放平台。没有就是 null。 */
+/**
+ * platform 表的一行原样：列名就是库里那些（models / headers 存的是 JSON 字符串，
+ * 解析归 toRow）。给它一个类型，SELECT 的结果就不用再 any。
+ */
+interface PlatformDbRow {
+  id: unknown;
+  label: unknown;
+  base_url: unknown;
+  models: unknown;
+  traits_from_common: unknown;
+  kind: unknown;
+  region: unknown;
+  headers: unknown;
+  created_at: unknown;
+  updated_at: unknown;
+}
+
+/** 某一个开放平台。没有就是 null。 */
 export function openPlatformOf(id: string): OpenPlatformRow | null {
   const row = store()
     .prepare(
       "SELECT id, label, base_url, models, traits_from_common, kind, region, headers, created_at, updated_at " +
         "FROM platform WHERE id = ?",
     )
-    .get(id) as any;
+    .get(id) as PlatformDbRow | undefined;
   return row ? toRow(row) : null;
 }
 
@@ -359,11 +377,11 @@ export function updateOpenPlatform(
   // 面板上改个名字会送来空 base_url，那不是「把地址清空」而是要改别的格 —— 拿
   // 它去过非空校验，连改名都改不动。所以这一类不管请求里那一格，照库里存着。
   const simulated = isSimulatedClientKind(row.kind);
-  const baseUrl = simulated
-    ? row.baseUrl
-    : patch.baseUrl === undefined
-      ? row.baseUrl
-      : String(patch.baseUrl).trim();
+  // 地址：模拟客户端由预置定死；没给就是别动这一格
+  let baseUrl = row.baseUrl;
+  if (!simulated && patch.baseUrl !== undefined) {
+    baseUrl = String(patch.baseUrl).trim();
+  }
   if (!simulated) {
     const urlProblem = checkBaseUrl(baseUrl);
     if (urlProblem) return urlProblem;
@@ -372,6 +390,11 @@ export function updateOpenPlatform(
   const checked = patch.headers === undefined ? null : validateHeaderTemplates(patch.headers);
   if (checked && !checked.ok) return checked;
   const headers = checked ? checked.templates : row.headers;
+  // 参数补齐开关：没给 = 别动这一格
+  let traitsFromCommonFlag = row.traitsFromCommon ? 1 : 0;
+  if (patch.traitsFromCommon !== undefined) {
+    traitsFromCommonFlag = patch.traitsFromCommon ? 1 : 0;
+  }
   store()
     .prepare(
       "UPDATE platform SET label = ?, base_url = ?, " +
@@ -380,7 +403,7 @@ export function updateOpenPlatform(
     .run(
       label,
       normalizeBaseUrl(baseUrl),
-      patch.traitsFromCommon === undefined ? (row.traitsFromCommon ? 1 : 0) : patch.traitsFromCommon ? 1 : 0,
+      traitsFromCommonFlag,
       serializeHeaders(headers),
       Date.now(),
       id,
@@ -441,7 +464,7 @@ function sameTraits(a: Record<string, ModelTraits>, b: Record<string, ModelTrait
   const canon = (traits: Record<string, ModelTraits>): string =>
     JSON.stringify(
       Object.keys(traits)
-        .sort()
+        .sort((x, y) => (x < y ? -1 : x > y ? 1 : 0))
         .map((id) => [id, Object.entries(traits[id]).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0))]),
     );
   return canon(a) === canon(b);

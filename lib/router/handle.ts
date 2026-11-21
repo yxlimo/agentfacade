@@ -267,13 +267,15 @@ async function handleAggregate(
         if (!stopped) failures.push({ id: candidate.id, error: reason });
         const at = ordered.findIndex((c) => c.id === candidate.id);
         const next = ordered[at + 1];
+        // 这条日志的尾巴先算成变量：嵌套三元读不出「没有目标可试」这一层。
+        let where = "no target left";
+        if (stopped) {
+          where = "the answer had already started";
+        } else if (next) {
+          where = `trying ${next.id}`;
+        }
         log.info(
-          `[ROUTE] ${candidate.id} failed (${describeTargetFailure(reason)}), ` +
-            (stopped
-              ? "the answer had already started"
-              : next
-                ? `trying ${next.id}`
-                : "no target left"),
+          `[ROUTE] ${candidate.id} failed (${describeTargetFailure(reason)}), ` + where,
         );
       },
       failure: (lastError) => {
@@ -552,7 +554,7 @@ export async function handle(
   let route: Route;
   try {
     const rctx = routingContext(availabilities);
-    route = routeInGroup(platform!, String(body.model ?? "").trim(), rctx);
+    route = routeInGroup(platform, String(body.model ?? "").trim(), rctx);
   } catch (e) {
     sendError(ctx, e);
     return;
@@ -619,6 +621,7 @@ async function callUpstream(
     const injected = resolveForwardedHeaders(
       route.platform,
       template?.label ?? route.platform,
+      template?.headers ?? [],
       ctx.request.headers,
       body,
     );
@@ -670,7 +673,13 @@ async function callUpstream(
     const err = e as AuthError;
     // 客户端走了：答复那一层给客户端的是 499，用量表也记 499，不要记成 500
     // —— 500 是「上游挂了」，而上游没坏，只是没人要了。
-    const status = e instanceof ClientGoneError ? 499 : typeof err?.status === "number" ? err.status : 500;
+    // 客户端走了记 499；上游自己给了状态码就用它的；都没有才是 500。
+    let status = 500;
+    if (e instanceof ClientGoneError) {
+      status = 499;
+    } else if (typeof err?.status === "number") {
+      status = err.status;
+    }
     recordRequestUsage(
       body,
       route,
@@ -736,14 +745,13 @@ export function effectiveMaxTokens(
   uctx: Pick<UpstreamContext, "upstreamMaxTokens">,
   body: Json,
 ): number | "未指定" {
-  return (
-    uctx.upstreamMaxTokens ??
-    (typeof body.max_tokens === "number"
-      ? body.max_tokens
-      : typeof body.max_completion_tokens === "number"
-        ? body.max_completion_tokens
-        : "未指定")
-  );
+  let fromBody: number | "未指定" = "未指定";
+  if (typeof body.max_tokens === "number") {
+    fromBody = body.max_tokens;
+  } else if (typeof body.max_completion_tokens === "number") {
+    fromBody = body.max_completion_tokens;
+  }
+  return uctx.upstreamMaxTokens ?? fromBody;
 }
 
 /**

@@ -107,7 +107,12 @@ section("b 校验的每一条拒绝");
 
   // 报错说清第几条：第二条坏 → 文案里有「2」。
   const second = validateHeaderTemplates([{ name: "x-ok", value: "v" }, { name: "bad name", value: "v" }]);
-  check("报错指到第几条", !second.ok && /2/.test(second.message), second.message);
+  check(
+    "报错指到第几条",
+    !second.ok && /2/.test(second.message),
+    // detail 只在失败分支有意义：second.ok 时 message 这个字段根本不存在
+    second.ok ? "意外通过" : second.message,
+  );
 }
 
 /* ------------------------------------------------------------------ *
