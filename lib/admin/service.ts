@@ -197,6 +197,9 @@ import { accountMessage, credentialMessage, loginErrorText, loginSessionMessage 
 import { platformMethods } from "./service/platforms.ts";
 import { platformKindMethods } from "./service/platform-kinds.ts";
 import { systemMethods } from "./service/system.ts";
+import { accountMethods } from "./service/accounts.ts";
+import { credentialMethods } from "./service/credentials.ts";
+import { loginMethods } from "./service/login.ts";
 
 export { quotaMessage };
 /** 管理接口的实现。 */
@@ -206,51 +209,9 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
   ...systemMethods,
   ...platformMethods,
   ...platformKindMethods,
-  /* ---------------- 平台与账号 ---------------- */
-
-
-  async addAccount(request) {
-    const result = addAccount({
-      platform: String(request.platform ?? ""),
-      alias: String(request.alias ?? ""),
-    });
-    if (!result.ok) throw adminError(result.code, result.message);
-    log.info(`[ADMIN] 在 ${request.platform} 下加了账号 ${result.id}`);
-    return create(AddAccountResponseSchema, { id: result.id ?? "" });
-  },
-
-  async updateProvider(request) {
-    // 别名与开关。策略不在这里：契约里的 alias 是普通 proto3 string，没有
-    // presence 位，混在一起的话「只改策略」会把别名顺手抹掉。
-    const patch: { alias?: string; enabled?: boolean; weight?: number } = {};
-    if (request.alias !== undefined) patch.alias = String(request.alias);
-    if (request.enabled !== undefined && request.enabled !== null) patch.enabled = request.enabled === true;
-    if (request.weight !== undefined && request.weight !== null) patch.weight = Number(request.weight);
-    const result = updateProvider(String(request.id ?? ""), patch);
-    if (result.ok) log.info(`[ADMIN] 账号 ${request.id} 改了`);
-    return create(UpdateProviderResponseSchema, { ok: result.ok, message: result.message });
-  },
-
-
-  async deleteAccount(request) {
-    const id = String(request.id ?? "");
-    const result = deleteAccount(id);
-    if (result.ok) {
-      log.info(`[ADMIN] 删了账号 ${id}（连它的凭据一起）`);
-    }
-    return create(DeleteAccountResponseSchema, { ok: result.ok, message: result.message });
-  },
-
-  async setAccountEnabled(request) {
-    const id = String(request.accountId ?? "") as UpstreamId;
-    const result = setAccountEnabled(id, request.enabled === true);
-    log.info(`[ADMIN] 账号 ${id} 改成 ${request.enabled ? "true" : "false"}（立刻生效）`);
-    return create(SetAccountEnabledResponseSchema, {
-      ok: result.ok,
-      pendingRestart: pendingRestart(),
-      message: result.message,
-    });
-  },
+  ...accountMethods,
+  ...credentialMethods,
+  ...loginMethods,
 
 
   /* ---------------- 模型的人工元数据 ---------------- */
@@ -334,101 +295,6 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
 
   /* ---------------- 账号与凭据 ---------------- */
 
-  async listAccounts() {
-    const accounts = listAccounts();
-    // 每个账号的额度。额度在快照里，这里不现问上游（那是 GetBalance 的事）。
-    const quotas = new Map<string, QuotaView>();
-    // 额度结论要的是账号行（插件从平台那一行读），顺手把它们存下来。
-    const rows = new Map<string, ProviderRow>();
-    for (const row of listProviders()) {
-      const id = row.id;
-      rows.set(id, row);
-      for (const quota of await upstreamQuotas(id)) {
-        quotas.set(quota.accountId, quota);
-      }
-    }
-    return create(ListAccountsResponseSchema, {
-      accounts: accounts.map((account) => {
-        const quota = quotas.get(account.id);
-        return create(AccountSchema, {
-          id: account.id,
-          // 账号属于哪个平台。路径里用平台 id，不用账号 id。
-          platform: account.platform,
-          alias: account.alias,
-          status: credentialStateText(account.status),
-          credentialCount: account.credentialCount,
-          detail: account.detail,
-          enabled: account.enabled,
-          createdAt: BigInt(account.createdAt),
-          quota: quotaAnswerOf(quota ?? null, rows.get(account.id) ?? null),
-        });
-      }),
-    });
-  },
-
-  async listCredentials(request) {
-    const accountId = String(request.accountId ?? "");
-    return create(ListCredentialsResponseSchema, {
-      credentials: listCredentials(accountId).map((row) =>
-        create(CredentialSchema, {
-          id: row.id,
-          accountId: row.accountId,
-          upstreamId: row.platform,
-          kind: row.kind,
-          label: row.label,
-          masked: row.masked,
-          fingerprint: row.fingerprint,
-          status: credentialStateText(row.status),
-          generation: row.generation,
-          expiresAt: BigInt(row.expiresAt),
-          lastOkAt: BigInt(row.lastOkAt),
-          lastError: row.lastError,
-          updatedAt: BigInt(row.updatedAt),
-        }),
-      ),
-    });
-  },
-
-  async testCredential(request) {
-    const id = String(request.credentialId ?? "");
-    const result = await testCredential(id);
-    return create(TestCredentialResponseSchema, {
-      ok: result.ok,
-      message: result.message,
-      checkedAt: BigInt(Date.now()),
-    });
-  },
-
-  async logoutAccount(request) {
-    const accountId = String(request.accountId ?? "");
-    const result = logoutAccount(accountId);
-    return create(LogoutAccountResponseSchema, {
-      ok: result.ok,
-      message: result.message,
-      removed: result.removed,
-    });
-  },
-
-  async setProviderKeys(request) {
-    const upstreamId = String(request.upstreamId ?? "");
-    // 位置有意义（七牛的凭据是两段：推理 key 与门户 cookie），空串留着占位。
-    // 各分支自己决定怎么处理空串。
-    const keys = (request.keys ?? []).map((k) => String(k).trim());
-    const result = setProviderKeys(upstreamId, keys);
-    if (!result.ok) throw adminError(result.code, result.message);
-    log.info(`[ADMIN] 账号 ${upstreamId} 的凭据：${result.message}`);
-    return create(SetProviderKeysResponseSchema, { count: result.count });
-  },
-
-  async refreshCredential(request) {
-    const id = String(request.credentialId ?? "");
-    const result = await refreshCredential(id);
-    return create(RefreshCredentialResponseSchema, {
-      ok: result.ok,
-      message: result.message,
-      generation: result.generation,
-    });
-  },
 
   /* ---------------- 额度 ---------------- */
 
@@ -729,98 +595,5 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
     });
   },
 
-  async tailLog(request) {
-    const lines = tailLog(Number(request.lines ?? 0), String(request.filter ?? ""));
-    return create(TailLogResponseSchema, { lines });
-  },
 
-  /* ---------------- 登录授权 ---------------- */
-
-  async beginLogin(request) {
-    const upstreamId = String(request.upstreamId ?? "");
-    try {
-      const session = await beginLogin(upstreamId, String(request.accountId ?? ""));
-      return create(BeginLoginResponseSchema, {
-        session: loginSessionMessage(session),
-        ok: true,
-        message: session.message,
-      });
-    } catch (e) {
-      return create(BeginLoginResponseSchema, { ok: false, message: loginErrorText(e) });
-    }
-  },
-
-  async getLoginStatus(request) {
-    const session = getLoginStatus(String(request.loginId ?? ""));
-    if (!session) {
-      return create(GetLoginStatusResponseSchema, { ok: false, message: "未找到本次登录。" });
-    }
-    return create(GetLoginStatusResponseSchema, {
-      session: loginSessionMessage(session),
-      ok: true,
-      message: session.message,
-    });
-  },
-
-  async cancelLogin(request) {
-    const result = cancelLogin(String(request.loginId ?? ""));
-    return create(CancelLoginResponseSchema, { ok: result.ok, message: result.message });
-  },
-
-  async loginWithPassword(request) {
-    try {
-      const result = await loginWithPassword({
-        upstreamId: String(request.upstreamId ?? ""),
-        accountId: String(request.accountId ?? ""),
-        username: String(request.username ?? ""),
-        password: String(request.password ?? ""),
-        captchaVerifyParam: String(request.captchaVerifyParam ?? ""),
-        captchaSceneId: String(request.captchaSceneId ?? ""),
-        captchaPrefix: String(request.captchaPrefix ?? ""),
-        remember: request.remember === true,
-      });
-      return create(LoginWithPasswordResponseSchema, {
-        ok: result.ok,
-        message: result.message,
-        account: accountMessage(result.accountId),
-        credential: credentialMessage(result.credentialId),
-      });
-    } catch (e) {
-      return create(LoginWithPasswordResponseSchema, { ok: false, message: loginErrorText(e) });
-    }
-  },
-
-  async exchangeLoginCode(request) {
-    try {
-      const result = await exchangeLoginCode({
-        upstreamId: String(request.upstreamId ?? ""),
-        accountId: String(request.accountId ?? ""),
-        code: String(request.code ?? ""),
-      });
-      return create(ExchangeLoginCodeResponseSchema, {
-        ok: result.ok,
-        message: result.message,
-        credential: credentialMessage(result.credentialId),
-      });
-    } catch (e) {
-      return create(ExchangeLoginCodeResponseSchema, { ok: false, message: loginErrorText(e) });
-    }
-  },
-
-  async importLoginToken(request) {
-    try {
-      const result = await importLoginToken({
-        upstreamId: String(request.upstreamId ?? ""),
-        accountId: String(request.accountId ?? ""),
-        token: String(request.token ?? ""),
-      });
-      return create(ImportLoginTokenResponseSchema, {
-        ok: result.ok,
-        message: result.message,
-        credential: credentialMessage(result.credentialId),
-      });
-    } catch (e) {
-      return create(ImportLoginTokenResponseSchema, { ok: false, message: loginErrorText(e) });
-    }
-  },
 };
