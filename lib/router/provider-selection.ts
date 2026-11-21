@@ -24,6 +24,7 @@ import { AuthError } from "../credential.ts";
 import { businessCodeOf, upstreamStatusOf } from "../upstream-status.ts";
 import { TokenRhythmNoBalanceError } from "../tokenrhythm/transport.ts";
 import type { ProviderPolicy } from "../providers.ts";
+import { GatewayPageError } from "../upstream-gateway-page.ts";
 
 /** The policy of an upstream: which of its accounts takes a request. */
 export type { ProviderPolicy };
@@ -267,6 +268,12 @@ export function isNoBalanceFailure(error: unknown): boolean {
 /** What a failure says about the account that produced it. */
 export function classifyUpstreamError(error: unknown): UpstreamFailure {
   const status = upstreamStatusOf(error);
+  // The response was not the upstream's API at all. The error type is the only
+  // criterion: an HTML gateway page can arrive with any status, so deciding
+  // here by status would misclassify the next vendor's page.
+  if (error instanceof GatewayPageError) {
+    return { degradable: true, status: error.upstreamStatus, kind: "refused" };
+  }
   // The upstream parked the model in a queue and waiting it out did not help.
   //
   // Degradable: another target has its own queue, and this one being full says

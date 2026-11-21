@@ -14,6 +14,7 @@ import crypto from "node:crypto";
 import { configString } from "../config.ts";
 import { AuthError } from "../credential.ts";
 import { scrubForClient, scrubForLog } from "../log-scrub.ts";
+import { GatewayPageError, isGatewayPage } from "../upstream-gateway-page.ts";
 import { ZCODE_BASE, ZCODE_VERSION, loadSession, type ZcodeSession } from "./auth.ts";
 import { matchZcodeModel, zcodeEffortFor } from "./models.ts";
 import { toolNamesOf, zcodeSystem } from "./system.ts";
@@ -298,10 +299,15 @@ export async function zcodeChat(
     );
   }
   if (!response.ok) {
+    // Check before reading the body: a gateway page is not a failed API call
+    // that a retry might turn into a success. The log below still gets the
+    // upstream's raw text either way.
+    const gatewayPage = await isGatewayPage(response);
     const text = await response.text().catch(() => "");
     // 正文只放在 hint 里，而日志与用量表都只记 message。上游为什么拒，
     // 只能靠这一行（405 那次就是因为没它才查不下去）。
     console.warn(`[ZCODE] 上游 ${response.status} ${ZCODE_MESSAGES_URL}：${scrubForLog(text, 500)}`);
+    if (gatewayPage) throw new GatewayPageError(response.status, text);
     throw new AuthError(
       `upstream HTTP ${response.status}`,
       // 客户端看到的是这一句：上游正文里可能带着账号标识，抹一遍再放上去。
