@@ -28,3 +28,9 @@
 - 保存对开放平台每次都发完整 headers 列表（含空列表），以实现「删光=清空」。
 - 轻同步校验只查 name/value 非空；其余判据交服务端，机器码走 `adminErrorText` 映射翻人话。
 - i18n 新增 17 个键 × zh/en 两份 = 34 条（10 个文案键 + 7 个错误码键）。
+
+- **升级主代理**：契约读路径缺口 —— Upstream 无 headers，且无返回 OpenPlatform 的读取 RPC。
+  主代理确认走方案 A，已提交 `b698efd`（Upstream 加 `headers = 43`，lib/gen 与 web/.gen
+  重出）。本 worktree 已 `git checkout b698efd -- proto/...` 并 `mise run proto` 取到该改动。
+  后端把 headers 填进 ListUpstreams 映射由另一单（be-admin-platforms）做；我的单测自己造
+  fixture，e2e 靠 AddPlatform/UpdatePlatform 带 headers 种数据自己闭环，不用面板缓存。
