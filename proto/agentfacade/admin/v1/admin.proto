@@ -607,6 +607,25 @@ message OpenPlatform {
   // 这个平台用哪一类适配器（kind 注册表里的那一个）：openai / qiniu / xinghuo /
   // sensenova / intern-ai / tokenrhythm。建平台时定下，之后不能改。
   string kind = 9;
+  // 转发时要注入的头（有序）。值里可以写 {session-id}，网关用请求自己的会话
+  // 标识填进去；别的 {...} 一律当字面量。空 = 只按客户端头透传。
+  //
+  // 为什么需要它：有的上游拿某个会话头当缓存键（opencode-go 要
+  // x-opencode-session），而客户端未必发 —— 那个头缺了上游直接拒。
+  repeated HeaderTemplate headers = 10;
+}
+
+// 一个要注入的请求头。name 必须是 RFC 7230 的 token；value 里 {session-id}
+// 会被替换成这次请求的会话标识。
+message HeaderTemplate {
+  string name = 1;
+  string value = 2;
+}
+
+// 包一层是为了分清「没给」与「给了空列表」：repeated 本身没有 presence，
+// 更新平台时前者表示别动、后者表示清空。EffortList 也是同一个理由。
+message HeaderTemplateList {
+  repeated HeaderTemplate items = 1;
 }
 
 // 加一个开放平台。先建空平台，再加账号 —— 这里不接 key、不接模型清单。
@@ -622,6 +641,8 @@ message AddPlatformRequest {
   //   id（minimax / qoder / qoder-cn / workbuddy-cn / workbuddy-global），
   //   地址与区域照预置来。
   string kind = 4;
+  // 建平台时就带的注入头（见 HeaderTemplate）。空 = 不注入。
+  repeated HeaderTemplate headers = 6;
   reserved 5;
   reserved "quota_plugin";
 }
@@ -653,6 +674,8 @@ message UpdatePlatformRequest {
   // 默认关：只有用户明确打开才用。人工元数据仍然优先于它。
   // 没给 = 别动这一格；给了就照给的值写。
   optional bool traits_from_common = 7;
+  // 注入头。没给 = 别动这一格；给了空列表 = 清空。
+  HeaderTemplateList headers = 8;
 }
 
 message UpdatePlatformResponse {
