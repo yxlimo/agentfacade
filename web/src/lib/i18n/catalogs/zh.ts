@@ -195,6 +195,7 @@ export const zh = {
   'upstreams.weightAria': '{{name}} 的权重',
   'upstreams.switchAria': '{{name}} 的开关',
   'upstreams.cooldownReason': '（{{reason}}）',
+  'upstreams.cooldownReasonRefused': '上游拒绝服务',
   'upstreams.keysStillLoading': '凭据格子还在加载',
   'upstreams.login': '登录',
   'upstreams.deleteAccountAria': '注销 {{name}}',

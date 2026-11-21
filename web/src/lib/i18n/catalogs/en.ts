@@ -202,6 +202,7 @@ export const en: Record<keyof typeof zh, string> = {
   'upstreams.weightAria': 'Weight for {{name}}',
   'upstreams.switchAria': 'Switch for {{name}}',
   'upstreams.cooldownReason': ' ({{reason}})',
+  'upstreams.cooldownReasonRefused': 'Upstream refused the request',
   'upstreams.keysStillLoading': 'Credential fields are loading',
   'upstreams.login': 'Log in',
   'upstreams.deleteAccountAria': 'Delete {{name}}',
