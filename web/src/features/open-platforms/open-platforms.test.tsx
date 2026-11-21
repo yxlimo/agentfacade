@@ -458,7 +458,7 @@ describe('面板上的开放平台', () => {
   it('改平台：发的是 UpdatePlatform，带的是整单', async () => {
     const user = userEvent.setup({ delay: null })
     const sent: Record<string, unknown>[] = []
-    const client = clientWith([openPlatform()], {
+    const client = clientWith([openPlatform({ headers: [{ name: 'x-env', value: '{session-id}' }] })], {
       UpdatePlatform: (input) => {
         sent.push({ ...(input as unknown as Record<string, unknown>) })
         return create(UpdatePlatformResponseSchema, {
@@ -499,18 +499,19 @@ describe('面板上的开放平台', () => {
     await waitFor(() => {
       expect(sent).toHaveLength(1)
     })
-    // 整单就这几格：模型目录不由用户管，不许发过去。
+    // 整单就这几格：模型目录不由用户管，不许发过去；注入头按服务端那份原样带过去。
     expect(sent[0]).toMatchObject({
       id: 'my-gateway',
       label: '新的名字',
       baseUrl: 'https://api.example.com/v1',
-          })
+      headers: { items: [{ name: 'x-env', value: '{session-id}' }] },
+    })
     // 逐键对：请求体里只有上面那几格（目录那两格不在其中）。
     expect(
       Object.keys(sent[0])
         .filter((key) => key !== '$typeName')
         .sort()
-    ).toEqual(['baseUrl', 'id', 'label'])
+    ).toEqual(['baseUrl', 'headers', 'id', 'label'])
   })
 
   it('改平台：开关没动过就不发这一格，动了才带', async () => {
@@ -636,7 +637,7 @@ describe('面板上的开放平台', () => {
   it('改平台：请求里没有目录那几格（模型目录不由用户管）', async () => {
     const user = userEvent.setup({ delay: null })
     const sent: Record<string, unknown>[] = []
-    const client = clientWith([openPlatform()], {
+    const client = clientWith([openPlatform({ headers: [{ name: 'x-env', value: '{session-id}' }] })], {
       UpdatePlatform: (input) => {
         // 整份入参抄下来：目录那两格要是被面板带上了，这里就看得见。
         sent.push({ ...(input as unknown as Record<string, unknown>) })
@@ -661,12 +662,16 @@ describe('面板上的开放平台', () => {
     await user.click(within(dialog).getByRole('button', { name: '保存' }))
 
     await waitFor(() => expect(sent).toHaveLength(1))
+    // 注入头按服务端那份整份带过去，不是只在键白名单里补一个名字。
+    expect(sent[0]).toMatchObject({
+      headers: { items: [{ name: 'x-env', value: '{session-id}' }] },
+    })
     // 逐键对：目录那两格（目录清单与自动拉开关）都不在请求体里。
     expect(
       Object.keys(sent[0])
         .filter((key) => key !== '$typeName')
         .sort()
-    ).toEqual(['baseUrl', 'id', 'label'])
+    ).toEqual(['baseUrl', 'headers', 'id', 'label'])
   })
 
   it('刷新模型目录：发的是 RefreshPlatformModels，成功那句由面板按条数说', async () => {
