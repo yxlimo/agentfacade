@@ -19,7 +19,8 @@
     "@koa/router": "^15.7.0",
     "koa": "^3.2.1",
     "koa-bodyparser": "^4.4.1",
-    "undici": "^8.12.4"
+    "undici": "^8.12.4",
+    "winston": "^3.19.0"
   },
   "devDependencies": {
     "@e2e-dev/web": "0.15.5",
