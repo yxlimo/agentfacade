@@ -39,3 +39,30 @@
 - 新建共享 test/log-capture.ts（patch log.* 的稳定对象、按方法/全局顺序收行、forward、restore），注释写明两层分工：这里抓「代码打算说什么」，传输层由 test/log-check.ts 子进程钉住。
 - 5 个测试只换抓取口：断言文本/条数/顺序/否断言全部原样。open-platform-admin 抓 info+forward；periodic-off 抓 info；policy 抓 info 并只留 [ROUTE] 行其余转发；zcode-claim/manual 抓 info+warn。
 - typecheck 绿；5 个测试单跑全绿（242/—/—/98/35 项）。
+
+## console 抓取点彻底清点（扩到 11 个后的复核）
+
+全模式 grep（console.log/warn/error/info/debug =、spyOn(console、mockImplementation、globalThis.console、{...console}、console[键]）结果：
+
+| 文件 | 抓的方法 | mise 任务 | 判定 |
+| --- | --- | --- | --- |
+| model-target-duplicate-check | console.error | test:model:duplicate (admin) | 红→改（6 断言） |
+| quota-plugin-check | console.warn | test:quota:plugin (admin) | 红→改（1） |
+| periodic-check | console.warn | test:periodic (routing) | 红→改（5） |
+| upstream-status-check | console.warn | test:upstream:status (routing) | 红→改（多条） |
+| qiniu-check | console.warn | test:qiniu (kinds) | 红→改（2） |
+| qoder-legacy-check | console.warn | test:qoder:legacy (kinds) | 红→改（多条） |
+| model-traits-tool-check | console.log | test:model:traits:tool | 绿→不改：抓的是 scripts/model-traits.ts 的 console.log，scripts/** 没转成 log，仍走 console |
+| workbuddy-catalog-tool-check | console.error | test:workbuddy:catalog:tool | 绿→不改：抓的是 scripts/workbuddy-catalog.ts 的 console.error，同上 |
+| open-platform-admin-check / periodic-off-check / policy-check / zcode-claim-check / zcode-claim-manual-check | 已改 | — | 前一轮已转 log-capture |
+
+无 spyOn/mockImplementation/globalThis.console/{...console}/console[键] 命中。
+断言未变弱：以 ca68008 为基线，11 个文件的 check(...) 行逐字节一致；断言条数 before==now（215/4/182/98/35/16/121/6/20/77/88）。
+
+## 11 个测试抓取口改造完成
+
+- 又改 6 个：model-target-duplicate(console.error→log.error，保留 Error.stack 格式化)、quota-plugin/periodic/upstream-status/qoder-legacy(console.warn→log.warn)、qiniu(console.warn→log.warn)。
+- helper 加两个选项：format（保留 Error 对象取 stack 的语义）、sink（qiniu 复用 warns 数组做分段清空，assert 行不动）。
+- 11 文件断言行数 before(ca68008)==now，每条 check(...) 逐字节一致（已用 diff 验证）。
+- 剩余 console.*= 只在 model-traits-tool-check 与 workbuddy-catalog-tool-check：抓的是 scripts/** 的输出，scripts 没转 log，仍走 console，故不改。
+- 11 个测试单跑全绿。

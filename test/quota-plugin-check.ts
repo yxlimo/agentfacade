@@ -6,6 +6,7 @@
 // 临时目录。没有任何一次请求出机器。
 
 import fs from "node:fs";
+import { captureLog } from "./log-capture.ts";
 
 const DATA_DIR = "/tmp/opencode/test-quota-plugin";
 process.env.FACADE_DATA_DIR = DATA_DIR;
@@ -707,19 +708,16 @@ check(
 check("两个账号不是同一个", twoAId !== twoBId, `${twoAId} ${twoBId}`);
 
 // 刷一轮：问到的写进快照，问不到的就不写。
-const refreshWarnings: string[] = [];
-const realRefreshWarn = console.warn;
-console.warn = (...args: unknown[]) => {
-  refreshWarnings.push(args.map((a) => String(a)).join(" "));
-};
+const captured = captureLog({ methods: ["warn"] });
 let refreshThrew = false;
 try {
   await refreshHealthSnapshot();
 } catch {
   refreshThrew = true;
 } finally {
-  console.warn = realRefreshWarn;
+  captured.restore();
 }
+const refreshWarnings = captured.all;
 check("刷新不抛", !refreshThrew);
 
 const livePayload = pluginBucket().qiniu?.[liveId] as any;

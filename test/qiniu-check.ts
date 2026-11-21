@@ -7,6 +7,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { captureLog } from "./log-capture.ts";
 
 // 临时目录走系统的 tmpdir：写死的 /tmp 在 Windows 上落到当前盘的根上，
 // 而且两次运行会撞在同一个目录上。
@@ -266,11 +267,8 @@ section("刷新");
 let portalCalls = 0;
 let portalStatus = 200;
 const realFetch = globalThis.fetch;
-const realWarn = console.warn;
 let warns: string[] = [];
-console.warn = (...args: unknown[]) => {
-  warns.push(args.map((arg) => String(arg)).join(" "));
-};
+const captured = captureLog({ methods: ["warn"], sink: warns });
 globalThis.fetch = (async (input: unknown) => {
   const url = String(
     typeof input === "string" ? input : ((input as { url?: string } | null)?.url ?? ""),
@@ -302,7 +300,7 @@ async function refreshed(): Promise<any> {
 
 // ① 行上的地址是陌生域名（插件认不出）+ 门户会回 401：一次也不该去敲。
 portalStatus = 401;
-warns = [];
+warns.length = 0;
 const callsBeforeNone = portalCalls;
 const snapshotNone = await refreshed();
 check("地址认不出插件：一次门户都没敲", portalCalls === callsBeforeNone, String(portalCalls - callsBeforeNone));
@@ -371,7 +369,7 @@ check("门户 401：不写冷却", cooldownUntil(accountId) === null, String(coo
 // ④ 门户回 429：额度接口限流。这不是路由冷却 —— 查额度的接口忙一会儿，跟
 //    「这个账号能不能接推理请求」是两件事。只记一行日志，冷却表里不能有这一行。
 portalStatus = 429;
-warns = [];
+warns.length = 0;
 const snapshotRate = await refreshed();
 check(
   "门户 429：结论是 rate_limited",
@@ -407,7 +405,7 @@ check(
 );
 check("空快照 → 没有额度视图", (kind?.quotas(accountRow, { plugins: {} }) ?? []).length === 0);
 
-console.warn = realWarn;
+captured.restore();
 globalThis.fetch = realFetch;
 
 /* ------------------------------------------------------------------ *
