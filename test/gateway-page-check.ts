@@ -60,18 +60,21 @@ const HTML_405 =
 const { startFakeUpstream } = await import("./fake-upstream.ts");
 
 let mode: "html" | "json" = "html";
-const fake = await startFakeUpstream(() =>
-  mode === "html"
-    ? {
-        status: 405,
-        body: HTML_405,
-        headers: { "content-type": "text/html; charset=utf-8", server: "ESA" },
-      }
-    : {
-        status: 405,
-        body: JSON.stringify({ error: { message: "method not allowed" } }),
-        headers: { "content-type": "application/json" },
-      },
+// 显式写出返回形状：两个分支的 headers 字面量各带一组键，靠推断会得到一个
+// 带 `undefined` 的联合，与 FakeHandler 的 `Record<string, string>` 对不上。
+const fake = await startFakeUpstream(
+  (): { status: number; body: string; headers: Record<string, string> } =>
+    mode === "html"
+      ? {
+          status: 405,
+          body: HTML_405,
+          headers: { "content-type": "text/html; charset=utf-8", server: "ESA" },
+        }
+      : {
+          status: 405,
+          body: JSON.stringify({ error: { message: "method not allowed" } }),
+          headers: { "content-type": "application/json" },
+        },
 );
 
 // The transport reads its base URL when the module is loaded, so set it first.
@@ -157,7 +160,13 @@ section("ZCode transport: real status on the error, raw text in the hint");
   check("GatewayPageError, not a disguised 502", error instanceof GatewayPageError, String(error?.name));
   check("upstream status is 405", error?.upstreamStatus === 405 && upstreamStatusOf(error) === 405);
   check("message says what happened", error?.message === "upstream answered with an HTML page (HTTP 405)", error?.message);
-  check("hint carries the scrubbed upstream body", error?.hint?.includes("405") && !error.hint.includes("ops@example.invalid"), error?.hint);
+  // 与上面 HTML_405 里那个假地址是同一个：这里单独取出，断言「抹掉了它」。
+  const fabricatedAddress = "ops@example.invalid"; // privacy:allow — 编造的样例
+  check(
+    "hint carries the scrubbed upstream body",
+    error?.hint?.includes("405") && !error.hint.includes(fabricatedAddress),
+    error?.hint,
+  );
   check("raw body stays on the error for the log", upstreamBodyOf(error) === HTML_405);
   check("one upstream attempt", fake.requests.length === before + 1, `${fake.requests.length - before}`);
 }
