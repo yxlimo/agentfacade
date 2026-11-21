@@ -26,17 +26,15 @@ import { providerSecretId } from "../credential-ids.ts";
 // Side-effect import: this module registers zcode's login flow
 import "../zcode/auth.ts";
 import type { ZcodeLogin } from "../zcode/auth.ts";
-import { beginLoginFlow, driveLogin, submitLogin, submitLoginResult, type LoginContext, type LoginMethod, type LoginTicket } from "../login-flow.ts";
+import { beginLoginFlow, driveLogin, type LoginContext, type LoginMethod, type LoginTicket } from "../login-flow.ts";
 export type { LoginMethod };
 import { regionOf as workBuddyRegionOf } from "../workbuddy/auth.ts";
 // Side-effect import: this module registers tokenrhythm's login flow
 import "../tokenrhythm/accounts.ts";
 // Side-effect import: this module registers sensenova's login flow
 import "../sensenova/auth.ts";
-import type { SenseNovaLogin } from "../sensenova/auth.ts";
 // Side-effect import: this module registers intern-ai's login flow
 import "../intern-ai/login-flow.ts";
-import type { InternAiLogin } from "../intern-ai/login-flow.ts";
 import {
   importToken as importInternAiToken,
   storedAccount as storedInternAiAccount,
@@ -540,15 +538,6 @@ export interface PasswordLoginResult {
   credentialId: string;
   /** 账号的 id。 */
   accountId: string;
-}
-
-/**
- * 账号行 → 登录链要的那三样。
- *
- * 凭据落在哪一行（accountId）、它是哪个平台（platform）、哪个区域（region）。
- */
-function contextOf(row: ProviderRow): LoginContext {
-  return { accountId: row.id, platform: row.platform, region: row.region ?? "" };
 }
 
 /**
