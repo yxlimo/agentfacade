@@ -9,7 +9,7 @@
 
 - `lib/qoder/credits.ts:fetchQoderCredits` 把 `body.expiresAt` 原样转 `resetsAt` ISO 串
 - `lib/kinds/qoder.ts:qoderQuotas` 把批次 `expiresAt` 设为它，`recoverAt()` 当作恢复时刻返回
-- `lib/admin/platform-state.ts:accountRecoveryAtMs` 采纳 → proto `credits_recover_at_ms` → 面板
+- `lib/admin/platform-state.ts:accountRecoveryAtMs` / `lib/admin/upstream-state.ts:platformCooling` 采纳 → proto → 面板
 
 ## 路由语义（改前/改后都要保持）
 
@@ -20,9 +20,9 @@
 
 ## 进度
 
-- [ ] 读代码、确认修复点（完成）
-- [ ] `lib/qoder/credits.ts`：命名常量 + 宽判据 helper + 接入解析
-- [ ] 新测试 `test/qoder-credits-sentinel-check.ts` + mise.toml 挂载
-- [ ] 反证：去掉哨兵判据，a 必须红，记录后还原
+- [x] 读代码、确认修复点
+- [x] `lib/qoder/credits.ts`：命名常量 `NEVER_EXPIRES_SENTINEL_MS` + 宽判据 `NEVER_EXPIRES_AFTER_MS`（100 年）+ helper `qoderResetsAt`，接入解析
+- [x] 新测试 `test/qoder-credits-sentinel-check.ts`（29 项：判据、端到端、正常/过去、控制组）+ mise.toml 挂载（test / check:kinds / 单任务）
+- [x] 反证：去掉哨兵判据后 7 项真红（线上哨兵→null、同类远期→null、resetsAt 无 9999、批次 expiresAt=0、recoverAt null、creditsRecoverAtMs 0、见底表恢复时刻 null），路由/控制组全绿；已还原，恢复后 29/0
 - [ ] 门禁：typecheck / check:kinds / check:admin / check:routing / privacy
 - [ ] 提交
