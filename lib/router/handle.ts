@@ -403,6 +403,7 @@ const CLIENT_KIND_WORDS: Record<string, string> = {
   timeout: "上游太慢",
   connection: "连不上",
   unreachable: "连不上",
+  refused: "上游拒绝服务",
   credential: "凭据被拒",
   "no-balance": "余额用尽",
   quota: "额度用完",

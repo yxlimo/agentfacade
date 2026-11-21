@@ -317,6 +317,9 @@ export function transientRetryPlan(): { delaysMs: readonly number[]; repeatLastM
  *     豁免也不适用于它（那个豁免是为「上游抽一下」设计的，重试一个不存在的
  *     主机抽不好任何东西）。
  *   - rate-limit 走等窗口那条路（等的是分钟级的窗口，不是几十毫秒）；
+ *   - refused：上游回的是 HTML 网关错误页，不是它的 API —— 同一个端点再问一次
+ *     还是那一页，不是抖动。一次就结束，让记账那一层记冷却、让策略换目标；重试
+ *     它只会把客户端挂到总时限（refused 不在 TRANSIENT_KINDS 里）。
  *     quota / no-balance / credential 是账号真的接不了，再试一次也是一样的答复；
  *     request 是请求本身的问题，换谁都一样；unknown 说不清是什么，不猜。
  */
