@@ -22,35 +22,24 @@ import { withUpstreamBody } from "./upstream-status.ts";
 const HEAD_BYTES = 200;
 const HTML_HEAD = /^\s*<(?:!doctype\s+html|html)(?=[\s>])/i;
 
-/** An HTML opening tag within the first bytes says "this is a web page". */
+/**
+ * An HTML opening tag within the first bytes says "this is a web page".
+ *
+ * The clone is consumed to the end. Reading only a prefix and cancelling the
+ * tee branch leaves the original body's stream unsettled in undici — the
+ * transport then cannot read the raw text for the log and the request hangs.
+ * A gateway error page is small, so consuming it twice is cheaper than a
+ * socket that never finishes.
+ */
 async function startsWithHtml(response: Response): Promise<boolean> {
-  const reader = response.clone().body?.getReader();
-  if (!reader) return false;
-  const chunks: Uint8Array[] = [];
-  let length = 0;
+  if (!response.body) return false;
+  let text: string;
   try {
-    while (length < HEAD_BYTES) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      length += value.byteLength;
-    }
+    text = await response.clone().text();
   } catch {
     return false;
-  } finally {
-    // The tee branch we created is not needed any more; the original response
-    // still has its whole body for the caller to read and log.
-    await reader.cancel().catch(() => {});
   }
-  const head = new Uint8Array(Math.min(length, HEAD_BYTES));
-  let at = 0;
-  for (const chunk of chunks) {
-    const take = Math.min(chunk.byteLength, HEAD_BYTES - at);
-    head.set(chunk.subarray(0, take), at);
-    at += take;
-    if (at >= HEAD_BYTES) break;
-  }
-  return HTML_HEAD.test(new TextDecoder().decode(head));
+  return HTML_HEAD.test(text.slice(0, HEAD_BYTES));
 }
 
 /**
