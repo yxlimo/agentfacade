@@ -135,6 +135,9 @@ message Upstream {
   bool breaker_skipped = 41;
   // 熔断到什么时候（Unix 毫秒）。0 = 不知道。
   int64 breaker_until_ms = 42;
+  // 转发时注入的请求头（有序）。只有开放平台有；模板平台与没有这一行的
+  // 平台是空列表。值里的 {session-id} 由网关填这次请求的会话标识。
+  repeated HeaderTemplate headers = 43;
 }
 
 // provider 的生效策略：上游名下的多个账号（租户）里，先调谁、失败后换谁。
