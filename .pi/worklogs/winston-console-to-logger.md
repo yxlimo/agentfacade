@@ -30,3 +30,12 @@
 - .pi-lens.json 补 ignorePaths（tools/ test/ scripts/ config-cli.ts），CONVENTIONS.md 加日志小节，已提交
 - 新建 test/log-check.ts（子进程 16 断言），mise.toml 加 test:log 挂进 test/check:misc，待提交
 - 反证：去掉 join → 多参断言红（1 failed）；stderrLevels=[] → 分流断言红（4 failed）；均已还原且 lib/log.ts 与 HEAD 一致
+
+## 门禁冲突与决策（走 A）
+
+- check:admin/check:routing 首轮红：5 个既有测试靠 monkeypatch console.log/warn 抓日志，winston 走 console._stdout.write 绕过 patch。产品输出逐字节一致（原始 stdout 里 9 条删平台日志都在）。
+- 实测无任何 winston 配置项（含 forceConsole:true）能让事后 console.log patch 抓到输出。
+- 问主代理 → 选 A：只改这 5 个测试文件的抓取口，产品代码不动。
+- 新建共享 test/log-capture.ts（patch log.* 的稳定对象、按方法/全局顺序收行、forward、restore），注释写明两层分工：这里抓「代码打算说什么」，传输层由 test/log-check.ts 子进程钉住。
+- 5 个测试只换抓取口：断言文本/条数/顺序/否断言全部原样。open-platform-admin 抓 info+forward；periodic-off 抓 info；policy 抓 info 并只留 [ROUTE] 行其余转发；zcode-claim/manual 抓 info+warn。
+- typecheck 绿；5 个测试单跑全绿（242/—/—/98/35 项）。
