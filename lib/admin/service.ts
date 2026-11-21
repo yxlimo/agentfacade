@@ -400,16 +400,6 @@ function balanceScope(wanted: string): ProviderRow[] {
 }
 
 /**
- * 给面板看的时刻：上游的时区（UTC+8），只到分钟。
- *
- * 与 lib/admin/upstream-state.ts 的那个 stamp 同一个口径 —— 面板上两处时刻
- * 要能对上。
- */
-function stampOf(ms: number): string {
-  return new Date(ms + 8 * 3600_000).toISOString().slice(11, 16);
-}
-
-/**
  * 一个平台在面板上的样子。
  *
  * 平台有两处数据源：代码里的模板与表里的开放平台，所以这一条可能来自任意
@@ -440,12 +430,7 @@ function platformMessage(
   const quota = upstreamQuota(id);
   // 冷却：路由绕开这个账号到什么时候，面板要看得见。
   const cooling = upstreamCooling(id);
-  // 面板上该做什么：冷却与额度那一层的话更细（几点的窗口、为什么冷却、几个
-  // 账号里的几个），别的（没有账号、账号都关着、没有凭据）只有判定说得清。
-  const stateReason = availability ? cooling.stateReason || availability.advice : cooling.stateReason;
-  // 熔断：这个平台现在被跳过了没有。开着的时候补一句「已跳过，恢复时间 xx:xx」
-  // —— 面板上要看得见「这个上游为什么这会儿不接」，不然只看到「它没接」。
-  // 不加状态格（契约不动）：这一句挂在 stateReason 上，够用。
+  // 熔断：这个平台现在被跳过了没有。面板靠这两格画出「为什么这会儿不接」。
   // 这个平台的额度插件：判据只有一处（quotaPluginOfAccount）—— 平台行的 kind 得
   // 是通用开放平台那一族，地址要对上某家插件声明的地址。模板平台没有开放平台行
   // 可对，三格照空 —— 面板据此不显示额度区。
@@ -455,9 +440,6 @@ function platformMessage(
   // 摆出额度区等于承诺一个不会到的答复。
   const quotaPlugin = quotaPluginOfAccount({ platform: id });
   const breaker = breakerPanelState(id);
-  const breakerNote =
-    breaker.tripped && breaker.untilMs !== null ? `已跳过，恢复时间 ${stampOf(breaker.untilMs)}` : "";
-  const reason = [stateReason, breakerNote].filter(Boolean).join("；");
   const enabled = availability ? availability.on > 0 : rows.some((row) => row.enabled);
   return create(UpstreamSchema, {
     id,
@@ -530,7 +512,7 @@ function platformMessage(
     // 有行（isOpenPlatform 是 false，地址与目录归代码），所以它与上面那格
     // 分开报 —— 面板拿 isOpenPlatform 当判据时，入口就少了一整族。
     fromRow,
-    // 冷却：名下最早到期的那个账号、最早能再接的时刻、一句话。
+    // 冷却：名下最早到期的那个账号、最早能再接的时刻、机器词。
     cooldownUntilMs: BigInt(cooling.cooldownUntilMs),
     cooldownReason: cooling.cooldownReason,
     // 最早能再接的时刻：面板自己的那个（0 = 算不出来，不猜）。
@@ -539,7 +521,14 @@ function platformMessage(
     // 出来时它会给一个固定时长，而面板的契约说 0 是「算不出来」。两处的口径
     // 不一样，记在交付记录里。
     recoversAtMs: BigInt(cooling.recoversAtMs),
-    stateReason: reason,
+    // 名下账号的计数与额度恢复时刻：只给事实，文案在面板。
+    enabledAccounts: cooling.enabledAccounts,
+    coolingAccounts: cooling.coolingAccounts,
+    exhaustedAccounts: cooling.exhaustedAccounts,
+    creditsRecoverAtMs: BigInt(cooling.creditsRecoverAtMs),
+    // 熔断：面板靠这两格画出「已跳过，恢复到几点」。
+    breakerSkipped: breaker.tripped,
+    breakerUntilMs: BigInt(breaker.untilMs ?? 0),
     accounts: (availability ? availability.rows : rows).flatMap((row) => {
       // 账号视图是外面算好的那一份：这里再读一遍凭据的话，一个平台下的每个
       // 账号都要把全部账号的凭据读一遍（面板打开一次就是 O(N²)）。
@@ -1400,7 +1389,8 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
               current: target.current === true,
               // 为什么接不了，以及什么时候能再接。只读：每次查询现算。
               blocked: target.blocked === true,
-              blockedReason: target.blockedReason ?? "",
+              blocker: target.blocker,
+              blockerReason: target.blockerReason ?? "",
               recoversAtMs: BigInt(target.recoversAtMs ?? 0),
             }),
           ),

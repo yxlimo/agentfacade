@@ -9,11 +9,11 @@
 //
 // 覆盖：
 //   1. 正常账号：READY，没有冷却；
-//   2. 冷却中：COOLING + 截止时刻 + 理由 + 恢复时间 + 一句话；
+//   2. 冷却中：COOLING + 截止时刻 + 机器词 + 恢复时间 + 账号计数；
 //   3. 两个账号只有一个在冷却：平台还是 READY，但账号那一行带冷却；
 //   4. 额度用尽 + 冷却：额度优先（OUT_OF_CREDITS），冷却字段仍然填；
 //   5. 冷却已过期：回到 READY；
-//   6. 平台还能接：原因句说清是几个账号里的几个在冷却；
+//   6. 平台还能接：账号计数说清是几个账号里的几个在冷却；
 //   7. 额度用尽：平台自己说得出什么时候回来（Qoder 的重置时间）；
 //   8. 额度用尽但平台说不出来（WorkBuddy）：恢复时间留空，不猜；
 //   9. 冷却与额度同时存在：恢复时间取早的那个。
@@ -43,7 +43,8 @@ const { addAccount } = await import("../lib/providers.ts");
 const { setCooldown, clearCooldown } = await import("../lib/cooldown.ts");
 const { putHealthSnapshot } = await import("../lib/health-cache.ts");
 const { adminService } = await import("../lib/admin/service.ts");
-const { UpstreamState } = await import("../lib/gen/agentfacade/admin/v1/admin_pb.ts");
+const { publishedModels, savePublishedModel } = await import("../lib/admin/models.ts");
+const { TargetBlocker, UpstreamState } = await import("../lib/gen/agentfacade/admin/v1/admin_pb.ts");
 
 const now = Date.now();
 const year = now + 365 * 24 * 3600 * 1000;
@@ -66,11 +67,6 @@ function qoderSession(id: string, region = "global") {
     loginAtMs: now,
     refreshedAtMs: now,
   };
-}
-
-/** 面板上那个时刻的写法（UTC+8，只到分钟）。 */
-function stampOf(ms: number): string {
-  return new Date(ms + 8 * 3600_000).toISOString().slice(11, 16);
 }
 
 /** 平台在面板上的那一条。 */
@@ -103,6 +99,15 @@ check("两个账号加得进去", !!cnOne.id && !!cnTwo.id, `${cnOne.id} / ${cnT
 setSecret(`session:provider:${cnOne.id!}`, "session", qoderSession(cnOne.id!, "cn"));
 setSecret(`session:provider:${cnTwo.id!}`, "session", qoderSession(cnTwo.id!, "cn"));
 
+// 一个目标指向 qoder：用来验模型层的 blocker 与机器词。
+savePublishedModel({
+  id: "cooldown-target",
+  displayName: "cooldown-target",
+  enabled: true,
+  strategy: "single",
+  targets: [{ groupName: "qoder", upstreamModel: "glm-5.3", weight: 10, enabled: true }],
+});
+
 console.log("");
 console.log("正常账号：没有冷却");
 
@@ -112,7 +117,7 @@ console.log("正常账号：没有冷却");
   check("没有冷却时刻", upstream.cooldownUntilMs === 0n, String(upstream.cooldownUntilMs));
   check("没有冷却理由", upstream.cooldownReason === "", upstream.cooldownReason);
   check("没有恢复时间", upstream.recoversAtMs === 0n, String(upstream.recoversAtMs));
-  check("没有一句话", upstream.stateReason === "", upstream.stateReason);
+  check("没有冷却的账号", upstream.coolingAccounts === 0, String(upstream.coolingAccounts));
   const account = accountOf(upstream, firstId);
   check("账号也没有冷却时刻", account.cooldownUntilMs === 0n, String(account.cooldownUntilMs));
 }
@@ -128,7 +133,9 @@ console.log("冷却中：面板看得见");
   check("冷却时刻是那个时刻", upstream.cooldownUntilMs === BigInt(until), String(upstream.cooldownUntilMs));
   check("理由是平台给的说法", upstream.cooldownReason === "rate-limit", upstream.cooldownReason);
   check("恢复时间就是冷却结束", upstream.recoversAtMs === BigInt(until), String(upstream.recoversAtMs));
-  check("一句话里有理由", upstream.stateReason.includes("rate-limit"), upstream.stateReason);
+  check("一个账号开着、一个在冷却", upstream.enabledAccounts === 1 && upstream.coolingAccounts === 1, `${upstream.enabledAccounts}/${upstream.coolingAccounts}`);
+  const cooledTarget = publishedModels().find((m) => m.id === "cooldown-target")?.targets?.[0];
+  check("目标的 blocker → COOLING，机器词跟着平台", cooledTarget?.blocker === TargetBlocker.COOLING && cooledTarget?.blockerReason === "rate-limit", `${cooledTarget?.blocker} / ${cooledTarget?.blockerReason}`);
   const account = accountOf(upstream, firstId);
   check("账号那一行也带冷却时刻", account.cooldownUntilMs === BigInt(until), String(account.cooldownUntilMs));
   check("账号那一行也带理由", account.cooldownReason === "rate-limit", account.cooldownReason);
@@ -144,7 +151,9 @@ console.log("额度用尽 + 冷却：额度优先");
   check("状态是额度用尽", upstream.state === UpstreamState.OUT_OF_CREDITS, String(upstream.state));
   check("冷却时刻仍然填着", upstream.cooldownUntilMs === BigInt(now + 5 * 60_000), String(upstream.cooldownUntilMs));
   check("冷却理由仍然填着", upstream.cooldownReason === "rate-limit", upstream.cooldownReason);
-  check("一句话里说额度用尽", upstream.stateReason.includes("额度用尽"), upstream.stateReason);
+  check("额度用尽的账号数是 1", upstream.exhaustedAccounts === 1, String(upstream.exhaustedAccounts));
+  const spentTarget = publishedModels().find((m) => m.id === "cooldown-target")?.targets?.[0];
+  check("目标的 blocker → OUT_OF_CREDITS，机器词跟着平台", spentTarget?.blocker === TargetBlocker.OUT_OF_CREDITS && spentTarget?.blockerReason === "rate-limit", `${spentTarget?.blocker} / ${spentTarget?.blockerReason}`);
   // 快照清掉，后面的判据回到「额度充足」。
   putHealthSnapshot({});
 }
@@ -159,7 +168,7 @@ console.log("冷却已过期：回到就绪");
   const upstream = await upstreamOf("qoder");
   check("状态回到就绪", upstream.state === UpstreamState.READY, String(upstream.state));
   check("没有冷却时刻", upstream.cooldownUntilMs === 0n, String(upstream.cooldownUntilMs));
-  check("没有一句话", upstream.stateReason === "", upstream.stateReason);
+  check("没有冷却的账号", upstream.coolingAccounts === 0, String(upstream.coolingAccounts));
   clearCooldown(firstId);
 }
 
@@ -189,8 +198,8 @@ console.log("平台还能接：一个账号冷却、另一个正常");
   setCooldown(cnOne.id!, until, "connection");
   const upstream = await upstreamOf("qoder-cn");
   check("平台还是就绪", upstream.state === UpstreamState.READY, String(upstream.state));
-  check("原因句说清是几个账号里的几个", upstream.stateReason.includes("个账号"), upstream.stateReason);
-  check("原因句里有那个冷却时刻", upstream.stateReason.includes(stampOf(until)), upstream.stateReason);
+  check("两个账号开着一个在冷却", upstream.enabledAccounts === 2 && upstream.coolingAccounts === 1, `${upstream.enabledAccounts}/${upstream.coolingAccounts}`);
+  check("平台还能接，恢复时刻是 0", upstream.recoversAtMs === 0n, String(upstream.recoversAtMs));
   check("冷却时刻还是那个", upstream.cooldownUntilMs === BigInt(until), String(upstream.cooldownUntilMs));
   clearCooldown(cnOne.id!);
 }
@@ -207,7 +216,7 @@ console.log("额度用尽：平台自己说得出什么时候回来");
   const upstream = await upstreamOf("qoder");
   check("状态是额度用尽", upstream.state === UpstreamState.OUT_OF_CREDITS, String(upstream.state));
   check("恢复时间就是平台说的那个", upstream.recoversAtMs === BigInt(resetsAtMs), String(upstream.recoversAtMs));
-  check("原因句里有那个时刻", upstream.stateReason.includes(stampOf(resetsAtMs)), upstream.stateReason);
+  check("额度窗口结束时刻就是平台说的那个", upstream.creditsRecoverAtMs === BigInt(resetsAtMs), String(upstream.creditsRecoverAtMs));
 }
 
 console.log("");
@@ -248,7 +257,7 @@ let wbId = "";
   const upstream = await upstreamOf("workbuddy-cn");
   check("状态是额度用尽", upstream.state === UpstreamState.OUT_OF_CREDITS, String(upstream.state));
   check("算不出恢复时间", upstream.recoversAtMs === 0n, String(upstream.recoversAtMs));
-  check("原因句只有额度用尽", upstream.stateReason === "额度用尽", upstream.stateReason);
+  check("额度用尽的账号数是 1、算不出额度窗口结束时刻", upstream.exhaustedAccounts === 1 && upstream.creditsRecoverAtMs === 0n, `${upstream.exhaustedAccounts}/${upstream.creditsRecoverAtMs}`);
 }
 
 console.log("");
@@ -295,6 +304,22 @@ console.log("冷却与额度同时存在：恢复时间取早的那个");
   check("额度更早：恢复时间是额度回来的时刻", again.recoversAtMs === BigInt(soon), String(again.recoversAtMs));
   clearCooldown(firstId);
   putHealthSnapshot({});
+}
+
+console.log("");
+console.log("refused 冷却：事实字段都填对，模型层带机器词");
+
+{
+  const until = now + 4 * 60_000;
+  setCooldown(firstId, until, "refused");
+  const upstream = await upstreamOf("qoder");
+  check("状态是 COOLING", upstream.state === UpstreamState.COOLING, String(upstream.state));
+  check("机器词是 refused", upstream.cooldownReason === "refused", upstream.cooldownReason);
+  check("一个账号开着、一个在冷却", upstream.enabledAccounts === 1 && upstream.coolingAccounts === 1, `${upstream.enabledAccounts}/${upstream.coolingAccounts}`);
+  check("冷却时刻是那个时刻", upstream.cooldownUntilMs === BigInt(until), String(upstream.cooldownUntilMs));
+  const blockedTarget = publishedModels().find((m) => m.id === "cooldown-target")?.targets?.[0];
+  check("目标的 blocker → COOLING，机器词是 refused", blockedTarget?.blocker === TargetBlocker.COOLING && blockedTarget?.blockerReason === "refused", `${blockedTarget?.blocker} / ${blockedTarget?.blockerReason}`);
+  clearCooldown(firstId);
 }
 
 // Close the database before removing its directory: on Windows an open

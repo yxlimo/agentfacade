@@ -4,11 +4,15 @@
 // 最早的冷却到什么时候、因为什么、最早什么时候能再接。这个模块把这些算出来，
 // lib/admin/upstreams.ts 只调用它 —— 那边已经超标了，不该再往里堆逻辑。
 //
-// 三个数：
+// 这里只算事实，文案在面板：给的是计数、时刻与机器词，一句中文都不拼。
 //
-//   cooldownUntilMs  名下最早到期的冷却（0 = 都不在冷却）。
-//   cooldownReason   那条冷却的理由（平台给的说法：quota / rate-limit / connection）。
-//   recoversAtMs     最早什么时候能再接（0 = 现在就能接，或者算不出来）。
+//   cooldownUntilMs    名下最早到期的冷却（0 = 都不在冷却）。
+//   cooldownReason     那条冷却的理由（平台给的说法：quota / rate-limit / refused）。
+//   recoversAtMs       最早什么时候能再接（0 = 现在就能接，或者算不出来）。
+//   enabledAccounts    名下开着的账号数。
+//   coolingAccounts    其中在冷却的账号数。
+//   exhaustedAccounts  其中额度用尽的账号数。
+//   creditsRecoverAtMs 额度窗口什么时候结束（0 = 算不出来，不猜）。
 //
 // 「能再接」看的是两件事：冷却什么时候结束，额度什么时候回来（每个平台自己说，
 // 它的窗口/批次什么时候满；说不出来就说不知道）。
@@ -34,12 +38,18 @@ export interface CoolingInfo {
 export interface PlatformCooling {
   /** 名下最早的冷却到什么时候（毫秒）。0 = 都不在冷却。 */
   cooldownUntilMs: number;
-  /** 那条冷却的理由。 */
+  /** 那条冷却的理由（机器词）。 */
   cooldownReason: string;
   /** 最早什么时候能再接（毫秒）。0 = 现在就能接，或者算不出来。 */
   recoversAtMs: number;
-  /** 一句给面板直接用的话。没有就空串。 */
-  stateReason: string;
+  /** 名下开着的账号数。 */
+  enabledAccounts: number;
+  /** 其中在冷却的账号数。 */
+  coolingAccounts: number;
+  /** 其中额度用尽的账号数。 */
+  exhaustedAccounts: number;
+  /** 额度窗口什么时候结束（毫秒）。0 = 算不出来，不猜。 */
+  creditsRecoverAtMs: number;
 }
 
 const NO_COOLING: CoolingInfo = { untilMs: 0, reason: "" };
@@ -144,36 +154,13 @@ export function platformCooling(options: {
   // 有一个账号能接，这个上游就能接。
   if (canServeNow) recoversAtMs = 0;
 
-  const parts: string[] = [];
-  if (canServeNow) {
-    // 平台还能接，但有的账号在冷却或见底：说清楚是几个账号里的几个，
-    // 别让人读成「整个平台在冷却」。
-    const details: string[] = [];
-    if (coolingCount > 0) {
-      details.push(
-        `${coolingCount} 个冷却到 ${stamp(cooldownUntilMs)}${cooldownReason ? `（${cooldownReason}）` : ""}`,
-      );
-    }
-    if (exhaustedCount > 0) details.push(`${exhaustedCount} 个额度用尽`);
-    if (details.length) parts.push(`${enabledCount} 个账号里 ${details.join("，")}`);
-  } else {
-    if (enabledCount > 0 && exhaustedCount === enabledCount) {
-      parts.push(creditsRecoverAtMs === null ? "额度用尽" : `额度用尽，窗口 ${stamp(creditsRecoverAtMs)} 结束`);
-    }
-    if (cooldownUntilMs > 0) {
-      parts.push(`冷却到 ${stamp(cooldownUntilMs)}${cooldownReason ? `（${cooldownReason}）` : ""}`);
-    }
-  }
-
   return {
     cooldownUntilMs,
     cooldownReason,
     recoversAtMs,
-    stateReason: parts.join("；"),
+    enabledAccounts: enabledCount,
+    coolingAccounts: coolingCount,
+    exhaustedAccounts: exhaustedCount,
+    creditsRecoverAtMs: creditsRecoverAtMs ?? 0,
   };
-}
-
-/** 给面板看的时刻：上游的时区（UTC+8），只到分钟。 */
-function stamp(ms: number): string {
-  return new Date(ms + 8 * 3600_000).toISOString().slice(11, 16);
 }

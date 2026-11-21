@@ -91,8 +91,8 @@ message Upstream {
   string cooldown_reason = 19;
   // 这个上游最早什么时候能再接（Unix 毫秒）。0 = 现在就能接，或者算不出来。
   int64 recovers_at_ms = 20;
-  // 一句给面板直接用的话（比如「冷却到 12:23（rate-limit）」）。没有就空串。
-  string state_reason = 21;
+  reserved 21;
+  reserved "state_reason";
   reserved 22;
   reserved "quota_plugin";
   // 这是不是一个开放平台（表里的那一行，不是代码里的模板）。
@@ -122,6 +122,19 @@ message Upstream {
   // 那几份可领额度的活动名（上游给的，比如「ZCODE WEEKEND BUILD」）。
   // 多个账号可领时给优先级最高的那个的名字；没有可领就空串。
   string claimable_label = 36;
+
+  // 名下有开着的账号数。
+  int32 enabled_accounts = 37;
+  // 其中在冷却的账号数。
+  int32 cooling_accounts = 38;
+  // 其中额度用尽的账号数。
+  int32 exhausted_accounts = 39;
+  // 额度窗口什么时候结束（Unix 毫秒）。0 = 算不出来，不猜。
+  int64 credits_recover_at_ms = 40;
+  // 平台熔断中：这个平台此刻被跳过。
+  bool breaker_skipped = 41;
+  // 熔断到什么时候（Unix 毫秒）。0 = 不知道。
+  int64 breaker_until_ms = 42;
 }
 
 // provider 的生效策略：上游名下的多个账号（租户）里，先调谁、失败后换谁。
@@ -894,6 +907,20 @@ message ModelMetadata {
   repeated string effort_options = 5;
 }
 
+// 一个公布出来的模型目标此刻为什么接不了请求。只给事实，文案在面板按语言渲染。
+enum TargetBlocker {
+  TARGET_BLOCKER_UNSPECIFIED = 0;         // 没被挡（blocked=false 时）
+  TARGET_BLOCKER_UPSTREAM_DISABLED = 1;   // 平台停了 / 这个分组不是平台
+  TARGET_BLOCKER_NO_CREDENTIAL = 2;       // 没有可用凭据
+  TARGET_BLOCKER_CREDENTIAL_EXPIRED = 3;  // 凭据过期了
+  TARGET_BLOCKER_CREDENTIAL_REJECTED = 4; // 凭据被平台拒了
+  TARGET_BLOCKER_OUT_OF_CREDITS = 5;      // 额度用尽
+  TARGET_BLOCKER_COOLING = 6;            // 冷却中
+  TARGET_BLOCKER_QUEUED = 7;             // 上游排队
+  TARGET_BLOCKER_LOGGING_IN = 8;         // 正在登录
+  TARGET_BLOCKER_UNKNOWN = 9;            // 说不清（别猜成别的）
+}
+
 message PublishedTarget {
   // qoder / qoder-cn / workbuddy-cn / minimax / tokenrhythm
   string group_name = 1;
@@ -909,10 +936,14 @@ message PublishedTarget {
   bool current = 7;
   // 这个目标现在接不了：平台在冷却、账号额度用尽、模型下架、凭据失效。
   bool blocked = 8;
-  // 为什么接不了，一句话，直接给人看（如「额度用尽，窗口 11-03 18:28 结束」）。
-  string blocked_reason = 9;
+  reserved 9;
+  reserved "blocked_reason";
   // 它什么时候能再接（unix 毫秒）。0 = 算不出来（不猜，前端不显示时间）。
   int64 recovers_at_ms = 10;
+  // 为什么接不了：枚举给事实，面板按语言渲染。没被挡就是 UNSPECIFIED。
+  TargetBlocker blocker = 11;
+  // 机器词，只有冷却/额度这类才有：refused / rate-limit / quota。空串 = 没有。
+  string blocker_reason = 12;
 }
 
 message ListPublishedModelsRequest {}

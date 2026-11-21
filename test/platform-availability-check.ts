@@ -521,7 +521,7 @@ const queued = platformAvailability("qoder", queueLater);
 check("两条以上、全是排队 → queued", queued.state === "queued", queued.state);
 check("排队没有恢复时刻（untilMs 是 null，不编）", queued.untilMs === null, String(queued.untilMs));
 check("理由里说了是排队", queued.reason.includes("排队"), queued.reason);
-check("面板上给了一句话（不是空的）", queued.advice.length > 0, queued.advice);
+check("面板状态是 QUEUED 而非 COOLING", upstreamStateOf(queued) === UpstreamState.QUEUED && upstreamStateOf(queued) !== UpstreamState.COOLING, String(upstreamStateOf(queued)));
 check(
   "契约里也是 QUEUED（不是就绪）",
   upstreamStateOf(queued) === UpstreamState.QUEUED,

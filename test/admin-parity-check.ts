@@ -10,8 +10,8 @@
 //   判定（lib/admin/platform-state.ts） → no_credential
 //   面板的状态（lib/admin/upstreams.ts）  → UPSTREAM_STATE_NO_CREDENTIAL
 //   面板的凭据                            → CREDENTIAL_STATE_MISSING
-//   面板的平台行（lib/admin/service.ts）  → 没有可用凭据
-//   面板的模型层（lib/admin/models.ts）   → UNPUBLISHED_REASON_NO_CREDENTIAL
+//   面板的平台行（lib/admin/service.ts）  → UPSTREAM_STATE_NO_CREDENTIAL（state 枚举）
+//   面板的模型层（lib/admin/models.ts）   → UNPUBLISHED_REASON_NO_CREDENTIAL / blocker=NO_CREDENTIAL
 //
 // 然后把 API key 填上：两边同时变成可用。
 //
@@ -92,6 +92,7 @@ const { publishedModels, savePublishedModel } = await import("../lib/admin/model
 const { adminService } = await import("../lib/admin/service.ts");
 const {
   CredentialState,
+  TargetBlocker,
   UnpublishedReason,
   UpstreamState,
 } = await import("../lib/gen/agentfacade/admin/v1/admin_pb.ts");
@@ -127,7 +128,11 @@ const empty = platformAvailability("xinghuo");
 check("判定 → no_account", empty.state === "no_account", empty.state);
 check("面板的状态 → NO_CREDENTIAL（枚举里没有「没有账号」这一项）", upstreamState("xinghuo") === UpstreamState.NO_CREDENTIAL, String(upstreamState("xinghuo")));
 const emptyRow = await platformRow("xinghuo");
-check("面板说得出「没有账号」", String(emptyRow?.stateReason ?? "").includes("还没有账号"), String(emptyRow?.stateReason));
+check(
+  "平台行分得出「没有账号」（没有账号这一档落在 NO_CREDENTIAL 上，靠账号数区分）",
+  emptyRow?.state === UpstreamState.NO_CREDENTIAL && emptyRow?.accountCount === 0,
+  show({ state: emptyRow?.state, accounts: emptyRow?.accountCount }),
+);
 check("面板说这个平台一个账号都没有", emptyRow?.accountCount === 0, String(emptyRow?.accountCount));
 check("面板说这个平台没有开着的账号", emptyRow?.hasEnabledAccount === false, String(emptyRow?.hasEnabledAccount));
 
@@ -155,8 +160,12 @@ check("面板的凭据不给令牌", credential.fingerprint === "", credential.f
 
 const qiniuRow = await platformRow("qiniu");
 check("平台行的状态 → UPSTREAM_STATE_NO_CREDENTIAL", qiniuRow?.state === UpstreamState.NO_CREDENTIAL, show(qiniuRow?.state));
-check("平台行说「没有可用凭据」", String(qiniuRow?.stateReason ?? "").includes("没有可用凭据"), String(qiniuRow?.stateReason));
-check("平台行说去面板上填 key 或者登录", String(qiniuRow?.stateReason ?? "").includes("API Key"), String(qiniuRow?.stateReason));
+check("平台行的状态 → NO_CREDENTIAL（面板据此渲染「填 key 或登录」）", qiniuRow?.state === UpstreamState.NO_CREDENTIAL, show(qiniuRow?.state));
+check(
+  "平台行给了凭据种类与缺失状态（面板据此知道该填什么）",
+  qiniuRow?.credential?.status === CredentialState.MISSING && Boolean(qiniuRow?.credential?.kind),
+  show(qiniuRow?.credential),
+);
 check("平台行的凭据 → CREDENTIAL_STATE_MISSING", qiniuRow?.credential?.status === CredentialState.MISSING, show(qiniuRow?.credential));
 check("平台行说这个平台开着（开关是账号上的事）", qiniuRow?.enabled === true && qiniuRow?.hasEnabledAccount === true, show({ enabled: qiniuRow?.enabled, has: qiniuRow?.hasEnabledAccount }));
 check("平台行说名下有一个账号", qiniuRow?.accountCount === 1, String(qiniuRow?.accountCount));
@@ -176,7 +185,7 @@ check("模型层 → UNPUBLISHED_REASON_NO_CREDENTIAL", model?.unpublishedReason
 check("模型层说没有公布", model?.published === false, show(model?.published));
 const target = model?.targets?.[0];
 check("目标接不了", target?.blocked === true, show(target));
-check("目标说得出「没有可用凭据」", String(target?.blockedReason ?? "").includes("没有可用凭据"), String(target?.blockedReason));
+check("目标的 blocker → NO_CREDENTIAL", target?.blocked === true && target?.blocker === TargetBlocker.NO_CREDENTIAL, show(target));
 
 /* ------------------------------------------------------------------ *
  * 三、账号都关着
@@ -189,7 +198,7 @@ const off = platformAvailability("qiniu");
 check("判定 → accounts_off", off.state === "accounts_off", off.state);
 check("面板的状态 → UPSTREAM_STATE_DISABLED", upstreamState("qiniu") === UpstreamState.DISABLED, String(upstreamState("qiniu")));
 const offRow = await platformRow("qiniu");
-check("平台行说得出「账号均已关闭」", String(offRow?.stateReason ?? "").includes("账号均已关闭"), String(offRow?.stateReason));
+check("平台行的状态 → DISABLED，且没有开着的账号", offRow?.state === UpstreamState.DISABLED && offRow?.hasEnabledAccount === false, show({ state: offRow?.state, has: offRow?.hasEnabledAccount }));
 check("平台行说这个平台没有开着的账号", offRow?.hasEnabledAccount === false, String(offRow?.hasEnabledAccount));
 setProviderEnabled(accountId, true);
 
@@ -218,7 +227,7 @@ check(
 );
 const readyRow = await platformRow("qiniu");
 check("平台行的状态 → UPSTREAM_STATE_READY", readyRow?.state === UpstreamState.READY, show(readyRow?.state));
-check("平台行没有该说的话", !String(readyRow?.stateReason ?? "").includes("没有可用凭据"), String(readyRow?.stateReason));
+check("平台行的账号计数说明没有冷却、有一个开着的账号", readyRow?.enabledAccounts === 1 && readyRow?.coolingAccounts === 0, show({ enabled: readyRow?.enabledAccounts, cooling: readyRow?.coolingAccounts }));
 const readyModel = publishedModels().find((m) => m.id === "parity-qiniu");
 check("模型层 → 公布了", readyModel?.published === true, show(readyModel?.published));
 check("目标不再接不了", readyModel?.targets?.[0]?.blocked === false, show(readyModel?.targets?.[0]));
@@ -245,7 +254,7 @@ setSecret(`session:provider:${expiredId}`, "session", {
 
 const expiredJudged = platformAvailability("qoder");
 check("会话过期 → credential_expired", expiredJudged.state === "credential_expired", expiredJudged.state);
-check("会话过期 → 说的是过期，不是没有凭据", expiredJudged.advice.includes("过期"), expiredJudged.advice);
+check("会话过期 → 状态里分得出过期与没有凭据", expiredJudged.state === "credential_expired" && expiredJudged.state !== "no_credential", expiredJudged.state);
 check(
   "会话过期 → 没有恢复时刻（等刷新不是定时器能算的事）",
   expiredJudged.untilMs === null,
@@ -263,7 +272,7 @@ check(
   expiredRow?.state === UpstreamState.CREDENTIAL_EXPIRED,
   show(expiredRow?.state),
 );
-check("平台行说得出「过期」", String(expiredRow?.stateReason ?? "").includes("过期"), String(expiredRow?.stateReason));
+check("平台行分得出过期与没有凭据", expiredRow?.state === UpstreamState.CREDENTIAL_EXPIRED && expiredRow?.state !== UpstreamState.NO_CREDENTIAL, show(expiredRow?.state));
 
 /* ------------------------------------------------------------------ *
  * 六、每个 kind 的推理凭据：注册表说了算
@@ -381,7 +390,7 @@ check(
   String(broken.usable.length),
 );
 check("读不出来的账号仍算名下有账号", broken.serving.length > 0, String(broken.serving.length));
-check("说的是「凭据读不出来」", broken.advice.includes("读不出来"), broken.advice);
+check("状态里分得出「凭据读不出来」与「没有凭据」", broken.state === "credential_unknown" && broken.state !== "no_credential", broken.state);
 check(
   "没有恢复时刻（读不出来不是定时器能算的事）",
   broken.untilMs === null,

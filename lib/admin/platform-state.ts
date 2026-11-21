@@ -124,13 +124,6 @@ export interface PlatformAvailability {
   rows: ProviderRow[];
   /** 名下开着的账号有几个。平台的开关就是这个：账号自己管自己。 */
   on: number;
-  /**
-   * 面板上该做什么：一句话。
-   *
-   * 三件要改的地方不一样的事 —— 加一个账号、打开一个账号、填凭据。只说
-   * 「不可用」的话，人只能一个个试。
-   */
-  advice: string;
   /** 平台的模型目录（带元数据）。恒为平台全量。 */
   catalog: CatalogModel[];
   /** 平台的模型 id：目录里的那些。 */
@@ -355,38 +348,6 @@ function reasonOf(
     : base;
 }
 
-/**
- * 面板上该做什么。
- *
- * 与 reason 的分工：reason 是给日志看的一句话（这个平台为什么接不了），
- * advice 是给面板看的一句人话（该去改哪一处）。
- *
- * `refused` 是「平台拒过这份会话」：被拒过的会话等刷新没有用，只能重新
- * 登录 —— 这跟「过期了，等定时器刷」要人做的事不一样。
- */
-function adviceOf(state: PlatformState, refused: boolean): string {
-  switch (state) {
-    case "no_account":
-      return "这个平台还没有账号：在「平台」页新增一个账号并登录";
-    case "accounts_off":
-      return "这个平台的账号均已关闭：在「平台」页启用一个";
-    case "no_credential":
-      return "没有可用凭据：在「平台」页填写 API Key 或登录";
-    case "credential_expired":
-      return refused ? "凭据被拒绝：重新登录" : "凭据已过期：等待自动刷新，或重新登录";
-    case "credential_unknown":
-      return "凭据读不出来：看日志";
-    case "out_of_credits":
-      return "额度用尽：等待额度恢复，或更换账号";
-    case "cooling":
-      return "账号均处于冷却中：请稍后重试";
-    case "queued":
-      return "上游把模型排进队列，暂时发不出去：这里改不了什么，等它自己放行";
-    case "ready":
-      return "";
-  }
-}
-
 /** 「最近都在排队」看多久：十分钟。够短到上游一放行就能变回就绪，够长到两天里
  * 那 116 次都落得进来。 */
 const QUEUE_WINDOW_MS = 10 * 60_000;
@@ -505,7 +466,6 @@ function judge(
     accounts: accounts.length,
     rows: accounts,
     on: on.length,
-    advice: adviceOf(state, expired.some((row) => verdictOf(row).refused)),
     catalog,
     ids: catalog.map((m) => m.id),
     // 恢复时间只算「额度用尽」与「冷却」这两种：它们有时刻表。
