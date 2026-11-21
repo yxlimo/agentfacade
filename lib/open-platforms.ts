@@ -24,6 +24,13 @@ import type { AdminFailure, AdminResult } from "./admin/error-codes.ts";
 // 计费的形状：与 contextWindow 一样是上游报的，只是它多一层结构（币种、单位、
 // 分时段倍率），所以形状在 lib/catalog-billing.ts 一处定，这里只引用。
 import type { ModelBilling } from "./catalog-billing.ts";
+// 头模板：OpenPlatformRow 的一格。校验与序列化都归那一层，这里只收与存。
+import {
+  parseStoredHeaders,
+  serializeHeaders,
+  validateHeaderTemplates,
+  type HeaderTemplate,
+} from "./admin/platform-headers.ts";
 
 /**
  * 开放平台的 kind 名字。
@@ -124,6 +131,13 @@ export interface OpenPlatformRow {
    * 模型 —— 命中与不命中都不影响 items 里有哪些模型。
    */
   traitsFromCommon: boolean;
+  /**
+   * 转发时要给上游注入的头模板（面板配的）。
+   *
+   * 只有开放平台的请求路径读它（lib/admin/platform-header-injection.ts）：
+   * 模拟客户端的请求按客户端指纹重建，不读这一格。
+   */
+  headers: HeaderTemplate[];
   createdAt: number;
   updatedAt: number;
 }
@@ -155,7 +169,7 @@ const RESERVED_IDS = new Set(["v1", "admin", "health", "healthz", "metrics"]);
 export function listOpenPlatforms(): OpenPlatformRow[] {
   const rows = store()
     .prepare(
-      "SELECT id, label, base_url, models, traits_from_common, kind, region, created_at, updated_at " +
+      "SELECT id, label, base_url, models, traits_from_common, kind, region, headers, created_at, updated_at " +
         "FROM platform ORDER BY id",
     )
     .all() as any[];
@@ -166,7 +180,7 @@ export function listOpenPlatforms(): OpenPlatformRow[] {
 export function openPlatformOf(id: string): OpenPlatformRow | null {
   const row = store()
     .prepare(
-      "SELECT id, label, base_url, models, traits_from_common, kind, region, created_at, updated_at " +
+      "SELECT id, label, base_url, models, traits_from_common, kind, region, headers, created_at, updated_at " +
         "FROM platform WHERE id = ?",
     )
     .get(id) as any;
@@ -186,6 +200,8 @@ export function createOpenPlatform(input: {
   baseUrl: string;
   /** 哪一类适配器。空串 = openai（OpenAI 兼容的通用平台）。 */
   kind?: string;
+  /** 转发时要注入的头模板。坏值整条拒绝（写库之前校验）。 */
+  headers?: unknown;
 }): AdminResult {
   const id = String(input.id ?? "").trim();
   const problem = checkId(id);
@@ -238,6 +254,9 @@ export function createOpenPlatform(input: {
     if (kindProblem) return kindProblem;
   }
 
+  // 头模板在写库前过校验：坏值整条拒绝，不让半份配置落进表里。
+  const checked = validateHeaderTemplates(input.headers);
+  if (!checked.ok) return checked;
   const now = Date.now();
   // 目录是空的：建平台不预填目录 —— 目录归上游（方言族）或归代码（模拟客户端），
   // 两种都不是建平台的人说了算。
@@ -251,8 +270,8 @@ export function createOpenPlatform(input: {
     // openai」—— 这一格现在由调用方定，写进去的必须是校验过的那一个。
     db.prepare(
       "INSERT INTO platform " +
-        "(id, label, base_url, models, kind, region, created_at, updated_at) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "(id, label, base_url, models, kind, region, headers, created_at, updated_at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ).run(
       id,
       label,
@@ -260,6 +279,7 @@ export function createOpenPlatform(input: {
       modelsJson(models),
       kind,
       region,
+      serializeHeaders(checked.templates),
       now,
       now,
     );
@@ -312,6 +332,12 @@ export function updateOpenPlatform(
      * 想换类型只能删了重建。
      */
     kind?: string;
+    /**
+     * 转发时要注入的头模板。不给 = 别动这一格；给了空列表才是清空。
+     *
+     * 校验在写库之前（validateHeaderTemplates），坏值整条拒绝。
+     */
+    headers?: unknown;
   },
 ): AdminResult {
   const row = openPlatformOf(id);
@@ -342,15 +368,20 @@ export function updateOpenPlatform(
     const urlProblem = checkBaseUrl(baseUrl);
     if (urlProblem) return urlProblem;
   }
+  // 头模板：没给 = 别动，给了就先校验（坏值整条拒绝），没给的保持行上原样。
+  const checked = patch.headers === undefined ? null : validateHeaderTemplates(patch.headers);
+  if (checked && !checked.ok) return checked;
+  const headers = checked ? checked.templates : row.headers;
   store()
     .prepare(
       "UPDATE platform SET label = ?, base_url = ?, " +
-        "traits_from_common = ?, updated_at = ? WHERE id = ?",
+        "traits_from_common = ?, headers = ?, updated_at = ? WHERE id = ?",
     )
     .run(
       label,
       normalizeBaseUrl(baseUrl),
       patch.traitsFromCommon === undefined ? (row.traitsFromCommon ? 1 : 0) : patch.traitsFromCommon ? 1 : 0,
+      serializeHeaders(headers),
       Date.now(),
       id,
     );
@@ -746,6 +777,8 @@ function toRow(row: any): OpenPlatformRow {
     kind: String(row.kind ?? "openai"),
     region: String(row.region ?? ""),
     traitsFromCommon: Number(row.traits_from_common ?? 0) !== 0,
+    // 坏 JSON 读成空：一行写坏不该拖垮整个平台列表，更不该让转发挂掉。
+    headers: parseStoredHeaders(row.headers),
     createdAt: Number(row.created_at ?? 0),
     updatedAt: Number(row.updated_at ?? 0),
   };

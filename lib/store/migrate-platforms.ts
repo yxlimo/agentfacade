@@ -54,6 +54,8 @@ function migratePlatformColumns(db: DatabaseSync): void {
  */
 const TRAITS_VERSION = 1;
 const LEGACY_VENDOR_KIND_VERSION = 2;
+/** 平台行的注入头模板：列存在与否就是「跑没跑过」，版本号只为后续步骤递增留基线。 */
+const PLATFORM_HEADERS_VERSION = 5;
 
 /** 库的 schema 版本现在是多少（没写过就是 0）。 */
 function schemaVersion(db: DatabaseSync): number {
@@ -279,6 +281,23 @@ export function migrateQuotaPluginToBase(db: DatabaseSync): void {
     db.exec("ALTER TABLE platform DROP COLUMN quota_plugin");
   }
   setSchemaVersion(db, QUOTA_PLUGIN_BY_BASE_VERSION);
+}
+
+/**
+ * 平台表补注入头模板那一列。
+ *
+ * 只补列，不搬数据：模板是新东西，旧库里没有任何一份要迁的值，默认空列表
+ * （没配过模板）就是正确的历史。判列存在 + 版本号两道闸，重复执行不会重来。
+ *
+ * 调度上必须放在迁移链的最后：前面的步骤按 user_version 判「是否已跑」，这里
+ * 先把版本推到 5，旧库的 legacy/vendor/quota 迁移就会被跳过。
+ */
+export function migratePlatformHeaders(db: DatabaseSync): void {
+  const columns = db.prepare("PRAGMA table_info(platform)").all() as { name?: string }[];
+  if (!columns.some((c) => c.name === "headers")) {
+    db.exec("ALTER TABLE platform ADD COLUMN headers TEXT NOT NULL DEFAULT '[]'");
+  }
+  setSchemaVersion(db, PLATFORM_HEADERS_VERSION);
 }
 /**
  * 模拟客户端那一族的平台补成表里的行。

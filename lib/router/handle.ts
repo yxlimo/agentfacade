@@ -25,7 +25,8 @@ import { select, SelectionStop, byWeight, balanceOrder } from "./selection.ts";
 import { extractSessionKey, sessionKeyFingerprint, sessionHeaderNames } from "../session-id.ts";
 import { classifyUpstreamError, describeUpstreamError } from "./provider-selection.ts";
 import { recordUsage, maxTotals, usageTotals } from "../usage.ts";
-import { clientForwardHeaders, detectAgent, detectSession, type SessionInfo } from "../agent.ts";
+import { detectAgent, detectSession, type SessionInfo } from "../agent.ts";
+import { resolveForwardedHeaders } from "../admin/platform-header-injection.ts";
 import { workbuddyCatalog } from "../admin/upstreams.ts";
 import { toMinimax, toZcode, toQoder, toWorkBuddy, type UpstreamContext } from "./upstreams/index.ts";
 import {
@@ -612,7 +613,21 @@ async function callUpstream(
   // 模拟客户端的那些（Qoder、WorkBuddy、MiniMax Code、ZCode）按客户端的样子
   // 重建请求，不用这些头。
   if (kind?.openPlatform) {
-    uctx.forwardedHeaders = clientForwardHeaders(ctx.request.headers);
+    // 客户端头按 deny-list 透传之后，把平台自己配的头模板盖上（模板值里的
+    // {session-id} 在这里渲染）。模板带了占位符而取不到会话 → 400：这发生在
+    // 任何上游往返之前，也不写一行上游失败的用量。
+    const injected = resolveForwardedHeaders(
+      route.platform,
+      template?.label ?? route.platform,
+      ctx.request.headers,
+      body,
+    );
+    if (!injected.ok) {
+      ctx.status = 400;
+      ctx.body = { error: { type: "invalid_request_error", message: injected.message } };
+      return;
+    }
+    uctx.forwardedHeaders = injected.headers;
   }
   try {
     switch (kind?.kind) {

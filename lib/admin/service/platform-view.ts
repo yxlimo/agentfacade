@@ -6,6 +6,7 @@
 import { create } from "@bufbuild/protobuf";
 import {
   CredentialStatusSchema,
+  HeaderTemplateSchema,
   OpenPlatformSchema,
   QuotaPluginFieldSchema,
   UpstreamSchema,
@@ -236,5 +237,7 @@ export function openPlatformMessage(row: OpenPlatformRow) {
     // 建的时候定下的那一类：面板靠它决定这一排平台能用哪些凭据格子、要不要
     // 显示「刷新模型目录」。
     kind: row.kind,
+    // 模板原样回给面板：它能显示、也能再保存（没配就是空列表）。
+    headers: row.headers.map((h) => create(HeaderTemplateSchema, { name: h.name, value: h.value })),
   });
 }

@@ -106,6 +106,7 @@ export function createTables(db: DatabaseSync): void {
       traits_from_common INTEGER NOT NULL DEFAULT 1,
       kind         TEXT NOT NULL DEFAULT 'openai',
       region       TEXT NOT NULL DEFAULT '',
+      headers      TEXT NOT NULL DEFAULT '[]',
       created_at   INTEGER NOT NULL,
       updated_at   INTEGER NOT NULL
     )`,

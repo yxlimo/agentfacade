@@ -20,7 +20,8 @@ export interface FakeQoder {
   /** 假上游的地址。 */
   base: string;
   /** 收到过的推理请求：上游的模型名，与正文里最后一条消息。 */
-  seen: { model: string; stream: boolean; messages: unknown[] }[];
+  /** 收到过的推理请求：上游的模型名，与正文里最后一条消息。 */
+  seen: { model: string; stream: boolean; messages: unknown[]; headers: Record<string, string | string[] | undefined> }[];
   /** 忘掉收到过什么。 */
   reset(): void;
   /** 停下来。 */
@@ -48,6 +49,7 @@ export async function startFakeQoder(port = 0): Promise<FakeQoder> {
       model,
       stream: body.stream === true,
       messages: Array.isArray(body.messages) ? body.messages : [],
+      headers: { ...req.headers },
     });
 
     if (FAILING_MODELS.has(model)) {

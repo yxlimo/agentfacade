@@ -58,6 +58,8 @@ export const platformMethods: Partial<ServiceImpl<typeof AdminService>> = {
       label: String(request.label ?? ""),
       baseUrl: String(request.baseUrl ?? ""),
       kind: String(request.kind ?? ""),
+      // 头模板：建平台就能带；校验在那一层（validateHeaderTemplates），坏值整条拒绝。
+      headers: request.headers,
     });
     if (!result.ok) throw adminError(result.code, result.message);
     log.info(`[ADMIN] 加了开放平台 ${id}`);
@@ -75,11 +77,14 @@ export const platformMethods: Partial<ServiceImpl<typeof AdminService>> = {
       label?: string;
       baseUrl?: string;
       traitsFromCommon?: boolean;
+      headers?: unknown;
     } = {
       label: givenText(request.label),
       baseUrl: givenText(request.baseUrl),
       // 带 presence 的开关：没给 = 别动（只改名字的单子不能把它清零）。
       traitsFromCommon: givenBool(request.traitsFromCommon),
+      // 带 presence 的包装（HeaderTemplateList）：没给 = 别动，给了空列表 = 清空。
+      headers: request.headers === undefined ? undefined : request.headers.items,
     };
     const result = updateOpenPlatform(id, patch);
     if (!result.ok) throw adminError(result.code, result.message);

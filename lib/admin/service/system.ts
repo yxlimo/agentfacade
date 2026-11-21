@@ -6,9 +6,7 @@
 import { create } from "@bufbuild/protobuf";
 import type { ServiceImpl } from "@connectrpc/connect";
 import { AdminService, ConfigItemSchema, GetSystemStatusResponseSchema, ListConfigResponseSchema, RestartSystemResponseSchema, SetConfigResponseSchema, TailLogResponseSchema } from "../../gen/agentfacade/admin/v1/admin_pb.ts";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { serviceVersion } from "./shared.ts";
 import { log } from "../../log.ts";
 import { tailLog } from "../log.ts";
 import { configItems, knownConfigKeys, pendingRestart, setConfigValue } from "../config.ts";
@@ -17,7 +15,6 @@ import { adminTokenSet } from "../token.ts";
 import { publishedModels } from "../models.ts";
 import { platformMessages } from "./platform-view.ts";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 export const systemMethods: Partial<ServiceImpl<typeof AdminService>> = {
   async getSystemStatus() {
@@ -93,12 +90,3 @@ export const systemMethods: Partial<ServiceImpl<typeof AdminService>> = {
   },
 };
 
-/** 服务的版本号：只被 getSystemStatus 用，随方法搬到这里。 */
-function serviceVersion(): string {
-  try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(HERE, "..", "..", "..", "package.json"), "utf8"));
-    return String(pkg.version ?? "");
-  } catch {
-    return "";
-  }
-}
