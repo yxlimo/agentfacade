@@ -269,11 +269,11 @@ section("HRW：降级确定性（select 级）");
 {
   const boom = new Error("the first target is down");
   // 同一个会话，命中目标永远失败：select 走的次选必须每次都一样。
-  // candidates 按这个会话的 HRW 顺序喂（handler 里就是这么做的）。
-  const ordered = balanceOrder(targets([5, 3, 2]), "session-stable-1");
   const triedSets = new Set<string>();
   for (let i = 0; i < 20; i++) {
     const tried: string[] = [];
+    // handler 每条请求都重算一遍顺序：这里同样每轮重算，粘性才有得测
+    const ordered = balanceOrder(targets([5, 3, 2]), "session-stable-1");
     const candidates = ordered.map((c, index) =>
       index === 0
         ? { ...c, run: async () => { tried.push(c.id); throw boom; } }
