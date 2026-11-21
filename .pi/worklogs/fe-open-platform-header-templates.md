@@ -19,3 +19,12 @@
 ## 进度
 
 - 开工前读约定与任务；无 `docs/tasks/**/context.md`，任务以派单正文为准。
+- `mise run proto` 成功，生成 `web/.gen/agentfacade/admin/v1/admin_pb.ts`（gitignore，不入库）。
+- 生成物形状：`Upstream.headers: HeaderTemplate[]`；`AddPlatformRequest.headers: HeaderTemplate[]`；
+  `UpdatePlatformRequest.headers?: HeaderTemplateList`（含 `items`）。
+
+设计决定：
+- 注入头只对开放平台（dialect，`!simulated`）可编辑/提交；模拟客户端不摆这一区、不带字段。
+- 保存对开放平台每次都发完整 headers 列表（含空列表），以实现「删光=清空」。
+- 轻同步校验只查 name/value 非空；其余判据交服务端，机器码走 `adminErrorText` 映射翻人话。
+- i18n 新增 17 个键 × zh/en 两份 = 34 条（10 个文案键 + 7 个错误码键）。
