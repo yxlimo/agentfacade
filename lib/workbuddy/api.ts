@@ -4,6 +4,7 @@
 // and the credit balance both live behind these endpoints, and both need the
 // same identity headers.
 
+import { log } from "../log.ts";
 import { configString } from "../config.ts";
 import { accountHeaders, loadSession, regionOf, type WorkBuddySession } from "./auth.ts";
 
@@ -44,7 +45,7 @@ function warnOnDomainMismatch(session: WorkBuddySession, providerId: string, acc
   if (sessionHost !== hostOf(accountHost)) {
     if (warnedMismatch.has(providerId)) return;
     warnedMismatch.add(providerId);
-    console.warn(`[workbuddy] 会话域名 ${sessionHost} 与 ${providerId} 的 API 域名 ${hostOf(accountHost)} 不一致`);
+    log.warn(`[workbuddy] 会话域名 ${sessionHost} 与 ${providerId} 的 API 域名 ${hostOf(accountHost)} 不一致`);
   }
 }
 

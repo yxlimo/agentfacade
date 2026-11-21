@@ -3,6 +3,7 @@
 // The plan's own credits, the ones bought on top of it, and the account's
 // standing (the server says PASS, WAIT, or why it may not be used).
 
+import { log } from "../log.ts";
 import {
   ENDPOINTS,
   USER_AGENT,
@@ -83,7 +84,7 @@ export async function fetchQoderCredits(providerId = "qoder"): Promise<QoderCred
       // 正文只在这一处拿得到：额度读不出来时面板上只会写「没有额度」，
       // 没人知道上游到底答了什么。
       const text = await r.text().catch(() => "");
-      console.warn(`[UPSTREAM] Qoder 额度查询 ${r.status}：${scrubForLog(text, 300)}`);
+      log.warn(`[UPSTREAM] Qoder 额度查询 ${r.status}：${scrubForLog(text, 300)}`);
       if (r.status === 401 || r.status === 403) {
         return vendorUnauthorized(`上游拒绝了这把令牌（HTTP ${r.status}）`);
       }
@@ -134,7 +135,7 @@ export async function checkAccountHealth(providerId = "qoder"): Promise<QoderAcc
     }
     const code = body?.errorCode ?? body?.code ?? `HTTP ${r.status}`;
     // 只留一个代码在面板上，上游到底说了什么只有这里知道。
-    console.warn(`[UPSTREAM] Qoder 账号状态 ${r.status}：${scrubForLog(text, 300)}`);
+    log.warn(`[UPSTREAM] Qoder 账号状态 ${r.status}：${scrubForLog(text, 300)}`);
     return {
       region,
       authorized: false,

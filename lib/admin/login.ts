@@ -11,6 +11,7 @@
 // 半凭据（device_code / code_verifier / nonce / machine_token / state）存在
 // 这一行里，一个都不进日志。
 
+import { log } from "../log.ts";
 import crypto from "node:crypto";
 import { deleteCached, listCached, peekCached, setCached, withLock } from "../store.ts";
 import { AuthError, authLog } from "../credential.ts";
@@ -316,13 +317,13 @@ async function pollLoop(session: StoredLogin): Promise<void> {
     // 登录的结果要留痕：容器重建就没有日志了，凭据自己的日志里也只有
     // 「刷新成功」，看不出当初是怎么登上去的。
     authLog(dataDir(), `${session.accountId} 登录成功`, credentialId);
-    console.log(`[LOGIN] ${session.accountId} 登录成功`);
+    log.info(`[LOGIN] ${session.accountId} 登录成功`);
   } catch (e) {
     const current = loadLogin(session.loginId);
     if (!current || current.status === "cancelled") return;
     updateLogin(session.loginId, { status: "failed", message: errorText(e) });
     authLog(dataDir(), `${session.accountId} 登录失败`, errorText(e));
-    console.warn(`[LOGIN] ${session.accountId} 登录失败：${errorText(e)}`);
+    log.warn(`[LOGIN] ${session.accountId} 登录失败：${errorText(e)}`);
   }
 }
 

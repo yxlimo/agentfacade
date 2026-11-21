@@ -3,6 +3,7 @@
 // The activity service is the same service in both regions; only the host
 // differs. The account's own token is enough to claim.
 
+import { log } from "../log.ts";
 import {
   ENDPOINTS,
   loadSession as loadQoderSession,
@@ -177,14 +178,14 @@ async function claimCampaign(
     }
     if (amount > 0) {
       lines.push(`领活动「${key}」+${amount} ${kind}`);
-      console.log(`[BENEFITS] ${upstream}: claimed ${key} +${amount} ${kind}`);
+      log.info(`[BENEFITS] ${upstream}: claimed ${key} +${amount} ${kind}`);
       return { credits: amount, lines, signedIn: true };
     }
     // Some campaigns grant nothing (a promo you only have to open). Claiming
     // them is still correct -- the platform says it can be claimed -- but
     // there is no credit to report.
     lines.push(`领活动「${key}」（没有积分）`);
-    console.log(`[BENEFITS] ${upstream}: claimed ${key} (no credits)`);
+    log.info(`[BENEFITS] ${upstream}: claimed ${key} (no credits)`);
     return { credits: 0, lines, signedIn: false };
   }
   // The platform says why when it refuses. 503 RISK_DEPENDENCY_UNAVAILABLE
@@ -196,7 +197,7 @@ async function claimCampaign(
     claim.body?.message ??
     `HTTP ${claim.status}`;
   lines.push(`领活动「${key}」失败：${why}`);
-  console.log(`[BENEFITS] ${upstream}: claim ${key} failed (HTTP ${claim.status}): ${why}`);
+  log.info(`[BENEFITS] ${upstream}: claim ${key} failed (HTTP ${claim.status}): ${why}`);
   return { credits: 0, lines, signedIn: false };
 }
 
@@ -281,7 +282,7 @@ export async function runQoderBenefits(providerId = "qoder-cn"): Promise<Benefit
     // The list is worth a line of its own: when the daily campaign is missing
     // from it there is nothing to claim, and that is invisible in the report
     // unless the campaigns are named.
-    console.log(
+    log.info(
       `[BENEFITS] ${upstream}: ${rows.length} campaign(s)` +
         (rows.length
           ? ` — ${rows.map((r: any) => `${r.campaignKey}:${r.claimStatus}`).join(", ")}`

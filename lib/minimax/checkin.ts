@@ -19,6 +19,7 @@
 // MINIMAX_API_BASE), which is the documented way a self-test aims the
 // sign-in at a fake upstream.
 
+import { log } from "../log.ts";
 import { createHash } from "node:crypto";
 import { configString } from "../config.ts";
 import { readCredential } from "./auth.ts";
@@ -373,7 +374,7 @@ export async function runMiniMaxBenefits(providerId = "minimax"): Promise<Benefi
   }
   const panel = status.panel;
   const days = panel.days?.length ?? 0;
-  console.log(
+  log.info(
     `[BENEFITS] ${upstream}: sign-in panel, ${days} day(s), scene ${panel.scene}` +
       (claimedToday(panel) ? ", today claimed" : claimableDay(panel) ? ", today claimable" : ""),
   );

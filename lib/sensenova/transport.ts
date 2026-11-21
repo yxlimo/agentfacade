@@ -11,6 +11,7 @@
 //
 // 额度不在这里：那是控制台的接口，见 lib/sensenova/quota.ts。
 
+import { log } from "../log.ts";
 import { senseNovaApiKey } from "./config.ts";
 import { storedAccount } from "./auth.ts";
 import { listModels, type SenseNovaModel } from "./models.ts";
@@ -69,6 +70,6 @@ export async function refreshSenseNovaCatalog(force = false, providerId = "sense
     const models = await listModels(key);
     catalog.update(models);
   } catch (e) {
-    console.warn(`[SENSENOVA] 模型清单刷新失败：${(e as Error)?.message}`);
+    log.warn(`[SENSENOVA] 模型清单刷新失败：${(e as Error)?.message}`);
   }
 }

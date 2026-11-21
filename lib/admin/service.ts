@@ -8,6 +8,7 @@
 // 契约在 proto/agentfacade/admin/v1/admin.proto，生成物在 lib/gen/。改契约之后跑
 // `mise run proto` 重新生成，这里跟着改。
 
+import { log } from "../log.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -821,7 +822,7 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
     // 容器是 restart: unless-stopped 起的，进程退出去它就会把新配置带起来。
     // 先把答复送出去，再退。
     setTimeout(() => {
-      console.log("[ADMIN] 面板要求重启：进程退出，容器会把它拉起来");
+      log.info("[ADMIN] 面板要求重启：进程退出，容器会把它拉起来");
       process.exit(0);
     }, 500);
     return create(RestartSystemResponseSchema, {
@@ -872,7 +873,7 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
       alias: String(request.alias ?? ""),
     });
     if (!result.ok) throw adminError(result.code, result.message);
-    console.log(`[ADMIN] 在 ${request.platform} 下加了账号 ${result.id}`);
+    log.info(`[ADMIN] 在 ${request.platform} 下加了账号 ${result.id}`);
     return create(AddAccountResponseSchema, { id: result.id ?? "" });
   },
 
@@ -884,7 +885,7 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
     if (request.enabled !== undefined && request.enabled !== null) patch.enabled = request.enabled === true;
     if (request.weight !== undefined && request.weight !== null) patch.weight = Number(request.weight);
     const result = updateProvider(String(request.id ?? ""), patch);
-    if (result.ok) console.log(`[ADMIN] 账号 ${request.id} 改了`);
+    if (result.ok) log.info(`[ADMIN] 账号 ${request.id} 改了`);
     return create(UpdateProviderResponseSchema, { ok: result.ok, message: result.message });
   },
 
@@ -902,7 +903,7 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
     // 平台支不支持这个策略：只有一个账号的平台选了也没用，所以那边只给「单一」。
     // 校验在 lib/platforms.ts 里，这里只把结果转成一句面板能看的话。
     const result = writePlatformPolicy(platform, policy);
-    if (result.ok) console.log(`[ADMIN] 平台 ${platform} 的策略改成 ${policy}`);
+    if (result.ok) log.info(`[ADMIN] 平台 ${platform} 的策略改成 ${policy}`);
     return create(SetPlatformPolicyResponseSchema, { ok: result.ok, message: result.message });
   },
 
@@ -910,7 +911,7 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
     const id = String(request.id ?? "");
     const result = deleteAccount(id);
     if (result.ok) {
-      console.log(`[ADMIN] 删了账号 ${id}（连它的凭据一起）`);
+      log.info(`[ADMIN] 删了账号 ${id}（连它的凭据一起）`);
     }
     return create(DeleteAccountResponseSchema, { ok: result.ok, message: result.message });
   },
@@ -918,7 +919,7 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
   async setAccountEnabled(request) {
     const id = String(request.accountId ?? "") as UpstreamId;
     const result = setAccountEnabled(id, request.enabled === true);
-    console.log(`[ADMIN] 账号 ${id} 改成 ${request.enabled ? "true" : "false"}（立刻生效）`);
+    log.info(`[ADMIN] 账号 ${id} 改成 ${request.enabled ? "true" : "false"}（立刻生效）`);
     return create(SetAccountEnabledResponseSchema, {
       ok: result.ok,
       pendingRestart: pendingRestart(),
@@ -939,7 +940,7 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
       kind: String(request.kind ?? ""),
     });
     if (!result.ok) throw adminError(result.code, result.message);
-    console.log(`[ADMIN] 加了开放平台 ${id}`);
+    log.info(`[ADMIN] 加了开放平台 ${id}`);
     const row = openPlatformOf(id.trim());
     return create(AddPlatformResponseSchema, { platform: row ? openPlatformMessage(row) : undefined });
   },
@@ -962,7 +963,7 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
     };
     const result = updateOpenPlatform(id, patch);
     if (!result.ok) throw adminError(result.code, result.message);
-    console.log(`[ADMIN] 开放平台 ${id} 改了`);
+    log.info(`[ADMIN] 开放平台 ${id} 改了`);
     const row = openPlatformOf(id.trim());
     return create(UpdatePlatformResponseSchema, {
       platform: row ? openPlatformMessage(row) : undefined,
@@ -996,7 +997,7 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
     // 指向的是一个不存在的上游会话。
     const sessions = forgetUpstreamSessions(id);
     // 连带删掉的东西写进日志：答复里没有 message 了，出过什么事就只剩这一处。
-    console.log(
+    log.info(
       `[ADMIN] 删了开放平台 ${id}（${row.label}）：连 ${accounts.length} 个账号一起，` +
         `${affected.length} 个已发布模型指向它（现在显示平台已停用），` +
         `${overrides} 条人工元数据、${sessions} 条会话映射一起`,
@@ -1107,7 +1108,7 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
       sent.map((one) => modelOverrideRow(one as ModelOverride)),
     );
     if (!result.ok) throw adminError(result.code, result.message);
-    console.log(`[ADMIN] ${request.platformId} 的人工模型元数据：${result.message}`);
+    log.info(`[ADMIN] ${request.platformId} 的人工模型元数据：${result.message}`);
     return create(SetModelOverridesResponseSchema, {});
   },
 
@@ -1117,7 +1118,7 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
       String(request.modelId ?? ""),
     );
     if (!result.ok) throw adminError(result.code, result.message);
-    console.log(`[ADMIN] ${request.platformId} 的人工模型元数据：${result.message}`);
+    log.info(`[ADMIN] ${request.platformId} 的人工模型元数据：${result.message}`);
     return create(DeleteModelOverrideResponseSchema, {});
   },
 
@@ -1156,7 +1157,7 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
       });
     }
     const result = setConfigValue(key, String(request.value ?? ""), request.clear === true);
-    console.log(`[ADMIN] 配置 ${key}：${result.message}`);
+    log.info(`[ADMIN] 配置 ${key}：${result.message}`);
     return create(SetConfigResponseSchema, {
       ok: result.ok,
       pendingRestart: pendingRestart(),
@@ -1248,7 +1249,7 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
     const keys = (request.keys ?? []).map((k) => String(k).trim());
     const result = setProviderKeys(upstreamId, keys);
     if (!result.ok) throw adminError(result.code, result.message);
-    console.log(`[ADMIN] 账号 ${upstreamId} 的凭据：${result.message}`);
+    log.info(`[ADMIN] 账号 ${upstreamId} 的凭据：${result.message}`);
     return create(SetProviderKeysResponseSchema, { count: result.count });
   },
 
@@ -1421,17 +1422,17 @@ export const adminService: Partial<ServiceImpl<typeof AdminService>> = {
       })),
     });
     if (!result.ok) {
-      console.log(`[MODEL] 保存 ${result.id} 失败：${result.message}`);
+      log.info(`[MODEL] 保存 ${result.id} 失败：${result.message}`);
       throw adminError(result.code, result.message);
     }
-    console.log(`[MODEL] 保存 ${result.id}：${result.message}`);
+    log.info(`[MODEL] 保存 ${result.id}：${result.message}`);
     return create(SavePublishedModelResponseSchema, { id: result.id });
   },
 
   async deletePublishedModel(request) {
     const id = String(request.id ?? "");
     const result = deletePublishedModel(id);
-    console.log(`[MODEL] 删除 ${id}：${result.message}`);
+    log.info(`[MODEL] 删除 ${id}：${result.message}`);
     return create(DeletePublishedModelResponseSchema, { ok: result.ok, message: result.message });
   },
 

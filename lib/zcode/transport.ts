@@ -9,6 +9,7 @@
 // 请求体是 Anthropic 原生的，外加 ZCode 的两个字段：thinking 与
 // output_config（思考档位），还有 metadata.user_id。
 
+import { log } from "../log.ts";
 import type { Json } from "../json.ts";
 import crypto from "node:crypto";
 import { configString } from "../config.ts";
@@ -292,7 +293,7 @@ export async function zcodeChat(
   if (response.status === 401) {
     // 401 的正文同样只有这一处能拿到：它不进 message，客户端以外看不到。
     const text = await response.text().catch(() => "");
-    console.warn(`[ZCODE] 上游 401 ${ZCODE_MESSAGES_URL}：${scrubForLog(text, 500)}`);
+    log.warn(`[ZCODE] 上游 401 ${ZCODE_MESSAGES_URL}：${scrubForLog(text, 500)}`);
     throw new AuthError(
       "zcode rejected the session",
       "ZCode 的登录过期了（它的令牌没有刷新通道）。在面板上重新登录。",
@@ -307,7 +308,7 @@ export async function zcodeChat(
     const text = await response.text().catch(() => "");
     // 正文只放在 hint 里，而日志与用量表都只记 message。上游为什么拒，
     // 只能靠这一行（405 那次就是因为没它才查不下去）。
-    console.warn(`[ZCODE] 上游 ${response.status} ${ZCODE_MESSAGES_URL}：${scrubForLog(text, 500)}`);
+    log.warn(`[ZCODE] 上游 ${response.status} ${ZCODE_MESSAGES_URL}：${scrubForLog(text, 500)}`);
     if (gatewayPage) throw new GatewayPageError(response.status, text);
     throw withUpstreamStatus(
       new AuthError(

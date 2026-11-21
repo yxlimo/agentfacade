@@ -8,6 +8,7 @@
 // The switch decides which accounts take part; one that is off is not looked
 // at.
 
+import { log } from "../log.ts";
 import { runBenefits, type BenefitOutcome, type BenefitUpstream } from "../benefits.ts";
 
 export interface BenefitsOptions {
@@ -68,10 +69,10 @@ export class BenefitsRunner {
       this.state.lastOutcome = outcomes;
       for (const outcome of outcomes) {
         const what = outcome.credits ? `+${outcome.credits} credits` : "nothing new";
-        console.log(`  [BENEFITS] ${outcome.upstream}: ${what} — ${outcome.report.join("; ")}`);
+        log.info(`  [BENEFITS] ${outcome.upstream}: ${what} — ${outcome.report.join("; ")}`);
       }
     } catch (e) {
-      console.warn(`  [BENEFITS] failed: ${(e as Error).message}`);
+      log.warn(`  [BENEFITS] failed: ${(e as Error).message}`);
     } finally {
       this.state.running = false;
     }

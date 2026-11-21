@@ -5,6 +5,7 @@
 // answered before it reaches handle() lives here. Every failure leaves in the
 // shape the clients expect, and every request leaves a line in the log.
 
+import { log } from "../log.ts";
 import type { Json } from "../json.ts";
 import Koa from "koa";
 import Router from "@koa/router";
@@ -64,9 +65,9 @@ app.use(async (ctx, next) => {
   const agent = detectAgent(ctx.request.headers).name;
   const line = `${ctx.method} ${ctx.path}${model ? ` model=${model}` : ""} → ${status} ${ms}ms${via ? ` via=${via}` : ""} from=${agent}`;
   // 失败的两级：5xx 是服务自己的问题，4xx 是请求本身的问题。
-  if (status >= 500) console.error(`[REQ] ${line}`);
-  else if (status >= 400) console.warn(`[REQ] ${line}`);
-  else console.log(`[REQ] ${line}`);
+  if (status >= 500) log.error(`[REQ] ${line}`);
+  else if (status >= 400) log.warn(`[REQ] ${line}`);
+  else log.info(`[REQ] ${line}`);
 });
 
 // The body is only parsed once the caller is allowed in: a request with a bad

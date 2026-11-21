@@ -12,6 +12,7 @@
 //     （令牌、邮箱、账号 id 这类不留）。
 //   * 调试开关默认关：它记的是**用户的完整对话**。
 
+import { log } from "../log.ts";
 import fs from "node:fs";
 import path from "node:path";
 import type { Json } from "../json.ts";
@@ -28,7 +29,7 @@ import { dataDir } from "../paths.ts";
  */
 export function logUpstreamBody(status: number, detail: string): void {
   const text = scrubForLog(detail, 500);
-  console.log(`[WORKBUDDY] upstream HTTP ${status}: ${text || "(空正文)"}`);
+  log.info(`[WORKBUDDY] upstream HTTP ${status}: ${text || "(空正文)"}`);
 }
 
 /**
@@ -80,23 +81,23 @@ export function logUpstreamPayload(payload: Json): void {
   try {
     text = JSON.stringify(payload);
   } catch {
-    console.log("[WORKBUDDY] upstream request: (记不下来)");
+    log.info("[WORKBUDDY] upstream request: (记不下来)");
     return;
   }
   const file = debugFileInDataDir();
   if (file) {
     try {
       if (fs.existsSync(file) && fs.statSync(file).size >= DEBUG_FILE_MAX_BYTES) {
-        console.log(`[WORKBUDDY] upstream request: (调试文件已到上限，不写了：${file})`);
+        log.info(`[WORKBUDDY] upstream request: (调试文件已到上限，不写了：${file})`);
         return;
       }
       fs.appendFileSync(file, `${text}\n`);
     } catch {
-      console.log("[WORKBUDDY] upstream request: (写不进调试文件)");
+      log.info("[WORKBUDDY] upstream request: (写不进调试文件)");
     }
     return;
   }
-  console.log(`[WORKBUDDY] upstream request: ${text.slice(0, 4000)}`);
+  log.info(`[WORKBUDDY] upstream request: ${text.slice(0, 4000)}`);
 }
 
 /**
@@ -113,7 +114,7 @@ function debugFileInDataDir(): string | null {
   const raw = (process.env.FACADE_DEBUG_UPSTREAM_FILE ?? "").trim();
   if (!raw) return null;
   if (raw !== path.basename(raw)) {
-    console.log(
+    log.info(
       "[WORKBUDDY] upstream request: (调试文件只认文件名，不认路径 —— 这次只打控制台)",
     );
     return null;

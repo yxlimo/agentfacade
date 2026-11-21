@@ -36,9 +36,9 @@ const logger = winston.createLogger({
   transports: [new winston.transports.Console({ stderrLevels: ["warn", "error"] })],
 });
 
-// console takes several arguments and prints them separated by spaces; winston
-// treats a second argument as metadata, which the plain format would drop. Join
-// here so log.* behaves like the console.* calls it replaces.
+// console joined its arguments with spaces; winston treats a second argument as
+// metadata, which the plain format would drop. Join here so log.* keeps the
+// exact single-message behaviour of the calls it replaces.
 function message(args: unknown[]): string {
   return args.map((arg) => String(arg)).join(" ");
 }

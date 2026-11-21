@@ -10,6 +10,7 @@
 // publishes. The prefixed route (`/qoder-cn/v1/models`) publishes the
 // platform's own models under their real names.
 
+import { log } from "../log.ts";
 import type Koa from "koa";
 import { allPlatforms, OPEN_PLATFORM_KIND_NAME } from "../platforms.ts";
 import { kindOf } from "../provider-kinds.ts";
@@ -58,10 +59,10 @@ export async function refreshWorkBuddyCatalog(force = false): Promise<void> {
       // 库里那份不旧就不必问上游（传输层自己判）。
       const models = await fetchWorkBuddyCatalog(providerId, { force });
       if (models?.length) {
-        console.log(`  [WORKBUDDY] ${region} catalogue: ${models.length} models`);
+        log.info(`  [WORKBUDDY] ${region} catalogue: ${models.length} models`);
       }
     } catch (e) {
-      console.warn(`[WORKBUDDY] ${region} catalogue refresh failed: ${(e as Error).message}`);
+      log.warn(`[WORKBUDDY] ${region} catalogue refresh failed: ${(e as Error).message}`);
     }
   }
 }

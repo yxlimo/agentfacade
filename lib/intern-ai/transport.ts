@@ -12,6 +12,7 @@
 //
 // 额度不在这里：墨点是控制台的接口，见 lib/intern-ai/quota.ts。
 
+import { log } from "../log.ts";
 import { internAiDiscoveryKey } from "./config.ts";
 import { loadSession, storedAccount } from "./auth.ts";
 import {
@@ -92,10 +93,10 @@ export async function refreshInternAiCatalog(force = false, providerId = "intern
     } catch (e) {
       const message = (e as Error)?.message ?? String(e);
       if (!message.includes("401") || attempt === 4) {
-        console.warn(`[INTERN-AI] 模型目录刷新失败：${message}`);
+        log.warn(`[INTERN-AI] 模型目录刷新失败：${message}`);
         return;
       }
-      console.log(`[INTERN-AI] 推理 key 还没生效（${attempt}/4），${KEY_SETTLE_MS / 1000}s 后再问`);
+      log.info(`[INTERN-AI] 推理 key 还没生效（${attempt}/4），${KEY_SETTLE_MS / 1000}s 后再问`);
       await new Promise((r) => setTimeout(r, KEY_SETTLE_MS));
     }
   }

@@ -27,6 +27,7 @@
 // 领取与每日签到是两件事：这里只有领取。定时器那一步也单开（lib/periodic.ts
 // 的 `claim` 步进），不塞进 benefits —— 签到页不该说成签到。
 
+import { log } from "../log.ts";
 import { configNumber } from "../config.ts";
 import { scrubForLog } from "../log-scrub.ts";
 import { ZCODE_BASE, loadSession } from "./auth.ts";
@@ -224,10 +225,10 @@ export function logClaimAttempt(fields: ZcodeClaimLogFields): void {
   const effective = fields.effectiveAt ? String(fields.effectiveAt) : "";
   if (effective) parts.push(`effective=${effective}`);
   const line = parts.join(" ");
-  // console.* 在这里是刻意的：这一行就是本仓库的日志出口（上游正文要能进
-  // 日志，仓库里没有另一套 logger），不是漏掉的调试打印。
-  if (fields.state === "failed") console.warn(line);
-  else console.log(line);
+  // log.* 在这里是刻意的：这一行就是本仓库的日志出口（上游正文要能进
+  // 日志），不是漏掉的调试打印。
+  if (fields.state === "failed") log.warn(line);
+  else log.info(line);
 }
 
 /** 领的那个计划在日志里怎么说：名字 + 截断的 plan_id。 */

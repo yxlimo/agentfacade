@@ -9,6 +9,7 @@
 // 说清是哪种（configPendingRestart）。
 // 服务自己内部的设置（config-cli.ts 改的那些）只有重启这一条路。
 
+import { log } from "../log.ts";
 import {
   configClear,
   configFlag,
@@ -244,7 +245,7 @@ export function configItems(): ConfigItemView[] {
       const n = Number(raw);
       if (Number.isFinite(n) && streamLimitWasCapped(n)) {
         const capped = clampStreamLimit(n);
-        console.warn(`[CONFIG] ${setting.key} 现在是 ${n}，超过上限，已按 ${capped} 生效`);
+        log.warn(`[CONFIG] ${setting.key} 现在是 ${n}，超过上限，已按 ${capped} 生效`);
         shown = String(capped);
       }
     }
@@ -335,7 +336,7 @@ export function setConfigValue(key: string, value: string, clear = false): { ok:
   if (key === "USAGE_RETENTION_DAYS") {
     const days = configNumber("USAGE_RETENTION_DAYS", 30);
     const dropped = pruneUsage(days);
-    if (dropped > 0) console.log(`  [USAGE] 丢掉了 ${dropped} 条超过 ${days} 天的用量记录`);
+    if (dropped > 0) log.info(`  [USAGE] 丢掉了 ${dropped} 条超过 ${days} 天的用量记录`);
   }
   return { ok: true, message: cappedNote ? `已保存 ${key}：${cappedNote}` : `已保存 ${key}` };
 }

@@ -1,5 +1,6 @@
 // lib/router/upstreams/workbuddy.ts — WorkBuddy, the China region.
 
+import { log } from "../../log.ts";
 import type Koa from "koa";
 import { AuthError } from "../../credential.ts";
 import { anthropicToOpenAI } from "../../dialect/request.ts";
@@ -39,7 +40,7 @@ export async function toWorkBuddy(
     ctx.upstreamMaxTokens = openaiBody.max_tokens;
   }
   if (ctx.logRoute) {
-    console.log(`[ROUTE] workbuddy model=${route.model} stream=${stream}`);
+    log.info(`[ROUTE] workbuddy model=${route.model} stream=${stream}`);
   }
 
   // The conversation keeps its id for every turn, so the upstream can see

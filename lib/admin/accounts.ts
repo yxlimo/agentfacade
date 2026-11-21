@@ -6,6 +6,7 @@
 //
 // 敏感的值只写不读：列表里给的是掩码与指纹。
 
+import { log } from "../log.ts";
 import crypto from "node:crypto";
 import { deleteProviderCredentials, deleteProviderRow, listProviders, provider } from "../providers.ts";
 import { clearDeadSession } from "../session.ts";
@@ -299,7 +300,7 @@ export function logoutAccount(accountId: string): { ok: boolean; message: string
   if (!row) return { ok: false, message: `没有这个账号：${id}`, removed: 0 };
   const removed = forgetAccountRecords(id);
   if (!removed) return { ok: true, message: "这个账号没有凭据", removed: 0 };
-  console.log(`[ADMIN] ${id} 注销了，删掉 ${removed} 条凭据`);
+  log.info(`[ADMIN] ${id} 注销了，删掉 ${removed} 条凭据`);
   return { ok: true, message: `已注销，删除 ${removed} 条凭据`, removed };
 }
 
@@ -323,7 +324,7 @@ export function forgetAccountRecords(accountId: string): number {
   try {
     clearCooldown(accountId);
   } catch (e) {
-    console.warn(`[ADMIN] ${accountId} 的冷却删不掉：${(e as Error)?.message}`);
+    log.warn(`[ADMIN] ${accountId} 的冷却删不掉：${(e as Error)?.message}`);
   }
   return removed;
 }
@@ -340,7 +341,7 @@ export function deleteAccount(accountId: string): { ok: boolean; message: string
   if (!row) return { ok: false, message: `没有这个账号：${id}`, removed: 0 };
   const removed = forgetAccountRecords(id);
   deleteProviderRow(id);
-  console.log(`[ADMIN] ${id} 删了，连 ${removed} 条凭据一起`);
+  log.info(`[ADMIN] ${id} 删了，连 ${removed} 条凭据一起`);
   return { ok: true, message: removed > 0 ? `已删除该账号及其 ${removed} 条凭据` : "已删除", removed };
 }
 

@@ -5,6 +5,7 @@
 //
 // 令牌在头里，不在消息里：Authorization: Bearer <token>。/health 不要令牌。
 
+import { log } from "../log.ts";
 import fs from "node:fs";
 import { configString, markHotSetting } from "../config.ts";
 import path from "node:path";
@@ -81,7 +82,7 @@ export const traceUnexpected: Interceptor = (next) => async (req) => {
     const asked = Boolean(metadata && typeof metadata.get === "function" && metadata.get(ADMIN_ERROR_HEADER));
     if (!asked) {
       const stack = scrubForLog(err instanceof Error ? err.stack ?? err.message : String(err), 500);
-      console.error(`[ADMIN] ${methodPath(req)} 出了意外：${stack}`);
+      log.error(`[ADMIN] ${methodPath(req)} 出了意外：${stack}`);
     }
     throw err;
   }

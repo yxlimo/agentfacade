@@ -11,6 +11,7 @@
 // started there is nothing left to fall back to: a failure after that point ends
 // the response instead of trying the next target.
 
+import { log } from "../log.ts";
 import type { Json } from "../json.ts";
 import Koa from "koa";
 import { configFlag, configNumber } from "../config.ts";
@@ -175,7 +176,7 @@ async function handleAggregate(
       // 半开时抢到探测名额的那一个请求照常打上去：没有探测，熔断就永远打不开。
       const breaker = checkBreaker(target.group);
       if (!breaker.allow) {
-        console.log(`[ROUTE] ${target.group}：${breaker.reason}，跳过这个目标，不打上游`);
+        log.info(`[ROUTE] ${target.group}：${breaker.reason}，跳过这个目标，不打上游`);
         throw skipTrippedTarget(entry, target, breaker, ctx, started);
       }
 
@@ -232,14 +233,14 @@ async function handleAggregate(
         const reason = stopped ? error.reason : error;
         // 客户端走了：这个错不参与挑选，也没有下一个目标了。
         if (reason instanceof ClientGoneError) {
-          console.log(`[ROUTE] ${candidate.id}：客户端走了，答复没送出去`);
+          log.info(`[ROUTE] ${candidate.id}：客户端走了，答复没送出去`);
           return;
         }
         // 答复已经开始的那个错不参与挑选：那时已经没有选择了。
         if (!stopped) failures.push({ id: candidate.id, error: reason });
         const at = ordered.findIndex((c) => c.id === candidate.id);
         const next = ordered[at + 1];
-        console.log(
+        log.info(
           `[ROUTE] ${candidate.id} failed (${describeTargetFailure(reason)}), ` +
             (stopped
               ? "the answer had already started"
@@ -735,7 +736,7 @@ function recordRequestUsage(
     const budget = effectiveMaxTokens(uctx, body);
     // 用掉了多少：思考把预算吃满时这里就是 100%。上限不是数字就不知道。
     const used = budgetUsed(completion, budget);
-    console.warn(
+    log.warn(
       `[UPSTREAM] ${route.platform}/${upstreamModel} 答 200 但没有正文` +
         `（completion=${completion} reasoning=${reasoning} 正文=${completion - reasoning}` +
         ` 上游上限=${budget} 用掉=${used} ${emptyAnswerDetail(uctx, client)}）`,

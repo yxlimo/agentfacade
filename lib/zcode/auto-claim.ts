@@ -26,6 +26,7 @@
 //
 // 开关：`FACADE_ZCODE_AUTO_CLAIM`（默认开）。关掉时一个请求都不发。
 
+import { log } from "../log.ts";
 import { configFlag, configNumber, markHotSetting } from "../config.ts";
 import { parseBool, readEnvValue } from "../env.ts";
 import { listProviders, provider, type ProviderRow } from "../providers.ts";
@@ -341,7 +342,7 @@ export async function claimOnce(providerId: string): Promise<ZcodeClaimSnapshot 
   if (touch.invalid > 0) {
     // 坏投放（缺 plan_id 之类）被丢弃了，但要说出来：投放接口改了形状就
     // 在这里露出来，而不是变成「没有可领」。
-    console.warn(
+    log.warn(
       `[ZCODE] 投放里有 ${touch.invalid} 条坏投放被丢弃（没有 plan_id）account=${providerId}`,
     );
   }
@@ -496,7 +497,7 @@ export async function runZcodeAutoClaim(): Promise<void> {
     try {
       await claimOnce(row.id);
     } catch (e) {
-      console.warn(`[ZCODE] 账号 ${row.id} 的领取没跑成：${(e as Error)?.message ?? String(e)}`);
+      log.warn(`[ZCODE] 账号 ${row.id} 的领取没跑成：${(e as Error)?.message ?? String(e)}`);
     }
   }
 }
