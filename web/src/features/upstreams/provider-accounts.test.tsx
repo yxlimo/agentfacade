@@ -185,6 +185,46 @@ describe('平台下的账号', () => {
     expect(within(row).getByText(/冷却到 .*（rate-limit）/)).toBeInTheDocument()
   })
 
+  it('冷却原因是 refused：说成人话', async () => {
+    const user = userEvent.setup({ delay: null })
+    const client = clientWith([
+      account({
+        cooldownUntilMs: 1793160000000n,
+        cooldownReason: 'refused',
+      }),
+    ])
+
+    renderWithClient({ client, children: <UpstreamsPage /> })
+
+    await expand(user)
+
+    const cell = await screen.findByText('主账号')
+    const row = cell.closest('tr') as HTMLElement
+    expect(
+      within(row).getByText(/冷却到 .*（上游拒绝服务）/)
+    ).toBeInTheDocument()
+  })
+
+  it('冷却原因认不出时原样显示，不吞掉', async () => {
+    const user = userEvent.setup({ delay: null })
+    const client = clientWith([
+      account({
+        cooldownUntilMs: 1793160000000n,
+        cooldownReason: 'weird-reason',
+      }),
+    ])
+
+    renderWithClient({ client, children: <UpstreamsPage /> })
+
+    await expand(user)
+
+    const cell = await screen.findByText('主账号')
+    const row = cell.closest('tr') as HTMLElement
+    expect(
+      within(row).getByText(/冷却到 .*（weird-reason）/)
+    ).toBeInTheDocument()
+  })
+
   it('点「登录」按平台与账号行发起一次登录，login_id 记在 hash 里', async () => {
     const user = userEvent.setup({ delay: null })
     const began: { upstreamId: string; accountId: string }[] = []
