@@ -76,7 +76,7 @@ configNumber("QODER_LEGACY_RETRY_MS", 10_000);
 configFlag("QODER_SKIP_QUEUE_WAIT", false);
 
 // balance 策略用的自定义会话头：默认空（不启用）。它是在每条请求开始时读的
-// （lib/router/session-key.ts），所以是热设置 —— 面板改完下一个请求就生效。
+// （lib/session-id.ts），所以是热设置 —— 面板改完下一个请求就生效。
 // 这里显式问一次，理由与上面那几条一样：没问过的设置不在快照里。
 configString("SESSION_HEADER", "");
 markHotSetting("SESSION_HEADER");

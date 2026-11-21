@@ -23,7 +23,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { configOverride, reloadConfig } from "../lib/config.ts";
 import { balanceOrder, select } from "../lib/router/selection.ts";
-import { extractSessionKey, sessionHeaderNames, SESSION_HEADERS } from "../lib/router/session-key.ts";
+import { extractSessionKey, sessionHeaderNames, SESSION_HEADERS } from "../lib/session-id.ts";
 import type { Json } from "../lib/json.ts";
 import { startFakeQoder } from "./fake-qoder-upstream.ts";
 import { startGateway, type Gateway } from "./harness.ts";

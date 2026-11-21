@@ -22,7 +22,7 @@ import { kindOf } from "../provider-kinds.ts";
 import { recordAggregateUsage } from "../aggregate.ts";
 import type { AggregateEntry } from "./catalog.ts";
 import { select, SelectionStop, byWeight, balanceOrder } from "./selection.ts";
-import { extractSessionKey, sessionKeyFingerprint, sessionHeaderNames } from "./session-key.ts";
+import { extractSessionKey, sessionKeyFingerprint, sessionHeaderNames } from "../session-id.ts";
 import { classifyUpstreamError, describeUpstreamError } from "./provider-selection.ts";
 import { recordUsage, maxTotals, usageTotals } from "../usage.ts";
 import { clientForwardHeaders, detectAgent, detectSession, type SessionInfo } from "../agent.ts";

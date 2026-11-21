@@ -1,19 +1,23 @@
-// lib/router/session-key.ts — which session a request belongs to.
+// lib/session-id.ts — which session a request belongs to.
 //
-// The `balance` strategy keeps every session on one upstream target so the
-// upstream's prompt cache keeps hitting. That only works when each request
-// carries something that names its session. The clients spell that differently
-// — Claude Code, pi, OpenAI SDKs each have their own header — so the lookup is
-// a fixed chain: headers first, then the body. A custom header (the
-// SESSION_HEADER setting) is appended at the end of the header part, never a
-// replacement: a built-in header that is present always wins.
+// A leaf module on purpose: it is used from two directions — the router keeps
+// every `balance` session on one upstream target, and the forwarding layer
+// (lib/agent.ts's open-platform path) uses it to fill the session header an
+// upstream demands. Neither of those may be imported here, or the forwarding
+// layer drags the router in. Only lib/config.ts and node:crypto.
+//
+// The clients spell the session differently — Claude Code, pi, OpenAI SDKs
+// each have their own header — so the lookup is a fixed chain: headers first,
+// then the body. A custom header (the SESSION_HEADER setting) is appended at
+// the end of the header part, never a replacement: a built-in header that is
+// present always wins.
 //
 // The full session id belongs to the client; logs only see the source and a
 // short hash, never the id itself.
 
 import { createHash } from "node:crypto";
-import { configString } from "../config.ts";
-import type { Json } from "../json.ts";
+import { configString } from "./config.ts";
+import type { Json } from "./json.ts";
 
 /** A session id found in a request, and where it was found. */
 export interface SessionKey {
@@ -33,10 +37,44 @@ export const SESSION_HEADERS: readonly string[] = [
   "x-client-request-id",
 ];
 
-/** The headers this request was actually searched in — the 400 body lists them. */
-export function sessionHeaderNames(): string[] {
+/**
+ * Pure lookup: the headers, the body, and the custom header names to try
+ * after the built-ins (the parsed SESSION_HEADER setting; empty array means
+ * none). Callers that want the process setting use extractSessionKey below.
+ */
+export function sessionIdFrom(
+  headers: Record<string, unknown>,
+  body: Json,
+  customHeaders: readonly string[] = [],
+): SessionKey | null {
+  for (const name of headerChain(customHeaders)) {
+    const id = clean(headerOf(headers, name));
+    if (id) return { id, source: `header:${name}` };
+  }
+  const cacheKey = clean(body.prompt_cache_key);
+  if (cacheKey) return { id: cacheKey, source: "body:prompt_cache_key" };
+  const fromMetadata = userIdSession(body.metadata);
+  if (fromMetadata) return { id: fromMetadata, source: "body:metadata.user_id" };
+  return null;
+}
+
+/** The wrapper the router uses: the custom headers come from the setting. */
+export function extractSessionKey(headers: Record<string, unknown>, body: Json): SessionKey | null {
+  return sessionIdFrom(headers, body, customHeaderNames());
+}
+
+/** Every header this request is searched in — the 400 body lists them. */
+export function sessionHeaderNames(customHeaders: readonly string[] = customHeaderNames()): string[] {
+  return headerChain(customHeaders);
+}
+
+/**
+ * The header chain: the built-ins first, then the custom ones (appended, not
+ * replacing), a name the request can actually use only once.
+ */
+function headerChain(customHeaders: readonly string[]): string[] {
   const names = [...SESSION_HEADERS];
-  for (const name of customHeaderNames()) {
+  for (const name of customHeaders) {
     if (!names.includes(name)) names.push(name);
   }
   return names;
@@ -79,25 +117,6 @@ function clean(value: unknown): string | null {
   // eslint-disable-next-line no-control-regex
   if (/[\x00-\x1f\x7f]/.test(id)) return null;
   return id;
-}
-
-/**
- * The session this request belongs to, or null when nothing in it names one.
- *
- * Headers first (the chain above, the custom one last), then the body:
- * `prompt_cache_key`, then `metadata.user_id` — which is either a JSON string
- * with a `session_id` inside or the older `..._session_<uuid>` shape.
- */
-export function extractSessionKey(headers: Record<string, unknown>, body: Json): SessionKey | null {
-  for (const name of sessionHeaderNames()) {
-    const id = clean(headerOf(headers, name));
-    if (id) return { id, source: `header:${name}` };
-  }
-  const cacheKey = clean(body.prompt_cache_key);
-  if (cacheKey) return { id: cacheKey, source: "body:prompt_cache_key" };
-  const fromMetadata = userIdSession(body.metadata);
-  if (fromMetadata) return { id: fromMetadata, source: "body:metadata.user_id" };
-  return null;
 }
 
 /** The session id inside metadata.user_id, when it carries one. */
