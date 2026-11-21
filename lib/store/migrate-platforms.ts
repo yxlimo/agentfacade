@@ -11,8 +11,8 @@ import { readEnvValue } from "../env.ts";
 import { SIMULATED_CLIENTS } from "../platform-catalog.ts";
 // 凭据 id 的唯一算法（叶子模块）：厂商 kind 退场要按账号定位推理 key 原来存哪。
 import { providerSecretId } from "../credential-ids.ts";
-// legacySetting 读的设置还在 store.ts 门面里（settings 模块拆出后改从那里 import）。
-import { getConfig } from "../store.ts";
+// legacySetting 读的设置在 settings 模块里：环境先、库里其次、默认最后。
+import { getConfig } from "./settings.ts";
 
 /**
  * 平台表的迁移：补两列。
