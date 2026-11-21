@@ -1,5 +1,6 @@
 import { create } from '@bufbuild/protobuf'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+import { Code, ConnectError } from '@connectrpc/connect'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
@@ -8,6 +9,7 @@ import {
   UpstreamSchema,
 } from '@/gen/agentfacade/admin/v1/admin_pb'
 import type { Upstream } from '@/gen/agentfacade/admin/v1/admin_pb'
+import { setLang } from '@/lib/i18n'
 import { PlatformDialog } from '@/features/open-platforms/platform-dialog'
 import {
   platformKindValue,
@@ -189,12 +191,14 @@ describe('平台弹窗交出去的那一单', () => {
       id: 'my-gateway',
       label: '我的中转站',
       baseUrl: 'https://api.example.com/v1',
+      headers: [],
     })
     // 多一格都不行：类型建完就改不了。
     expect(submitted[0]).not.toHaveProperty('kind')
     // 模型目录不由用户管：这一单里没有目录那几格（逐键对，不靠名字猜）。
     expect(Object.keys(submitted[0] as object).sort()).toEqual([
       'baseUrl',
+      'headers',
       'id',
       'label',
     ])
@@ -228,6 +232,7 @@ describe('平台弹窗交出去的那一单', () => {
         // 清单到手后默认选第一条。
         kind: 'openai',
         baseUrl: 'https://api.example.com/v1',
+        headers: [],
       },
     ])
   })
@@ -461,6 +466,7 @@ describe('改一个模拟客户端', () => {
       id: 'my-gateway',
       label: '新的名字',
       baseUrl: 'https://api.example.com/v1',
+      headers: [],
     })
     expect(screen.queryByLabelText('额度插件')).not.toBeInTheDocument()
   })
@@ -652,6 +658,7 @@ describe('换一条类型：草稿里那几格跟着走', () => {
         id: 'qoder-cn',
         label: '自己搭的',
         baseUrl: 'https://qoder.example.com/v1',
+        headers: [],
         kind: 'openai',
       },
     ])
@@ -838,6 +845,7 @@ describe('正常操作点不出的错：提交前就拦住', () => {
         id: 'my-other',
         label: '另一个中转站',
         baseUrl: 'https://api.example.com/v1',
+        headers: [],
         kind: 'openai',
       },
     ])
@@ -911,6 +919,7 @@ describe('用共性表补模型参数', () => {
       id: 'my-gateway',
       label: '我的中转站',
       baseUrl: 'https://api.example.com/v1',
+      headers: [],
       traitsFromCommon: true,
     })
     expect(submitted[0]).not.toHaveProperty('kind')
@@ -1045,6 +1054,7 @@ describe('新建平台：按类型预填地址', () => {
         label: '我的七牛',
         kind: 'qiniu',
         baseUrl: 'https://api.qnaigc.com/v1',
+        headers: [],
       },
     ])
   })
@@ -1069,5 +1079,170 @@ describe('新建平台：按类型预填地址', () => {
 
     expect(screen.getByLabelText('地址')).toHaveValue('')
     expect(screen.queryByLabelText('额度插件')).not.toBeInTheDocument()
+  })
+})
+
+/** 一段带机器码的失败：机器码在响应头上，面板该翻人话。 */
+function headerError(): ConnectError {
+  return new ConnectError('头名不合法', Code.InvalidArgument, {
+    'buddy-error': 'PLATFORM_HEADERS_NAME_INVALID',
+  })
+}
+
+describe('注入头', () => {
+  afterEach(async () => {
+    await setLang('zh')
+    localStorage.removeItem('agentfacade.lang')
+  })
+
+  /** 带两条注入头的开放平台：编辑弹窗要从这里回填。 */
+  function platformWithHeaders(): Upstream {
+    return create(UpstreamSchema, {
+      id: 'my-gateway',
+      kind: 'openai',
+      label: '我的中转站',
+      baseUrl: 'https://api.example.com/v1',
+      models: [],
+      isOpenPlatform: true,
+      fromRow: true,
+      accounts: [],
+      headers: [
+        { name: 'x-first', value: 'one' },
+        { name: 'x-second', value: '{session-id}' },
+      ],
+    })
+  }
+
+  it('新增平台带两条头：提交的列表顺序与内容都对', async () => {
+    const user = userEvent.setup({ delay: null })
+    const submitted: unknown[] = []
+    render(
+      <PlatformDialog
+        open
+        existing={[]}
+        kinds={kinds}
+        pending={false}
+        onSubmit={(input) => submitted.push(input)}
+        onOpenChange={() => {}}
+      />
+    )
+    await user.type(screen.getByLabelText('平台 id'), 'my-gateway')
+    await user.type(screen.getByLabelText('名字'), '我的中转站')
+    await user.type(screen.getByLabelText('地址'), 'https://api.example.com/v1')
+
+    await user.click(screen.getByRole('button', { name: '加一条' }))
+    await user.type(screen.getByLabelText('头名 1'), 'x-first')
+    await user.type(screen.getByLabelText('头值 1'), 'one')
+    await user.click(screen.getByRole('button', { name: '加一条' }))
+    await user.type(screen.getByLabelText('头名 2'), 'x-second')
+    // 花括号在 user-event 里是按键描述符，用 paste 原样塞进输入框。
+    await user.click(screen.getByLabelText('头值 2'))
+    await user.paste('{session-id}')
+
+    await user.click(screen.getByRole('button', { name: '加上' }))
+
+    expect(submitted).toHaveLength(1)
+    expect(submitted[0]).toHaveProperty('headers', [
+      { name: 'x-first', value: 'one' },
+      { name: 'x-second', value: '{session-id}' },
+    ])
+  })
+
+  it('编辑时把已有的头回填到输入框', async () => {
+    render(
+      <PlatformDialog
+        open
+        platform={platformWithHeaders()}
+        existing={[]}
+        kinds={kinds}
+        pending={false}
+        onSubmit={() => {}}
+        onOpenChange={() => {}}
+      />
+    )
+    expect(screen.getByLabelText('头名 1')).toHaveValue('x-first')
+    expect(screen.getByLabelText('头值 1')).toHaveValue('one')
+    expect(screen.getByLabelText('头名 2')).toHaveValue('x-second')
+    expect(screen.getByLabelText('头值 2')).toHaveValue('{session-id}')
+  })
+
+  it('删光所有行再保存：发空列表（清空），不是不发这一格', async () => {
+    const user = userEvent.setup({ delay: null })
+    const submitted: unknown[] = []
+    render(
+      <PlatformDialog
+        open
+        platform={platformWithHeaders()}
+        existing={[]}
+        kinds={kinds}
+        pending={false}
+        onSubmit={(input) => submitted.push(input)}
+        onOpenChange={() => {}}
+      />
+    )
+    // 两条都删掉：删的是第二条再第一条（每次都按当前下标）。
+    await user.click(screen.getByRole('button', { name: '删掉第 2 条' }))
+    await user.click(screen.getByRole('button', { name: '删掉第 1 条' }))
+    expect(screen.queryByLabelText('头名 1')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '保存' }))
+    expect(submitted).toHaveLength(1)
+    expect(submitted[0]).toHaveProperty('headers', [])
+  })
+
+  it('选中 opencode-go 模板：注入头一起预填，用户改得动', async () => {
+    const user = userEvent.setup({ delay: null })
+    const submitted: unknown[] = []
+    render(
+      <PlatformDialog
+        open
+        existing={[]}
+        kinds={kinds}
+        pending={false}
+        onSubmit={(input) => submitted.push(input)}
+        onOpenChange={() => {}}
+      />
+    )
+    await user.type(screen.getByLabelText('搜模板'), 'opencode-go')
+    await user.click(
+      await screen.findByRole('button', { name: /OpenCode Go/ })
+    )
+    expect(screen.getByLabelText('头名 1')).toHaveValue('x-opencode-session')
+    expect(screen.getByLabelText('头值 1')).toHaveValue('{session-id}')
+
+    // 模板只是起点：改一格再保存，交出去的是改过的值。
+    await user.clear(screen.getByLabelText('头值 1'))
+    await user.click(screen.getByLabelText('头值 1'))
+    await user.paste('literal-value')
+    await user.click(screen.getByRole('button', { name: '加上' }))
+    expect(submitted[0]).toHaveProperty('headers', [
+      { name: 'x-opencode-session', value: 'literal-value' },
+    ])
+  })
+
+  it('服务端拒绝的机器码翻成人话，切英文跟着变', async () => {
+    render(
+      <PlatformDialog
+        open
+        platform={platform}
+        existing={[]}
+        kinds={kinds}
+        pending={false}
+        error={headerError()}
+        onSubmit={() => {}}
+        onOpenChange={() => {}}
+      />
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      '注入头名字含不允许的字符'
+    )
+    expect(screen.getByRole('alert')).not.toHaveTextContent(
+      'PLATFORM_HEADERS_NAME_INVALID'
+    )
+
+    await setLang('en')
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'An injected header name contains unsupported characters'
+    )
   })
 })
