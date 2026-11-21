@@ -57,12 +57,13 @@ function accountStatusLabels(t: TFunction): Record<string, string> {
  *
  * 只登记已经约定好说法的那几个；其余原样返回 —— 认不出的值本身就是后端要
  * 收敛的信号，包一层「未知原因」反而把事实藏起来。
+ * 平台行与模型目标也用这一份映射，别再抄第二份。
  */
 const COOLDOWN_REASON_KEYS: Record<string, DictKey> = {
   refused: 'upstreams.cooldownReasonRefused',
 }
 
-function cooldownReasonLabel(reason: string, t: TFunction): string {
+export function cooldownReasonLabel(reason: string, t: TFunction): string {
   const key = COOLDOWN_REASON_KEYS[reason]
   return key ? t(key) : reason
 }

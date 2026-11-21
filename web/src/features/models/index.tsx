@@ -1,10 +1,13 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { create } from '@bufbuild/protobuf'
 import { Pause, Pencil, Plus, Rocket, Trash2 } from 'lucide-react'
 import {
   PublishedModelSchema,
+  TargetBlocker,
   type PublishedModel,
+  type PublishedTarget,
 } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { PageShell } from '@/components/layout/page-shell'
 import {
@@ -45,10 +48,58 @@ import {
 import { UNPUBLISHED_REASON_LABELS } from '@/features/upstreams/state'
 import { UnpublishedReason } from '@/gen/agentfacade/admin/v1/admin_pb'
 import { ModelDialog } from '@/features/models/model-dialog'
+import { cooldownReasonLabel } from '@/features/upstreams/provider-accounts'
 import { formatCount, formatDate, formatLocalMoment } from '@/lib/format'
 
+
+
 /**
- * 一个目标都没有的时候说一句话。
+ * 模型目标上「为什么接不了」那一句。
+ *
+ * blocker 是枚举，句子在这里按语言渲染；只有冷却/额度这几种才有回复时刻和机器词，
+ * 机器词跟平台行共用同一份映射。
+ */
+function targetBlockerReason(target: PublishedTarget, t: TFunction): string {
+  switch (target.blocker) {
+    case TargetBlocker.UPSTREAM_DISABLED:
+      return t('models.blockerUpstreamDisabled')
+    case TargetBlocker.NO_CREDENTIAL:
+      return t('models.blockerNoCredential')
+    case TargetBlocker.CREDENTIAL_EXPIRED:
+      return t('models.blockerCredentialExpired')
+    case TargetBlocker.CREDENTIAL_REJECTED:
+      return t('models.blockerCredentialRejected')
+    case TargetBlocker.OUT_OF_CREDITS:
+    case TargetBlocker.COOLING: {
+      let reason = t(
+        target.blocker === TargetBlocker.COOLING
+          ? 'models.blockerCooling'
+          : 'models.blockerOutOfCredits'
+      )
+      if (target.recoversAtMs > 0n) {
+        reason += t('models.blockerRecoversAt', {
+          time: formatLocalMoment(target.recoversAtMs),
+        })
+      }
+      if (target.blockerReason) {
+        reason += t('upstreams.cooldownReason', {
+          reason: cooldownReasonLabel(target.blockerReason, t),
+        })
+      }
+      return reason
+    }
+    case TargetBlocker.QUEUED:
+      return t('models.blockerQueued')
+    case TargetBlocker.LOGGING_IN:
+      return t('models.blockerLoggingIn')
+    case TargetBlocker.UNKNOWN:
+      return t('models.blockerUnknown')
+    default:
+      return ''
+  }
+}
+
+/**
  *
  * 「当前指向」那行删了：颜色高亮已经说明路由落在哪个目标上，再写一遍名字
  * 是重复。目标都在但全被 ban 的情况，每个目标自己会写明为什么接不了，
@@ -257,7 +308,9 @@ export function PublishedModelsPage() {
                       <div className='grid gap-1'>
                         <NoTargetLine model={model} />
                         {model.targets.length === 0 ? null : (
-                          model.targets.map((target) => (
+                          model.targets.map((target) => {
+                            const blockerReason = targetBlockerReason(target, t)
+                            return (
                             <div
                               key={`${target.groupName}-${target.upstreamModel}`}
                               className='grid gap-0.5'
@@ -276,14 +329,14 @@ export function PublishedModelsPage() {
                                 >
                                   {target.groupName} → {target.upstreamModel}
                                 </span>
-                                {target.blocked ? (
+                                {target.blocked && blockerReason ? (
                                   // 接不了的目标标红，写明为什么、什么时候能再接。
                                   <span
                                     className='rounded border border-red-500/40 px-1 text-[10px] font-medium text-red-600 dark:text-red-400'
-                                    title={target.blockedReason}
+                                    title={blockerReason}
                                   >
                                     {t('models.targetBlocked', {
-                                      reason: target.blockedReason,
+                                      reason: blockerReason,
                                     })}
                                   </span>
                                 ) : null}
@@ -298,14 +351,18 @@ export function PublishedModelsPage() {
                                     })
                                   : ''}
                                 {!target.enabled ? t('models.targetDisabled') : ''}
-                                {target.blocked && target.recoversAtMs > 0n
+                                {target.blocked &&
+                                target.recoversAtMs > 0n &&
+                                target.blocker !== TargetBlocker.OUT_OF_CREDITS &&
+                                target.blocker !== TargetBlocker.COOLING
                                   ? t('models.recoversAt', {
                                       at: formatLocalMoment(target.recoversAtMs),
                                     })
                                   : ''}
                               </span>
                             </div>
-                          ))
+                            )
+                          })
                         )}
                       </div>
                     </TableCell>
