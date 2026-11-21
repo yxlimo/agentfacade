@@ -5,7 +5,7 @@ inheritSkills: false
 inheritProjectContext: true
 skills: e2e
 skillPath: ../../.agents/skills
-tools: read, grep, find, ls, bash, write, edit
+tools: read, grep, find, ls, bash, write, replace, replace_match, insert, copy, move, undo_last_change
 # 不写 extensions：后台子代理要加载环境扩展（pi-agentfacade 注册的 provider
 # agentfacade 就是从这里来的），写成空数组会把 provider 一起关掉，模型解析不到。
 thinking: medium

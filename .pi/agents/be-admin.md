@@ -3,7 +3,7 @@ name: be-admin
 description: 管理面板后端：provider/upstream 的增删改查、凭据与登录、额度查询、每日签到、给面板的 Connect 接口实现（lib/admin、lib/providers.ts、lib/store.ts）。
 inheritSkills: false
 inheritProjectContext: true
-tools: read, grep, find, ls, bash, write, edit
+tools: read, grep, find, ls, bash, write, replace, replace_match, insert, copy, move, undo_last_change
 # 不写 extensions：后台子代理要加载环境扩展（pi-agentfacade 注册的 provider
 # agentfacade 就是从这里来的），写成空数组会把 provider 一起关掉，模型解析不到。
 thinking: medium

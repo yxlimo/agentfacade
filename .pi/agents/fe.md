@@ -3,7 +3,7 @@ name: fe
 description: 前端编码与前端单测：面板（web/）的实现与测试。新面板功能、面板 bug、面板单测都交给它。
 inheritSkills: false
 inheritProjectContext: true
-tools: read, grep, find, ls, bash, write, edit
+tools: read, grep, find, ls, bash, write, replace, replace_match, insert, copy, move, undo_last_change
 # 扩展在后台子代理里会被环境自动发现，用空数组显式关掉（见 pi-subagents-extend#10）
 # 不写 extensions：后台子代理要加载环境扩展（pi-agentfacade 注册的 provider
 # agentfacade 就是从这里来的），写成空数组会把 provider 一起关掉，模型解析不到。
