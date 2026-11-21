@@ -304,12 +304,13 @@ export function transientRetryPlan(): { delaysMs: readonly number[]; repeatLastM
 }
 
 /**
- * 这些失败值得在**同一个账号**上再试一次。
+ * 「同一个账号上立刻再试一次」只有一份判据：classifyUpstreamError 的
+ * `retryable`（见 lib/router/provider-selection.ts）。不再另列一张表 ——
+ * 两张表总有不一致的一天，而那天的重试决定是说不清的。
  *
- * 用现成的分类，不另判一遍：5xx（server）与连接断掉（connection）说的是
- * 「这一次没成事」，隔几百毫秒多半就好了。
+ * 它说是 true 的只有 5xx（server）与连接断掉（connection）：「这一次没成事」，
+ * 隔几百毫秒多半就好了。其余都是 false，各有各的路：
  *
- * 不在这里的：
  *   - timeout：这一次等得太久了，再等一次只是再久一次。超时直接交回客户端，
  *     让它自己决定要不要重试（见 underPolicy 里不写冷却那一条）。
  *   - unreachable：主机名在 DNS 里查不到 —— 隔 300ms 再问一次还是查不到。
@@ -319,18 +320,15 @@ export function transientRetryPlan(): { delaysMs: readonly number[]; repeatLastM
  *   - rate-limit 走等窗口那条路（等的是分钟级的窗口，不是几十毫秒）；
  *   - refused：上游回的是 HTML 网关错误页，不是它的 API —— 同一个端点再问一次
  *     还是那一页，不是抖动。一次就结束，让记账那一层记冷却、让策略换目标；重试
- *     它只会把客户端挂到总时限（refused 不在 TRANSIENT_KINDS 里）。
+ *     它只会把客户端挂到总时限（refused 的 retryable 是 false）。
  *     quota / no-balance / credential 是账号真的接不了，再试一次也是一样的答复；
  *     request 是请求本身的问题，换谁都一样；unknown 说不清是什么，不猜。
  */
-const TRANSIENT_KINDS = new Set(["server", "connection"]);
-
-/** 这个失败在同一账号上再试一次有没有意义。 */
 function isTransientFailure(error: unknown): boolean {
   // 客户端已经走了：再打一次上游只是白花钱，答复也没人要，而且那次尝试的
   // 失败还会被记成账号的账（见 onAttempt 里 ClientGoneError 那一条）。
   if (error instanceof ClientGoneError) return false;
-  return TRANSIENT_KINDS.has(classifyUpstreamError(error).kind);
+  return classifyUpstreamError(error).retryable;
 }
 
 /** 这个失败是「等太久了」吗。 */
