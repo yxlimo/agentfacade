@@ -20,7 +20,6 @@ import {
   TokenPlanWindowSchema,
   UpstreamQuotaSchema,
   CheckinState,
-  type BenefitStatus,
 } from "../lib/gen/agentfacade/admin/v1/admin_pb.ts";
 import type { BenefitOutcome } from "../lib/benefits.ts";
 import { startGateway as startHarness, type Gateway } from "./harness.ts";
@@ -1017,14 +1016,14 @@ console.log("权益：签到那一行写什么");
     benefits.lastRun.lastOutcome = [outcome as any];
     const res = await adminService.getBenefitStatus!({} as any, {} as any);
     // 签到是账号的事：行按 accountId 找；upstreamId 是它所属的平台。
-    const row = res.benefits.find((b: any) => b.accountId === accountId);
+    const row = (res.benefits ?? []).find((b) => b.accountId === accountId);
     return String(row?.summary ?? "");
   };
 
   // 字段语义钉死：upstream_id 是平台 id，account_id 是账号 id，不能混。
   benefits.lastRun.lastOutcome = [];
   const pinned = await adminService.getBenefitStatus!({} as any, {} as any);
-  const row = pinned.benefits.find((b: any) => b.accountId === accountId);
+  const row = (pinned.benefits ?? []).find((b) => b.accountId === accountId);
   check("upstreamId 是平台 id", row?.upstreamId === "qoder-cn", String(row?.upstreamId));
   check("accountId 是账号 id", row?.accountId === accountId, String(row?.accountId));
   const at = new Date().toISOString();
@@ -1084,7 +1083,7 @@ console.log("权益：签到那一行写什么");
   const stateOf = async (outcome: Record<string, unknown>): Promise<number> => {
     benefits.lastRun.lastOutcome = [outcome as any];
     const res = await adminService.getBenefitStatus!({} as any, {} as any);
-    const row = res.benefits.find((b: any) => b.accountId === accountId);
+    const row = (res.benefits ?? []).find((b) => b.accountId === accountId);
     return Number(row?.checkinState ?? -1);
   };
   check(
@@ -1105,10 +1104,13 @@ console.log("权益：签到那一行写什么");
 
   // The row is what the panel renders. Pin the numeric fields against the
   // outcome so a constant here cannot pass as a valid value
-  const rowOf = async (outcome: BenefitOutcome | null): Promise<BenefitStatus | undefined> => {
+  // 返回类型不写死成 BenefitStatus：答复里的字段类型是 MessageInit，find 出来的
+  // 元素不是 Message。这里只读字段，让 TS 自己推就够了。
+  const rowOf = async (outcome: BenefitOutcome | null) => {
     benefits.lastRun.lastOutcome = outcome ? [outcome] : [];
     const res = await adminService.getBenefitStatus!({} as any, {} as any);
-    return res.benefits.find((b) => b.accountId === accountId);
+    const rows = res.benefits ?? [];
+    return rows.find((b) => b.accountId === accountId);
   };
 
   // A sign-in that paid credits reports the exact upstream number, and the
