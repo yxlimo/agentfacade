@@ -9,5 +9,8 @@
     "types": ["node"],
     "allowImportingTsExtensions": true
   },
-  "include": ["router-proxy.ts", "lib/**/*.ts", "tools/**/*.ts", "helper/**/*.ts"]
+  // test/** 也进类型检查：它不在 include 里的时候，类型错只有 pi-lens 的
+  // inferred 设置看得见，门禁一路绿。代价是测试里那些「故意传半份 fixture」
+  // 的地方必须把边界类型写对，而不是靠 tsc 看不见。
+  "include": ["router-proxy.ts", "lib/**/*.ts", "tools/**/*.ts", "helper/**/*.ts", "test/**/*.ts"]
 }
