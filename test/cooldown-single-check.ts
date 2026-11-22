@@ -415,7 +415,8 @@ section("两个 kind：上游的原话都到得了客户端（只修一家会露
   // 账号：凭据挂在它自己的 id 上，与真网关一个形状。
   insertVendorPlatform("workbuddy", "workbuddy-cn", { baseUrl: "https://workbuddy.test/v1" });
   const workbuddy = addAccount({ platform: "workbuddy-cn", alias: "WorkBuddy" });
-  if (!workbuddy.ok) throw new Error("账号没有建出来");
+  // id 是可选格（addAccount 失败时没有）：成功也要有 id 才能往下走。
+  if (!workbuddy.ok || !workbuddy.id) throw new Error("账号没有建出来");
   const now = Date.now();
   setSecret(providerSecretId(workbuddy.id), "session", {
     accessToken: "tok-wb1",

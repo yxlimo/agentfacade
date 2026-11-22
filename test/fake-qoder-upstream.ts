@@ -33,7 +33,8 @@ export const FAILING_MODELS = new Set(["kmodel", "mmodel"]);
 
 /** 起一个假的上游。 */
 export async function startFakeQoder(port = 0): Promise<FakeQoder> {
-  const seen: { model: string; stream: boolean; messages: unknown[] }[] = [];
+  // 与 FakeQoder.seen 同一个形状：上游也记下客户端发来的头。
+  const seen: FakeQoder["seen"] = [];
 
   const server = http.createServer(async (req, res) => {
     const chunks: Buffer[] = [];

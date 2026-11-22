@@ -270,8 +270,9 @@ section("Panel: underPolicy records it and the platform is COOLING");
   check("cooldown is in the store", row !== undefined, JSON.stringify(row));
   check("cooldown says why", row?.reason === "refused", String(row?.reason));
 
-  const upstreams = await adminService.listUpstreams!();
-  const upstream = upstreams.upstreams.find((u) => u.id === "zcode");
+  // service 方法签名带 request 与 context 两参；列表实现两者都不用。
+  const upstreams = await adminService.listUpstreams!({} as never, {} as never);
+  const upstream = upstreams.upstreams?.find((u) => u.id === "zcode");
   check("panel finds the platform", upstream !== undefined);
   check("platform is COOLING, not READY", upstream?.state === UpstreamState.COOLING, String(upstream?.state));
   check("panel shows the reason", upstream?.cooldownReason === "refused", upstream?.cooldownReason);

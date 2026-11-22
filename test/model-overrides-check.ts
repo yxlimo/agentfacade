@@ -68,6 +68,14 @@ const {
 } = await import("../lib/gen/agentfacade/admin/v1/admin_pb.ts");
 const { adminService } = await import("../lib/admin/service.ts");
 
+// toJson comes back as plain JsonValue: the generated code is built without the
+// json_types option, so MessageJsonType falls back to JsonValue. These are the
+// wire fields the assertions below read.
+const wireOfOverride = (m: unknown): { effortOptions?: unknown } =>
+  toJson(ModelOverrideSchema, m as never) as { effortOptions?: unknown };
+const wireOfModel = (m: unknown): { credits?: number } =>
+  toJson(CatalogModelSchema, m as never) as { credits?: number };
+
 let pass = 0;
 let fail = 0;
 
@@ -499,9 +507,9 @@ check(
 check(
   // proto3 的 JSON 不写空 repeated：这一格在（presence 有了），里面没有档位。
   "线上的答复也是「写了、列表空」",
-  "effortOptions" in toJson(ModelOverrideSchema, writtenEmpty) &&
-    JSON.stringify(toJson(ModelOverrideSchema, writtenEmpty).effortOptions) === "{}",
-  JSON.stringify(toJson(ModelOverrideSchema, writtenEmpty)),
+  "effortOptions" in wireOfOverride(writtenEmpty) &&
+    JSON.stringify(wireOfOverride(writtenEmpty).effortOptions) === "{}",
+  JSON.stringify(wireOfOverride(writtenEmpty)),
 );
 check(
   "发布目录里那个模型不能选档",
@@ -687,8 +695,8 @@ check(
 );
 check(
   "发到线上也没有这一格",
-  unpriced !== undefined && !("credits" in toJson(CatalogModelSchema, unpriced)),
-  unpriced === undefined ? "缺这一条" : JSON.stringify(toJson(CatalogModelSchema, unpriced)),
+  unpriced !== undefined && !("credits" in wireOfModel(unpriced)),
+  unpriced === undefined ? "缺这一条" : JSON.stringify(wireOfModel(unpriced)),
 );
 // 代码表里本来就没人报价的那条，同一条路：
 const noPriceInTable = modelOf(await listModels("workbuddy-cn"), "hunyuan-2.0-instruct");
@@ -701,13 +709,13 @@ check(
 await guard(() => setOverrides("workbuddy-cn", []));
 const priced = modelOf(await listModels("workbuddy-cn"), "deepseek-v4-flash");
 check("有倍率的是 0.17，且这一格在答复里", priced !== undefined && "credits" in priced && priced.credits === 0.17, JSON.stringify(priced));
-check("线上是 0.17", priced !== undefined && toJson(CatalogModelSchema, priced).credits === 0.17, priced === undefined ? "缺这一条" : JSON.stringify(toJson(CatalogModelSchema, priced)));
+check("线上是 0.17", priced !== undefined && wireOfModel(priced).credits === 0.17, priced === undefined ? "缺这一条" : JSON.stringify(wireOfModel(priced)));
 
 // 人工写 0：那是「免费」，与「不知道」是两件事。
 await guard(() => setOverrides("workbuddy-cn", [{ id: "glm-5.2", credits: 0 }]));
 const free = modelOf(await listModels("workbuddy-cn"), "glm-5.2");
 check("人工写 0 就是 0，不是缺格", free !== undefined && "credits" in free && free.credits === 0, JSON.stringify(free));
-check("线上也是 0（0 不会被当成缺值丢掉）", free !== undefined && toJson(CatalogModelSchema, free).credits === 0, free === undefined ? "缺这一条" : JSON.stringify(toJson(CatalogModelSchema, free)));
+check("线上也是 0（0 不会被当成缺值丢掉）", free !== undefined && wireOfModel(free).credits === 0, free === undefined ? "缺这一条" : JSON.stringify(wireOfModel(free)));
 await guard(() => setOverrides("workbuddy-cn", []));
 
 /* ------------------------------------------------------------------ *
@@ -719,7 +727,7 @@ section("人工条目里没有「默认档」这一格");
 await guard(() => setOverrides("workbuddy-cn", [{ id: "glm-5.2", credits: 0, effortOptions: { levels: ["low"] } }]));
 const storedBack = (await listOverrides("workbuddy-cn")).overrides[0];
 check("读回来的条目没有 defaultEffort 这一格", storedBack !== undefined && !("defaultEffort" in storedBack), JSON.stringify(storedBack));
-check("发到线上也没有这一格", storedBack !== undefined && !("defaultEffort" in toJson(ModelOverrideSchema, storedBack)), storedBack === undefined ? "缺这一条" : JSON.stringify(toJson(ModelOverrideSchema, storedBack)));
+check("发到线上也没有这一格", storedBack !== undefined && !("defaultEffort" in wireOfOverride(storedBack)), storedBack === undefined ? "缺这一条" : JSON.stringify(wireOfOverride(storedBack)));
 
 // 库里那一行 JSON：一个只带 id 的条目不该多出任何格。
 const rawRow = store()

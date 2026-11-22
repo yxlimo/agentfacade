@@ -36,7 +36,9 @@ interface RunResult {
 }
 
 function run(script: string, env: Record<string, string> = {}): RunResult {
-  const childEnv = { ...process.env, FACADE_DATA_DIR: dataDir };
+  // process.env 的键是 string | undefined，这里只要 string：显式收窄，
+  // 让 delete 两行有自己的类型。
+  const childEnv: Record<string, string | undefined> = { ...process.env, FACADE_DATA_DIR: dataDir };
   delete childEnv.FACADE_LOG_LEVEL;
   delete childEnv.FACADE_LOG_FORMAT;
   Object.assign(childEnv, env);

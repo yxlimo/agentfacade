@@ -39,12 +39,15 @@ function check(name: string, ok: boolean, detail = ""): void {
   }
 }
 
+import type { Json } from "../lib/json.ts";
 /** 把一组帧喂给转换器，返回它吐出来的每一帧。 */
 async function frames(chunks: unknown[]): Promise<string[]> {
   const out: string[] = [];
   for await (const frame of openaiStreamToAnthropic(
     (async function* () {
-      for (const chunk of chunks) yield chunk;
+      // 转换器的注解是 AsyncIterable<Json>，但它必须容忍上游发来的 null 帧
+      // （这正是本文件在钉的行为），所以在边界上收 unknown、喂之前断言一次。
+      for (const chunk of chunks) yield chunk as Json;
     })(),
     "test-model",
   )) {

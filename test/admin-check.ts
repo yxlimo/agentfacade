@@ -206,11 +206,10 @@ const created: Record<string, string> = {};
 // 厂商那几行不再由代码补（平台行是用户在面板上自己建的）：这一节要用的行，
 // 测试自己造一行。
 const { insertVendorPlatform } = await import("./vendor-platform.ts");
-const { qiniuQuotaPlugin } = await import("../lib/qiniu/quota-plugin.ts");
 insertVendorPlatform("tokenrhythm");
-// 迁移后七牛云那行的 kind 是 openai：凭据 = 推理 key + 所选额度插件要的那几段。
-// 这一节要写两段（key 与门户 cookie），所以行上指名七牛的额度插件。
-insertVendorPlatform("qiniu", "qiniu", { quotaPlugin: qiniuQuotaPlugin.id });
+// 迁移后七牛云那行的 kind 是 openai，额度插件按行上地址认（quotaPluginForBaseUrl），
+// 行上没有「指名插件」这一格：造行只要把地址写成七牛的规范地址就够了。
+insertVendorPlatform("qiniu", "qiniu");
 
 for (const platform of ["qoder-cn", "qoder", "tokenrhythm", "qiniu"]) {
   const res = await call("AddAccount", { platform, alias: `${platform} 主账号` }, token);

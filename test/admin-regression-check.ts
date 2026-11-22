@@ -354,7 +354,8 @@ if (rows.length) {
   // 游标：一页一页往前翻，不重不漏。
   const pageSize = 1;
   const seen: string[] = [];
-  let cursor = 0;
+  // 游标从上游回来是 bigint（id 可能超出 number），只以字符串回传 beforeId。
+  let cursor: number | bigint = 0;
   for (let i = 0; i < rows.length + 2; i++) {
     const page = await call("ListUsageEvents", { limit: pageSize, ...(cursor ? { beforeId: String(cursor) } : {}) });
     const batch: any[] = Array.isArray(page.body?.events) ? page.body.events : [];

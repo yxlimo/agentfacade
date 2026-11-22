@@ -176,6 +176,8 @@ savePublishedModel({
   displayName: "parity-qiniu",
   enabled: true,
   strategy: "single",
+  // PublishedModelInput 要求这一格（面板不发就是不选档），这里不发任何档。
+  effortOptions: [],
   targets: [
     { groupName: "qiniu", upstreamModel: "deepseek/deepseek-v4.1-flash-1017", weight: 10, enabled: true },
   ],
@@ -254,7 +256,9 @@ setSecret(`session:provider:${expiredId}`, "session", {
 
 const expiredJudged = platformAvailability("qoder");
 check("会话过期 → credential_expired", expiredJudged.state === "credential_expired", expiredJudged.state);
-check("会话过期 → 状态里分得出过期与没有凭据", expiredJudged.state === "credential_expired" && expiredJudged.state !== "no_credential", expiredJudged.state);
+// 上一条已钉住 state === "credential_expired"，再比对 "no_credential" 是永真的
+// 冗余（TS2367），判定本身已经分得出这两种状态，断言强度不变。
+check("会话过期 → 状态里分得出过期与没有凭据", expiredJudged.state === "credential_expired", expiredJudged.state);
 check(
   "会话过期 → 没有恢复时刻（等刷新不是定时器能算的事）",
   expiredJudged.untilMs === null,
@@ -390,7 +394,8 @@ check(
   String(broken.usable.length),
 );
 check("读不出来的账号仍算名下有账号", broken.serving.length > 0, String(broken.serving.length));
-check("状态里分得出「凭据读不出来」与「没有凭据」", broken.state === "credential_unknown" && broken.state !== "no_credential", broken.state);
+// 同上：state === "credential_unknown" 已钉住，!== "no_credential" 是永真的冗余。
+check("状态里分得出「凭据读不出来」与「没有凭据」", broken.state === "credential_unknown", broken.state);
 check(
   "没有恢复时刻（读不出来不是定时器能算的事）",
   broken.untilMs === null,

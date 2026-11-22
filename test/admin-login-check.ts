@@ -9,6 +9,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import http from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { startGateway as startHarness } from "./harness.ts";
 import { fileURLToPath } from "node:url";
@@ -166,7 +167,7 @@ const mock = http.createServer(async (req, res) => {
 });
 
 await new Promise<void>((resolve) => mock.listen(0, "127.0.0.1", () => resolve()));
-const mockPort = (mock.address() as net.AddressInfo).port;
+const mockPort = (mock.address() as AddressInfo).port;
 const mockBase = `http://127.0.0.1:${mockPort}`;
 
 /* ------------------------------------------------------------------ *
@@ -597,10 +598,7 @@ console.log("登录不再替用户建 key");
 
 console.log("");
 console.log(`pass=${pass} fail=${fail}`);
-try {
-  router.kill("SIGTERM");
-} catch {
-  /* 已经走了 */
-}
+// 网关是 helper 起的子进程，也由 helper 收：SIGTERM → 500ms → SIGKILL，幂等。
+gw.stop();
 mock.close();
 process.exit(fail ? 1 : 0);

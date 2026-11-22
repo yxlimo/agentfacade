@@ -17,6 +17,18 @@ process.env.FACADE_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "buddy-empty
 const { isAllThinking, effectiveMaxTokens, budgetUsed, emptyAnswerDetail } = await import("../lib/router/handle.ts");
 const { deliverOpenAIStream } = await import("../lib/router/deliver.ts");
 
+import type { UpstreamContext } from "../lib/router/upstreams/policy.ts";
+// emptyAnswerDetail 只读 lastFinish：UpstreamContext 的其余格在这里填占位，
+// 每条用例只换 lastFinish。
+const uctxWith = (lastFinish?: UpstreamContext["lastFinish"]): UpstreamContext => ({
+  legacyRetryMs: 0,
+  tokenRhythmMaxAttempts: 1,
+  logRoute: false,
+  forwardedHeaders: {},
+  workbuddyMaxOutput: () => 0,
+  workbuddyModel: () => null,
+  lastFinish,
+});
 let pass = 0;
 let fail = 0;
 function check(name: string, ok: unknown, detail = ""): void {
@@ -123,7 +135,10 @@ const reasoningStop = await finishOf([
   { choices: [{ delta: { reasoning_content: "x" }, finish_reason: null }] },
   { choices: [{ delta: {}, finish_reason: "stop" }] },
 ]);
-const stopDetail = emptyAnswerDetail({ lastFinish: { reason: reasoningStop.reason!, content: reasoningStop.content!, thinking: reasoningStop.thinking!, tool: reasoningStop.tool! } }, "pi");
+const stopDetail = emptyAnswerDetail(
+  uctxWith({ reason: reasoningStop.reason!, content: reasoningStop.content!, thinking: reasoningStop.thinking!, tool: reasoningStop.tool! }),
+  "pi",
+);
 check("stop 的结束原因写进日志", stopDetail.includes("结束原因=stop"), stopDetail);
 check("正文0/思考1/工具0 写进日志", stopDetail.includes("片段=正文0/思考1/工具0"), stopDetail);
 console.log(`  log  [UPSTREAM] fake-model 答 200 但没有正文（${stopDetail}）`);
@@ -132,14 +147,17 @@ const lengthFinish = await finishOf([
   { choices: [{ delta: { reasoning_content: "x" }, finish_reason: null }] },
   { choices: [{ delta: { reasoning_content: "y" }, finish_reason: "length" }] },
 ]);
-const lengthDetail = emptyAnswerDetail({ lastFinish: { reason: lengthFinish.reason!, content: lengthFinish.content!, thinking: lengthFinish.thinking!, tool: lengthFinish.tool! } }, "pi");
+const lengthDetail = emptyAnswerDetail(
+  uctxWith({ reason: lengthFinish.reason!, content: lengthFinish.content!, thinking: lengthFinish.thinking!, tool: lengthFinish.tool! }),
+  "pi",
+);
 check("length 单独可辨", lengthDetail.includes("结束原因=length"), lengthDetail);
 check("length 的思考片段数是 2", lengthDetail.includes("片段=正文0/思考2/工具0"), lengthDetail);
 
 // 没给 usage：isAllThinking 仍然不判，日志字段也只是「未给」，不拿 0 冒充事实。
 const noUsage = { completionTokens: 0, reasoningTokens: 0 };
 check("没给 usage：不判", !isAllThinking(noUsage));
-const noFinishDetail = emptyAnswerDetail({}, "pi");
+const noFinishDetail = emptyAnswerDetail(uctxWith(), "pi");
 check("没给结束原因：未给", noFinishDetail.includes("结束原因=未给"), noFinishDetail);
 check("没给片段：未给", noFinishDetail.includes("片段=未给"), noFinishDetail);
 
