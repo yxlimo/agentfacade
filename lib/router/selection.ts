@@ -23,7 +23,7 @@ export interface SelectionCandidate<T> {
   id: string;
   /**
    * The weight: the bigger one is tried first — under `balance` it is a
-   * share instead (the bigger one gets more sessions, see balanceOrder).
+   * share instead (the bigger one gets more sessions, see sessionTargetOrder).
    */
   weight: number;
   /** Try this candidate once. */
@@ -137,8 +137,10 @@ export async function select<T>(options: SelectionOptions<T>): Promise<T> {
  * processes and restarts; nothing is stored anywhere.
  *
  * Targets with a weight of 0 or less take no share and are not in the order.
+ * Unrelated to `lib/router/balance-order.ts`, which pins accounts by credit
+ * expiry for the `expiry_first` strategy — different mechanism, same word.
  */
-export function balanceOrder<T>(
+export function sessionTargetOrder<T>(
   candidates: SelectionCandidate<T>[],
   sessionKey: string,
 ): SelectionCandidate<T>[] {

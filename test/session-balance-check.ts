@@ -22,7 +22,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { configOverride, reloadConfig } from "../lib/config.ts";
-import { balanceOrder, select } from "../lib/router/selection.ts";
+import { sessionTargetOrder, select } from "../lib/router/selection.ts";
 import { extractSessionKey, sessionHeaderNames, SESSION_HEADERS } from "../lib/session-id.ts";
 import type { Json } from "../lib/json.ts";
 import { startFakeQoder } from "./fake-qoder-upstream.ts";
@@ -198,12 +198,12 @@ const targets = (weights: number[]) =>
   const winners = new Set<string>();
   for (let round = 0; round < 50; round++) {
     const candidates = targets([5, 3, 2]).reverse();
-    const order = balanceOrder(candidates, "session-stable-1");
+    const order = sessionTargetOrder(candidates, "session-stable-1");
     winners.add(order[0].id);
   }
   check("同一会话 50 次（含乱序输入）都落同一个目标", winners.size === 1, [...winners].join(","));
   // 换一个会话名，允许换目标（粘性不等于全员同一个目标）
-  const other = balanceOrder(targets([5, 3, 2]), "session-stable-2")[0].id;
+  const other = sessionTargetOrder(targets([5, 3, 2]), "session-stable-2")[0].id;
   check("不同会话可以落在不同目标", winners.size === 1 && typeof other === "string", other);
 }
 
@@ -212,10 +212,10 @@ const targets = (weights: number[]) =>
   const probe = path.join(os.tmpdir(), "session-balance-probe.mjs");
   fs.writeFileSync(
     probe,
-    `import { balanceOrder } from "${pathToFileUrl(path.join(ROOT, "lib/router/selection.ts"))}";
+    `import { sessionTargetOrder } from "${pathToFileUrl(path.join(ROOT, "lib/router/selection.ts"))}";
 const candidates = [{ id: "upstream-0", weight: 5 }, { id: "upstream-1", weight: 3 }, { id: "upstream-2", weight: 2 }];
 const out = ["session-stable-1", "session-stable-2"].map(
-  (s) => balanceOrder(candidates, s)[0].id,
+  (s) => sessionTargetOrder(candidates, s)[0].id,
 );
 console.log(JSON.stringify(out));
 `,
@@ -224,11 +224,11 @@ console.log(JSON.stringify(out));
   fs.rmSync(probe, { force: true });
   const subWinners = JSON.parse(out.trim()) as string[];
   const here = ["session-stable-1", "session-stable-2"].map(
-    (s) => balanceOrder(targets([5, 3, 2]), s)[0].id,
+    (s) => sessionTargetOrder(targets([5, 3, 2]), s)[0].id,
   );
   const inSub = ["session-stable-1", "session-stable-2"].map(
     (s) =>
-      balanceOrder(
+      sessionTargetOrder(
         [{ id: "upstream-0", weight: 5 }, { id: "upstream-1", weight: 3 }, { id: "upstream-2", weight: 2 }],
         s,
       )[0].id,
@@ -250,7 +250,7 @@ section("HRW：比例（权重 7:3）");
   for (let i = 0; i < total; i++) {
     // 确定性会话名：不用真随机，免得份额抖动
     const id = `sess-${i}-fixed`;
-    if (balanceOrder(two, id)[0].id === "upstream-0") a++;
+    if (sessionTargetOrder(two, id)[0].id === "upstream-0") a++;
   }
   const shareA = (a / total) * 100;
   check(`权重 7:3 的份额在 70±3 / 30±3 内（实测 ${shareA.toFixed(2)}%）`, shareA >= 67 && shareA <= 73, `${shareA}%`);
@@ -259,7 +259,7 @@ section("HRW：比例（权重 7:3）");
 section("HRW：weight<=0 不参与");
 
 {
-  const order = balanceOrder([...targets([5, 3]), { id: "upstream-dead", weight: 0, run: async () => "dead" }], "s1");
+  const order = sessionTargetOrder([...targets([5, 3]), { id: "upstream-dead", weight: 0, run: async () => "dead" }], "s1");
   check("weight 0 的目标不在顺序里", !order.some((c) => c.id === "upstream-dead"), order.map((c) => c.id).join(","));
   check("其余目标仍有完整顺序", order.length === 2, order.map((c) => c.id).join(","));
 }
@@ -273,7 +273,7 @@ section("HRW：降级确定性（select 级）");
   for (let i = 0; i < 20; i++) {
     const tried: string[] = [];
     // handler 每条请求都重算一遍顺序：这里同样每轮重算，粘性才有得测
-    const ordered = balanceOrder(targets([5, 3, 2]), "session-stable-1");
+    const ordered = sessionTargetOrder(targets([5, 3, 2]), "session-stable-1");
     const candidates = ordered.map((c, index) =>
       index === 0
         ? { ...c, run: async () => { tried.push(c.id); throw boom; } }

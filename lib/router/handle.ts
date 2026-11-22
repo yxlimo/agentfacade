@@ -21,7 +21,7 @@ import { upstreamStatusOf } from "../upstream-status.ts";
 import { kindOf } from "../provider-kinds.ts";
 import { recordAggregateUsage } from "../aggregate.ts";
 import type { AggregateEntry } from "./catalog.ts";
-import { select, SelectionStop, byWeight, balanceOrder } from "./selection.ts";
+import { select, SelectionStop, byWeight, sessionTargetOrder } from "./selection.ts";
 import { extractSessionKey, sessionKeyFingerprint, sessionHeaderNames } from "../session-id.ts";
 import { classifyUpstreamError, describeUpstreamError } from "./provider-selection.ts";
 import { recordUsage, maxTotals, usageTotals } from "../usage.ts";
@@ -232,7 +232,7 @@ async function handleAggregate(
       return;
     }
     log.info(`[ROUTE] ${entry.id}：按会话负载均衡，${sessionKeyFingerprint(key)}`);
-    ordered = balanceOrder(candidates, key.id);
+    ordered = sessionTargetOrder(candidates, key.id);
   } else {
     ordered = byWeight(candidates);
   }
