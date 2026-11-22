@@ -16,7 +16,13 @@ import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fromJsonString, toJsonString } from "@bufbuild/protobuf";
-import { TokenPlanWindowSchema, UpstreamQuotaSchema, CheckinState } from "../lib/gen/agentfacade/admin/v1/admin_pb.ts";
+import {
+  TokenPlanWindowSchema,
+  UpstreamQuotaSchema,
+  CheckinState,
+  type BenefitStatus,
+} from "../lib/gen/agentfacade/admin/v1/admin_pb.ts";
+import type { BenefitOutcome } from "../lib/benefits.ts";
 import { startGateway as startHarness, type Gateway } from "./harness.ts";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -1095,6 +1101,40 @@ console.log("权益：签到那一行写什么");
     "没签映射成 NOT_SIGNED",
     (await stateOf({ upstream: accountId, ok: true, credits: 0, report: [], at })) ===
       CheckinState.NOT_SIGNED,
+  );
+
+  // The row is what the panel renders. Pin the numeric fields against the
+  // outcome so a constant here cannot pass as a valid value
+  const rowOf = async (outcome: BenefitOutcome | null): Promise<BenefitStatus | undefined> => {
+    benefits.lastRun.lastOutcome = outcome ? [outcome] : [];
+    const res = await adminService.getBenefitStatus!();
+    return res.benefits.find((b) => b.accountId === accountId);
+  };
+
+  // A sign-in that paid credits reports the exact upstream number, and the
+  // summary quotes that same number -- a hardcoded constant breaks both
+  const paid = await rowOf({ upstream: accountId, ok: true, credits: 100, signedIn: true, report: [], at });
+  check("签到带积分时 credits 是上游报的那个数", paid?.credits === 100, String(paid?.credits));
+  const quoted = /\+(\d+)/.exec(paid?.summary ?? "")?.[1];
+  check(
+    "summary 里的数字与 credits 一致",
+    quoted !== undefined && Number(quoted) === paid?.credits,
+    `${paid?.summary} / credits=${paid?.credits}`,
+  );
+
+  // A sign-in that paid nothing is still a sign-in; "+0" would invent a payout
+  const unpaid = await rowOf({ upstream: accountId, ok: true, credits: 0, signedIn: true, report: [], at });
+  check("签到零积分时 credits 是 0", unpaid?.credits === 0, String(unpaid?.credits));
+  check("零积分的 summary 不带「+0」", !/\+0/.test(unpaid?.summary ?? ""), unpaid?.summary ?? "");
+
+  // Never asked is unknown, not "not signed in": credits stay at the zero
+  // sentinel and the state says UNKNOWN
+  const never = await rowOf(null);
+  check("没问过时 credits 是 0", never?.credits === 0, String(never?.credits));
+  check(
+    "没问过时 checkinState 是 UNKNOWN",
+    never?.checkinState === CheckinState.UNKNOWN,
+    String(never?.checkinState),
   );
 }
 
