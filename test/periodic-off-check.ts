@@ -36,7 +36,20 @@ const { registerKind } = await import("../lib/provider-kinds.ts");
 const { runPeriodicOnce, startPeriodic } = await import("../lib/periodic.ts");
 
 let refreshed: string[] = [];
-let scanned: string[] = [];
+// 扫余额走的是额度插件（kind 上没有 scan 这一格了）：登记一个对准 stub 种类
+// 那个假地址的插件，probe 被叫到就记一笔 —— 断言「没扫」才有判据。
+const probed: string[] = [];
+const { registerQuotaPlugin } = await import("../lib/quota-plugin-registry.ts");
+registerQuotaPlugin({
+  id: "periodic-off-probe",
+  label: "探测计数",
+  baseUrls: ["http://127.0.0.1"],
+  fields: [],
+  probe: async (account) => {
+    probed.push(account.id);
+    return { state: "unknown", views: [], recoverAt: null, message: "" };
+  },
+});
 
 /** 一个种类，只记下「刷新过」「扫过」。 */
 function stubKind(kind: string): void {
@@ -44,6 +57,8 @@ function stubKind(kind: string): void {
     kind,
     label: `测试种类 ${kind}`,
     login: "device",
+    // 定时器不动凭据，「能不能推理」不在这些断言里；按会话种类登记。
+    inferWith: "session",
     baseUrl: () => "http://127.0.0.1",
     credential: () => ({
       kind: "session",
@@ -63,9 +78,7 @@ function stubKind(kind: string): void {
     refresh: async (provider) => {
       refreshed.push(provider.id);
     },
-    scan: async (provider) => {
-      scanned.push(provider.id);
-    },
+    // 不给 scan：kind 上没有这一格了，扫余额是额度插件的事（上面登记的 probe）。
   });
 }
 
@@ -78,7 +91,7 @@ console.log("定时器关了：不换令牌，也不扫余额");
 
 await runPeriodicOnce();
 check("没有换令牌", refreshed.length === 0, JSON.stringify(refreshed));
-check("没有扫余额", scanned.length === 0, JSON.stringify(scanned));
+check("没有扫余额", probed.length === 0, JSON.stringify(probed));
 
 console.log("");
 console.log("startPeriodic 也不起定时器");

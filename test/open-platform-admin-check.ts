@@ -74,6 +74,9 @@ const {
   UnpublishedReason,
   UpstreamState,
 } = await import("../lib/gen/agentfacade/admin/v1/admin_pb.ts");
+// 面板的答复形状：给 listQuotaPlugins 的返回值一个真类型，回调用不着再猜。
+type ListQuotaPluginsResponse =
+  import("../lib/gen/agentfacade/admin/v1/admin_pb.ts").ListQuotaPluginsResponse;
 
 let pass = 0;
 let fail = 0;
@@ -193,7 +196,7 @@ async function refreshPlatformModels(request: Record<string, unknown>): Promise<
   return svc.refreshPlatformModels(request, {});
 }
 
-async function listQuotaPlugins(): Promise<any> {
+async function listQuotaPlugins(): Promise<ListQuotaPluginsResponse> {
   return svc.listQuotaPlugins({});
 }
 
@@ -447,17 +450,16 @@ check(
   show([openPlatformOf("acme")?.label, openPlatformOf("acme")?.baseUrl]),
 );
 
-// AddPlatform 不再收 quota_plugin（契约里那一格已经 reserved）：多给的格被忽略，
-// 平台照样建。
+// AddPlatform 没有「行上指名插件」这一格：插件只按行上的地址认。陌生地址建出来
+// 的行就是没有额度插件 —— 这正是这条要钉住的行为。
 const pluginEmpty = await guard(() => addPlatform({
   id: "acme-plugin-empty",
-  label: "多给了一格的加平台",
+  label: "陌生地址的加平台",
   baseUrl: "https://api.acme.test/v1",
   kind: "openai",
-  quotaPlugin: "",
-} as never));
-check("加平台：多给的插件格被忽略，平台照样建", pluginEmpty !== null, errDetail());
-check("那一行上没有插件格", openPlatformOf("acme-plugin-empty") !== null);
+}));
+check("加平台：不带插件格，平台照样建", pluginEmpty !== null, errDetail());
+check("那一行上认不出额度插件", openPlatformOf("acme-plugin-empty") !== null && quotaPluginForBaseUrl(openPlatformOf("acme-plugin-empty")!.baseUrl) === null);
 
 // 这个平台只是为了上面那几行断言：删掉，免得影响后面按行数比的那几节。
 for (const id of ["acme-plugin-empty"]) {

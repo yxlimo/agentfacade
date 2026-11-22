@@ -21,6 +21,7 @@ const {
   quotaPluginOf,
   registerQuotaPlugin,
 } = await import("../lib/quota-plugins.ts");
+import type { QuotaPlugin } from "../lib/quota-plugin-registry.ts";
 // 种类与插件都是导入时登记的：导入它，它们才都在。
 await import("../lib/kinds/index.ts");
 const { kindOf } = await import("../lib/provider-kinds.ts");
@@ -79,7 +80,8 @@ check(
   allQuotaPlugins().map((p) => p.id).join(","),
 );
 
-const dummy = {
+// 声明成插件本尊：字面量不标注的话 state 会被放宽成 string。
+const dummy: QuotaPlugin = {
   id: "dummy-plugin",
   label: "假的",
   baseUrls: [],

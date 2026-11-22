@@ -30,14 +30,12 @@ process.env.FACADE_DATA_DIR = DATA_DIR;
 const { applyProbeEffect, outOfCreditsOf, probeOf, quotaConclusionOf, quotaProbe, quotaViewsOf, recoverAtOf } =
   await import("../lib/quota-state.ts");
 const { cooldownUntil, setCooldown } = await import("../lib/cooldown.ts");
-// 平台行那一格指名插件：恢复时刻要和路由那边一样从同一格取（kind.recoverAt
-// 就是按它找插件的），不填两边都读不到插件给的时刻。
-const { updateOpenPlatform } = await import("../lib/open-platforms.ts");
+// 插件按行上的地址认（这里造的是七牛云的规范地址）：恢复时刻要和路由那边一样
+// 从同一处取（kind.recoverAt 就是按它找插件的），认不出插件两边都读不到时刻。
 // 厂商那几行不再由代码补（平台行是用户在面板上自己建的）：这一节要用的行，
 // 测试自己造一行。
 const { insertVendorPlatform } = await import("./vendor-platform.ts");
 insertVendorPlatform("qiniu");
-updateOpenPlatform("qiniu", { quotaPlugin: "qiniu" });
 
 let pass = 0;
 let fail = 0;

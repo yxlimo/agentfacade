@@ -229,7 +229,12 @@ console.log(JSON.stringify(out));
   const inSub = ["session-stable-1", "session-stable-2"].map(
     (s) =>
       sessionTargetOrder(
-        [{ id: "upstream-0", weight: 5 }, { id: "upstream-1", weight: 3 }, { id: "upstream-2", weight: 2 }],
+        // 排序只读 id 与 weight；run 是接口必填的，这里补一个不会被调的实现。
+        [
+          { id: "upstream-0", weight: 5, run: async () => "" },
+          { id: "upstream-1", weight: 3, run: async () => "" },
+          { id: "upstream-2", weight: 2, run: async () => "" },
+        ],
         s,
       )[0].id,
   );

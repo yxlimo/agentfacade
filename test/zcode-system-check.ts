@@ -15,6 +15,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Json } from "../lib/json.ts";
+// Type-only, so it stays erased and the config-reads-at-import rule above holds.
+import type { ZcodeSession } from "../lib/zcode/auth.ts";
 
 // The ZCode session layer reads config while the module is evaluated, so the
 // import happens after the data directory is set (same reason as
@@ -33,7 +35,9 @@ const check = (name: string, ok: boolean, detail = "") => {
   if (!ok) process.exitCode = 1;
 };
 
-const session: Json = {
+// Declared as ZcodeSession at the source: zcodeBody takes a session object,
+// not a loose JSON bag.
+const session: ZcodeSession = {
   token: "jwt_test",
   provider: "zai",
   deviceId: "11111111-2222-3333-4444-555555555555",

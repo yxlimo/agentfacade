@@ -23,6 +23,7 @@ const { QINIU_ACCOUNT_FIELD, qiniuAccountId, qiniuPortalCookie } = await import(
 const { openPlatformKeyOf } = await import("../lib/open-platform-credentials.ts");
 const { setSecret } = await import("../lib/store.ts");
 const { kindOf, policiesOfKind } = await import("../lib/provider-kinds.ts");
+import type { HealthSnapshot } from "../lib/provider-kinds.ts";
 // 种类登记在注册表里：导入它，种类才都在。
 await import("../lib/kinds/index.ts");
 const { platformOfAny } = await import("../lib/platforms.ts");
@@ -399,11 +400,10 @@ check(
 );
 
 // ⑤ 没有任何额度数据：不知道不等于见底。
-check(
-  "空快照 → 不算用尽",
-  kind?.outOfCredits(accountRow, { plugins: {} }) === false,
-);
-check("空快照 → 没有额度视图", (kind?.quotas(accountRow, { plugins: {} }) ?? []).length === 0);
+// 空快照是完整的形状（每个桶都空着），不是只带 plugins 一格的碎片。
+const emptySnapshot: HealthSnapshot = { qoder: {}, minimax: {}, zcode: {}, workbuddy: {}, plugins: {} };
+check("空快照 → 不算用尽", kind?.outOfCredits(accountRow, emptySnapshot) === false);
+check("空快照 → 没有额度视图", (kind?.quotas(accountRow, emptySnapshot) ?? []).length === 0);
 
 captured.restore();
 globalThis.fetch = realFetch;

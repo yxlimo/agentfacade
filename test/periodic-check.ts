@@ -50,6 +50,8 @@ function stubKind(kind: string): void {
     kind,
     label: `测试种类 ${kind}`,
     login: "device",
+    // 凭据这一单不在这里验；按会话种类登记，让注册表收得下。
+    inferWith: "session",
     baseUrl: () => "http://127.0.0.1",
     credential: () => ({
       kind: "session",

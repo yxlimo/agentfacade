@@ -21,6 +21,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { HandlerContext } from "@connectrpc/connect";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "upstream-cooldown-"));
 process.env.FACADE_DATA_DIR = tmp;
@@ -45,6 +46,11 @@ const { putHealthSnapshot } = await import("../lib/health-cache.ts");
 const { adminService } = await import("../lib/admin/service.ts");
 const { publishedModels, savePublishedModel } = await import("../lib/admin/models.ts");
 const { TargetBlocker, UpstreamState } = await import("../lib/gen/agentfacade/admin/v1/admin_pb.ts");
+
+// 进程内直调管理服务：没有 HTTP 上下文可给。
+const noContext = {} as HandlerContext;
+const { create } = await import("@bufbuild/protobuf");
+const { ListUpstreamsRequestSchema } = await import("../lib/gen/agentfacade/admin/v1/admin_pb.ts");
 
 const now = Date.now();
 const year = now + 365 * 24 * 3600 * 1000;
@@ -71,8 +77,9 @@ function qoderSession(id: string, region = "global") {
 
 /** 平台在面板上的那一条。 */
 async function upstreamOf(id: string): Promise<any> {
-  const response = await adminService.listUpstreams!();
-  const found = response.upstreams.find((u) => u.id === id);
+  // 进程内直调：没有 HTTP 上下文可给；列表字段在流式答复里可缺省。
+  const response = await adminService.listUpstreams!(create(ListUpstreamsRequestSchema, {}), noContext);
+  const found = (response.upstreams ?? []).find((u) => u.id === id);
   if (!found) throw new Error(`面板上没有这个上游：${id}`);
   return found;
 }
@@ -105,6 +112,8 @@ savePublishedModel({
   displayName: "cooldown-target",
   enabled: true,
   strategy: "single",
+  // 面板发来的模型必带 effort 选项；这里不验它，给空表。
+  effortOptions: [],
   targets: [{ groupName: "qoder", upstreamModel: "glm-5.3", weight: 10, enabled: true }],
 });
 

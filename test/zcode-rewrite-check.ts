@@ -395,7 +395,7 @@ console.log("── 6. 结尾扣住的尾巴 ──");
   const finished = codeCommentStream();
   const atPush = finished.push(`${D}{title="A" body="B."}`);
   const rest = finished.flush();
-  check("结尾是完整的指令：卡片压在 flush 里交出来", atPush === "" && rest !== "", show([atPush, rest]));
+  check("结尾是完整的指令：卡片压在 flush 里交出来", atPush === "" && rest !== "", show(`${atPush}|${rest}`));
   check("结尾是完整的指令：flush 之后什么都不剩", finished.flush() === "");
 }
 

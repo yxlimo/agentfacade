@@ -29,6 +29,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { PlatformAvailability } from "../lib/router/availability.ts";
+import type { ProviderCandidate } from "../lib/router/provider-selection.ts";
 import type { ProviderRow } from "../lib/providers.ts";
 import { captureLog } from "./log-capture.ts";
 
@@ -77,7 +78,7 @@ function candidate(
 }
 
 /** 三个候选，次序就是传进去的次序。 */
-function three(tried: string[], first: "ok" | Error): any[] {
+function three(tried: string[], first: "ok" | Error): ProviderCandidate<string>[] {
   return byOrder([
     { id: "first", run: async () => candidate("first", first, tried).run() },
     { id: "second", run: async () => candidate("second", "ok", tried).run() },
@@ -314,7 +315,7 @@ console.log("");
 console.log("只有一个账号的上游");
 
 /** 一个上游只有一个账号时候选长什么样。 */
-function only(tried: string[], outcome: "ok" | Error): any[] {
+function only(tried: string[], outcome: "ok" | Error): ProviderCandidate<string>[] {
   return byOrder([{ id: "only", run: async () => candidate("only", outcome, tried).run() }]);
 }
 

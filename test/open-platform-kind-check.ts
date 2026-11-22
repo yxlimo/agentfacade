@@ -22,6 +22,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import type { HandlerContext } from "@connectrpc/connect";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "open-platform-kind-"));
 process.env.FACADE_DATA_DIR = tmp;
@@ -222,11 +223,11 @@ check(
 );
 
 // 后面几节要用的四行：测试自己造（生产里是用户在面板上建的）。
-// 迁移后的形状：kind=openai，行上指名各家的额度插件（额度端点与凭据段数都靠它）。
-insertVendorPlatform("qiniu", "qiniu", { quotaPlugin: "qiniu" });
-insertVendorPlatform("tokenrhythm", "tokenrhythm", { quotaPlugin: "tokenrhythm-wallet" });
-insertVendorPlatform("sensenova", "sensenova", { quotaPlugin: "sensenova-pools" });
-insertVendorPlatform("intern-ai", "intern-ai", { quotaPlugin: "intern-ai-credits" });
+// 迁移后的形状：kind=openai，地址取常量表（额度插件按行上的地址认）。
+insertVendorPlatform("qiniu", "qiniu");
+insertVendorPlatform("tokenrhythm", "tokenrhythm");
+insertVendorPlatform("sensenova", "sensenova");
+insertVendorPlatform("intern-ai", "intern-ai");
 check(
   "造出来的四行厂商平台在表里",
   ["qiniu", "tokenrhythm", "sensenova", "intern-ai"].every((id) => openPlatformOf(id) !== null),
@@ -778,6 +779,9 @@ section("9. 面板上的额度结论");
 // 问不到数字的账号以前被塞一条数字全 0 的额度 —— 那是在说「额度是 0」。
 // 现在只说结论：面板看得见原因，看不见一行零。
 const { adminService } = await import("../lib/admin/service.ts");
+
+// 进程内直调管理服务：没有 HTTP 上下文可给。
+const noContext = {} as HandlerContext;
 const { putHealthSnapshot } = await import("../lib/health-cache.ts");
 
 const quotaCreated = createOpenPlatform({
@@ -799,7 +803,7 @@ function show(value: unknown): string {
 
 /** 面板上这个平台的那一行（走 ListUpstreams，不自己拼）。 */
 async function upstreamOf(id: string): Promise<any> {
-  const listed = await adminService.listUpstreams!();
+  const listed = await adminService.listUpstreams!({} as never, noContext);
   return (listed.upstreams ?? []).find((u: any) => u.id === id);
 }
 
@@ -1098,7 +1102,7 @@ check(
 section("12. 方言族的目录一律从上游拉");
 
 // 面板上那个「刷新模型目录」按钮走的就是这条路。厂商那几行也是方言族：一样拉。
-const vendorRefresh = await adminService.refreshPlatformModels!({ platformId: "qiniu" } as any);
+const vendorRefresh = await adminService.refreshPlatformModels!({ platformId: "qiniu" } as any, noContext);
 check(
   "方言族的厂商行：刷新去问上游（没 key 时答的是没有 key）",
   vendorRefresh.ok === false && /key/.test(String(vendorRefresh.message)),
@@ -1106,7 +1110,7 @@ check(
 );
 
 modelsPayload = { data: [{ id: "m-9" }, { id: "m-10" }] };
-const dialectRefresh = await adminService.refreshPlatformModels!({ platformId: "auto-cat" } as any);
+const dialectRefresh = await adminService.refreshPlatformModels!({ platformId: "auto-cat" } as any, noContext);
 check("方言行：还能刷新", dialectRefresh.ok === true, dialectRefresh.message);
 check(
   "方言行：目录换成了上游那份",
@@ -1582,15 +1586,17 @@ check(
 // 额度插件没有「给不给」这一说了：按行上的地址认（createOpenPlatform 也不收
 // quota_plugin）。地址是哪家厂商的规范推理地址，插件就是哪家；陌生地址就是
 // 没有额度，不是「没配好」。
-const noPluginRow = createOpenPlatform({
+// 插件这一格不存在了：额度插件只看行上的地址。陌生地址（这里的假上游）就是
+// 没有额度插件 —— 这正是这条要钉住的行为。
+const noPluginCreate = {
   id: "plugin-default",
   label: "陌生地址的平台",
   baseUrl: upstreamBase,
   kind: "openai",
-  quotaPlugin: "no-such-plugin",
-});
-check("建平台不再收插件这一格：多给的格被忽略（平台照样建）", noPluginRow.ok === true, noPluginRow.message);
-check("那一行上没有插件格", openPlatformOf("plugin-default") !== null && quotaPluginForBaseUrl(openPlatformOf("plugin-default")!.baseUrl) === null);
+};
+const noPluginRow = createOpenPlatform(noPluginCreate);
+check("陌生地址的平台照样建得起来", noPluginRow.ok === true, noPluginRow.message);
+check("陌生地址那行认不出任何额度插件", openPlatformOf("plugin-default") !== null && quotaPluginForBaseUrl(openPlatformOf("plugin-default")!.baseUrl) === null);
 
 /* ------------------------------------------------------------------ *
  * 17. 三条判别力：目录归上游还是归代码
@@ -1600,12 +1606,12 @@ section("17. 目录归上游还是归代码");
 
 // 一、方言族建平台时没有目录，刷新之后目录是上游答的那份。
 // 一家原来的厂商平台，迁移之后就是这个形状：kind 是 openai、地址在行上。
-const qiniuProbeCreated = createOpenPlatform({
+const qiniuProbeCreate = {
   id: "qiniu-probe",
   label: "Qiniu Probe",
   baseUrl: upstreamBase,
-  quotaPlugin: "",
-});
+};
+const qiniuProbeCreated = createOpenPlatform(qiniuProbeCreate);
 check("方言族的平台建得起来", qiniuProbeCreated.ok === true, qiniuProbeCreated.message);
 check(
   "行里没有目录（建平台不预填）",
