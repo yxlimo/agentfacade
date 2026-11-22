@@ -1107,7 +1107,7 @@ console.log("权益：签到那一行写什么");
   // outcome so a constant here cannot pass as a valid value
   const rowOf = async (outcome: BenefitOutcome | null): Promise<BenefitStatus | undefined> => {
     benefits.lastRun.lastOutcome = outcome ? [outcome] : [];
-    const res = await adminService.getBenefitStatus!();
+    const res = await adminService.getBenefitStatus!({} as any, {} as any);
     return res.benefits.find((b) => b.accountId === accountId);
   };
 
