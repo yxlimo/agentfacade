@@ -17,6 +17,7 @@
 // 「怎么说话」（kind）、「在哪个区域」、「支持哪些选账号的策略」；账号说
 // 「用哪份登录」。
 
+import { log } from "./log.ts";
 import { store } from "./store.ts";
 import { PROVIDER_POLICIES, type ProviderPolicy } from "./providers.ts";
 import { listOpenPlatforms, openPlatformOf, OPEN_PLATFORM_KIND_NAME } from "./open-platforms.ts";
@@ -61,7 +62,7 @@ export function allPlatforms(): Platform[] {
       // 这行告警的频率不该跟着请求频率走。
       if (!warnedDuplicateIds.has(row.id)) {
         warnedDuplicateIds.add(row.id);
-        console.warn(`[PLATFORM] 表里的 ${row.id} 跟代码里的模板重名，这一行不生效`);
+        log.warn(`[PLATFORM] 表里的 ${row.id} 跟代码里的模板重名，这一行不生效`);
       }
       continue;
     }
@@ -78,7 +79,10 @@ export function platformOfAny(id: string): Platform | null {
   const template = BY_ID.get(id);
   if (template) return template;
   const row = openPlatformOf(id);
-  return row ? { id: row.id, kind: row.kind, label: row.label, region: row.region } : null;
+  // headers 原样带出：转发路径要用它注入，调用方刚查完这一行就不该再读一次库
+  return row
+    ? { id: row.id, kind: row.kind, label: row.label, region: row.region, headers: row.headers }
+    : null;
 }
 
 /**

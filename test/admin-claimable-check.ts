@@ -5,7 +5,7 @@
 // 离线：临时数据目录、假账号、手写的健康快照。面板打开时不能因此多问上游，
 // 这里也只走快照（lib/admin/upstreams.ts 的 claimableAccounts）。
 //
-// 反证：把 claimableAccounts 恒返回 0 → 第一组红；把 service.ts 里的赋值
+// 反证：把 claimableAccounts 恒返回 0 → 第一组红；把 service（门面或分片）里的赋值
 // 改成 0 → 最后一组红。
 
 import fs from "node:fs";
@@ -151,10 +151,17 @@ if (!first.ok || !first.id || !second.ok || !second.id) {
 }
 
 // 面板那一条必须真的把这一格填进去（helper 自己对了但没人调也会白做）。
-const serviceSource = fs.readFileSync(
+// 面板实现拆成了门面 + lib/admin/service/ 下的分片，这一格写在哪一份里随拆分走，
+// 断言只认「赋值存在」，不认它落在哪个文件 —— 搜整个 service 模块。
+const serviceDir = path.join(import.meta.dirname, "..", "lib", "admin", "service");
+const serviceSource = [
   path.join(import.meta.dirname, "..", "lib", "admin", "service.ts"),
-  "utf8",
-);
+  ...fs.existsSync(serviceDir)
+    ? fs.readdirSync(serviceDir, { recursive: true })
+        .filter((f) => String(f).endsWith(".ts"))
+        .map((f) => path.join(serviceDir, String(f)))
+    : [],
+].map((f) => fs.readFileSync(f, "utf8")).join("\n");
 check(
   "面板 Upstream.claimableAccounts 用的是快照判据",
   /claimableAccounts:\s*claimableAccounts\(rows\)/.test(serviceSource),

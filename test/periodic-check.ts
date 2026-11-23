@@ -11,6 +11,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { captureLog } from "./log-capture.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "session-refresh-"));
 process.env.FACADE_DATA_DIR = tmp;
@@ -49,6 +50,8 @@ function stubKind(kind: string): void {
     kind,
     label: `测试种类 ${kind}`,
     login: "device",
+    // 凭据这一单不在这里验；按会话种类登记，让注册表收得下。
+    inferWith: "session",
     baseUrl: () => "http://127.0.0.1",
     credential: () => ({
       kind: "session",
@@ -110,15 +113,12 @@ console.log("");
 console.log("刷不出来的时候别刷屏");
 
 failWith = new Error("refresh rejected (invalid_grant)");
-const warnings: string[] = [];
-const originalWarn = console.warn;
-console.warn = (...args: unknown[]) => {
-  warnings.push(args.map(String).join(" "));
-};
+const captured = captureLog({ methods: ["warn"] });
 await runPeriodicOnce();
 await runPeriodicOnce();
 await runPeriodicOnce();
-console.warn = originalWarn;
+const warnings = captured.all;
+captured.restore();
 
 check(
   "每个账号只说一次",

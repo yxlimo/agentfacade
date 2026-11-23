@@ -41,6 +41,9 @@ export function OpenPlatformFacts({
   return (
     <div className='grid gap-0.5 text-xs whitespace-normal text-muted-foreground'>
       <span>{modelLine(upstream)}</span>
+      {/* 注入头：只摆行数与头名，值不铺出来（可能是 {session-id} 这类占位符）。
+          没配的时候整块不摆，不画一个空框。 */}
+      {upstream.headers.length ? <span>{headersLine(upstream)}</span> : null}
       {hasPlugin ? quotaLine(upstream, upstream.quotaPluginLabel) : null}
       {refresh ? (
         <span className={refresh.ok ? undefined : 'text-destructive'}>
@@ -66,6 +69,18 @@ function modelLine(upstream: Upstream): string {
   return i18n.t('openPlatforms.modelsLine', {
     count: upstream.models.length,
     at,
+  })
+}
+
+/**
+ * 注入头那一行：条数与头名。值不摆出来（可能含 {session-id} 这类占位符，铺开
+ * 只会占屏），只按发送顺序把名字接起来。调用前先确认有配，没配的地方不摆这一行。
+ */
+function headersLine(upstream: Upstream): string {
+  const names = upstream.headers.map((item) => item.name).join('、')
+  return i18n.t('openPlatforms.headersLine', {
+    count: upstream.headers.length,
+    names,
   })
 }
 

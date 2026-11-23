@@ -71,6 +71,12 @@
 
 主代理会把你的提交 cherry-pick 回主树。只存在于 worktree 目录里的活等于被扔掉，这里出过这种事。
 
+## 日志
+
+后端只用 `lib/log.ts` 的 `log.debug/info/warn/error`，不要直接 `console.*`（`tools/`、`test/`、`scripts/`、`config-cli.ts` 除外，那里的 console 是产品输出或测试结果）。消息文本照原样传，默认格式逐字节输出，线上靠 `podman logs | grep '[ZCODE]'` 这类用法排查，改一个字就断。
+
+两个环境变量（直接读 `process.env`，不走 `lib/config.ts`，因为日志要在库打开之前就能用）：`FACADE_LOG_LEVEL` 取 `debug|info|warn|error|silent`，默认 `info`；`FACADE_LOG_FORMAT=json` 时每行输出一个 JSON 对象（带 `level`、`message`、`timestamp`），其余情况用纯文本。
+
 ## 不要碰别人的文件
 
 并行子代理可能共用同一个工作树（由主代理决定）。无论哪种情况，下面三个命令都禁用，它们会把别人未提交的活一起带走：

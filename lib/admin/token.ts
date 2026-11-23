@@ -7,6 +7,7 @@
 // 生成方式跟 api-keys.json 一样（随机字节 + hex），只是落在文件里而不是
 // 数据库里 —— 面板要在数据库还是空的时候也能用。
 
+import { log } from "../log.ts";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -57,8 +58,8 @@ export function adminToken(): string {
   } catch {
     /* 不是我们的文件就算了 */
   }
-  console.log(`[ADMIN] 面板令牌已生成：${token}`);
-  console.log(`        写到了 ${file}（0600）`);
+  log.info(`[ADMIN] 面板令牌已生成：${token}`);
+  log.info(`        写到了 ${file}（0600）`);
   cached = token;
   return token;
 }

@@ -19,6 +19,7 @@
 //   · 不记 authLog（现在面板与命令行各自记一笔，合并留给迁移收尾那一步 ——
 //     现在替它们记会让一次登录留下两条记录）
 
+import { log } from "./log.ts";
 import { AuthError } from "./credential.ts";
 import { allKinds } from "./provider-kinds.ts";
 
@@ -224,7 +225,7 @@ export async function driveLogin<T>(
       if (flow.derive) {
         // 派生资源失败不算登录失败：会话已经存下来了，下一次扫描会补。
         await flow.derive(ctx, result.session).catch((e: unknown) => {
-          console.warn(`[LOGIN] ${flow.label} 派生资源失败：${(e as Error)?.message ?? e}`);
+          log.warn(`[LOGIN] ${flow.label} 派生资源失败：${(e as Error)?.message ?? e}`);
         });
       }
       return { credentialId, session: result.session };

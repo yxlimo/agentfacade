@@ -83,9 +83,11 @@ const fakeWallet = async (): Promise<TokenRhythmAccountStatus[]> =>
     credits: t.error
       ? null
       : ({
-          lots: [],
-          summary: { expiringBalanceCny: t.giftCny, nextExpiryAt: t.expiresAt },
-        } as TokenRhythmAccountStatus["credits"]),
+          // TokenRhythmCredits 的形状：消费方读 list 与 summary.nextExpiryAt
+          // （lib/tokenrhythm/quota-plugin.ts、balance.ts）。
+          list: [],
+          summary: { expiringCny: t.giftCny, nextExpiryAt: t.expiresAt },
+        } satisfies TokenRhythmAccountStatus["credits"]),
     error: t.error ?? null,
   }));
 

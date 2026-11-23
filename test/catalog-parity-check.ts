@@ -288,7 +288,8 @@ console.log("这个测试不碰任何平台");
 
 check(
   "没有启动设备登录",
-  !/device\/selectAccounts|open in a browser/.test(routerLog),
+  // routerLog 是函数：少打的一对括号让正则去测函数源码，断言恒真。
+  !/device\/selectAccounts|open in a browser/.test(routerLog()),
   routerLog().slice(-400),
 );
 

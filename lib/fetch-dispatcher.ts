@@ -19,6 +19,7 @@
 // The whole file has exactly one caller: installFetchDispatcher(), called once
 // at process start (router-proxy.ts).
 
+import { log } from "./log.ts";
 import { Agent, setGlobalDispatcher, fetch as undiciFetch } from "undici";
 import { STREAM_LIMIT_MAX_MS } from "./router/stream-limits.ts";
 
@@ -88,7 +89,7 @@ export function installFetchDispatcher(): void {
   // not about the behaviour.
   globalThis.fetch = ((input: any, init: any) =>
     undiciFetch(input, { ...(init ?? {}), dispatcher: agent })) as unknown as typeof globalThis.fetch;
-  console.log(
+  log.info(
     `  [FETCH] 下层超时已放宽：bodyTimeout=${FETCH_BODY_TIMEOUT_MS}ms（闸门上限 ${STREAM_LIMIT_MAX_MS}ms）`,
   );
 }

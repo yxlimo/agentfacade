@@ -77,6 +77,8 @@ export function breakerSettings(): BreakerSettings {
  *   timeout     等不到上游 —— 这一会儿它发不出去。
  *   connection  连接被掐断 —— 同上。
  *   unreachable 主机名解析不出来 —— 整个平台都打不到。
+ *   refused    上游回了 HTML 网关错误页，不是它的 API —— 这个平台现在发不出去，
+ *              换账号也没用（账号级冷却仍负责让面板看见哪一个账号）。
  *   server      上游 5xx。
  *   empty       空答复：上游接了请求却什么都没给。
  *
@@ -97,6 +99,7 @@ const BREAKABLE_KINDS = new Set([
   "connection",
   "unreachable",
   "server",
+  "refused",
   "empty",
 ]);
 

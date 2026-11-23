@@ -39,6 +39,8 @@
 //  16. 目录写不进去：models / modelsAuto 那几格在写入口（数据层）被
 //      忽略（不报错，按现值留着），同一单里别的格照常保存；面板那条路端到端
 //      也写不坏；同一格在开放平台上照常生效（对照组）
+//  17. ListUpstreams 的注入头（headers）：开放平台报平台行里的那份（顺序
+//      原样）、模拟客户端那一族有行但照空、改头之后再列读到的是库里的新值
 //
 // 断言里不写死平台的个数：一律跟表里的行数比。
 
@@ -46,6 +48,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { captureLog } from "./log-capture.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "open-platform-admin-"));
 process.env.FACADE_DATA_DIR = tmp;
@@ -71,6 +74,9 @@ const {
   UnpublishedReason,
   UpstreamState,
 } = await import("../lib/gen/agentfacade/admin/v1/admin_pb.ts");
+// 面板的答复形状：给 listQuotaPlugins 的返回值一个真类型，回调用不着再猜。
+type ListQuotaPluginsResponse =
+  import("../lib/gen/agentfacade/admin/v1/admin_pb.ts").ListQuotaPluginsResponse;
 
 let pass = 0;
 let fail = 0;
@@ -160,12 +166,8 @@ function errDetail(): string {
  * 下来给断言看：光转发不改输出，跑起来还是原来那些行。
  * ------------------------------------------------------------------ */
 
-const logLines: string[] = [];
-const realLog = console.log.bind(console);
-console.log = (...args: unknown[]): void => {
-  logLines.push(args.map((one) => String(one)).join(" "));
-  realLog(...args);
-};
+const captured = captureLog({ methods: ["info"], forward: true });
+const logLines = captured.all;
 
 /** 到目前为止服务写过的日志。 */
 function routerLog(): string {
@@ -194,7 +196,7 @@ async function refreshPlatformModels(request: Record<string, unknown>): Promise<
   return svc.refreshPlatformModels(request, {});
 }
 
-async function listQuotaPlugins(): Promise<any> {
+async function listQuotaPlugins(): Promise<ListQuotaPluginsResponse> {
   return svc.listQuotaPlugins({});
 }
 
@@ -448,17 +450,16 @@ check(
   show([openPlatformOf("acme")?.label, openPlatformOf("acme")?.baseUrl]),
 );
 
-// AddPlatform 不再收 quota_plugin（契约里那一格已经 reserved）：多给的格被忽略，
-// 平台照样建。
+// AddPlatform 没有「行上指名插件」这一格：插件只按行上的地址认。陌生地址建出来
+// 的行就是没有额度插件 —— 这正是这条要钉住的行为。
 const pluginEmpty = await guard(() => addPlatform({
   id: "acme-plugin-empty",
-  label: "多给了一格的加平台",
+  label: "陌生地址的加平台",
   baseUrl: "https://api.acme.test/v1",
   kind: "openai",
-  quotaPlugin: "",
-} as never));
-check("加平台：多给的插件格被忽略，平台照样建", pluginEmpty !== null, errDetail());
-check("那一行上没有插件格", openPlatformOf("acme-plugin-empty") !== null);
+}));
+check("加平台：不带插件格，平台照样建", pluginEmpty !== null, errDetail());
+check("那一行上认不出额度插件", openPlatformOf("acme-plugin-empty") !== null && quotaPluginForBaseUrl(openPlatformOf("acme-plugin-empty")!.baseUrl) === null);
 
 // 这个平台只是为了上面那几行断言：删掉，免得影响后面按行数比的那几节。
 for (const id of ["acme-plugin-empty"]) {
@@ -1423,12 +1424,68 @@ check(
 );
 
 /* ------------------------------------------------------------------ *
+ * 17. ListUpstreams 的注入头：开放平台报的是平台行里的那份（顺序原样），
+ *     模拟客户端那一族有行但不是开放平台，照空；改头之后再列，读到的是
+ *     库里的新值，不是哪一份缓存。
+ * ------------------------------------------------------------------ */
+
+section("注入头");
+
+const headersAdded = await guard(() =>
+  addPlatform({
+    id: "acme-headers",
+    label: "Acme Headers",
+    baseUrl: "https://api.acme.test/v1",
+    headers: [
+      { name: "X-First", value: "one" },
+      { name: "X-Second", value: "two" },
+    ],
+  }),
+);
+check("带头模板的平台加得进去", headersAdded !== null, `${errCode()} ${errDetail()}`);
+const listedHeaders = (await listUpstreams()).find((u) => u.id === "acme-headers")?.headers ?? [];
+check(
+  "ListUpstreams 报的两条头与建的时候一致（顺序原样）",
+  JSON.stringify(listedHeaders.map((h: any) => [h.name, h.value])) ===
+    JSON.stringify([
+      ["X-First", "one"],
+      ["X-Second", "two"],
+    ]),
+  show(listedHeaders),
+);
+check(
+  "模拟客户端那一族有行但报空列表（zcode）",
+  ((await listUpstreams()).find((u) => u.id === "zcode")?.headers ?? null)?.length === 0,
+  show((await listUpstreams()).find((u) => u.id === "zcode")?.headers),
+);
+
+const headersUpdated = await guard(() =>
+  updatePlatform({
+    id: "acme-headers",
+    headers: { items: [{ name: "X-First", value: "changed" }] },
+  }),
+);
+check("改头那一单走得通", headersUpdated !== null, `${errCode()} ${errDetail()}`);
+const afterHeaderUpdate =
+  (await listUpstreams()).find((u) => u.id === "acme-headers")?.headers ?? [];
+check(
+  "改头之后再列，读到的是库里的新值",
+  JSON.stringify(afterHeaderUpdate.map((h: any) => [h.name, h.value])) ===
+    JSON.stringify([["X-First", "changed"]]),
+  show(afterHeaderUpdate),
+);
+
+// 收尾：把这一个删掉，别的断言如果按平台个数比也不受影响。
+await deletePlatform({ id: "acme-headers" });
+
+/* ------------------------------------------------------------------ *
  * 收尾
  * ------------------------------------------------------------------ */
 
 upstream.close();
 fs.rmSync(tmp, { recursive: true, force: true });
 
+captured.restore();
 console.log("");
 if (fail === 0) {
   console.log(`全部通过（${pass} 项）`);

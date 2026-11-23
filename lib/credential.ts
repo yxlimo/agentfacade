@@ -7,6 +7,7 @@
 //   lib/minimax/oauth.ts       owns its own session (logs in, refreshes)
 // lib/minimax/auth.ts picks between them.
 
+import { log } from "./log.ts";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -39,7 +40,7 @@ export function authLog(dir: string, event: string, detail = "", options: { toSt
     /* logging must never break a request */
   }
   const shown = options.toStdout === false ? event : `${event}${detail ? " " + detail : ""}`;
-  console.log(`[AUTH] ${shown}`);
+  log.info(`[AUTH] ${shown}`);
 }
 
 /** A token is a secret; logs only ever carry its first few characters. */

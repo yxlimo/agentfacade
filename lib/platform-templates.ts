@@ -12,6 +12,8 @@
 // 失效（空名单对谁都答不属于）—— 平台之间的区别现在只剩 kind，判别函数在
 // lib/platform-catalog.ts（isSimulatedClientKind）。
 
+// 注入头模板的类型：只有表里的开放平台有这一格，模板名单那边是 undefined
+import type { HeaderTemplate } from "./admin/platform-headers.ts";
 /** 一个平台：代码里的模板，或者表里的开放平台。 */
 export interface Platform {
   /** 路径里那一段。改它等于打断调用方。 */
@@ -22,6 +24,11 @@ export interface Platform {
   label: string;
   /** 区域：cn / global / 空。 */
   region: string;
+  /**
+   * 注入头模板（只有表里的开放平台才有）。可选：模板名单那边没有这一格就是
+   * undefined，读它的地方要自己回落成空列表。
+   */
+  headers?: HeaderTemplate[];
 }
 
 /**

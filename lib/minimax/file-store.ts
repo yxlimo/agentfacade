@@ -21,6 +21,7 @@
 // view (anonymous / authorizing / refreshing / authenticated / expired / error /
 // scope_upgrade_required).
 
+import { log } from "../log.ts";
 import { configString, configNumber } from "../config.ts";
 import { readEnvValue } from "../env.ts";
 import fs from "node:fs";
@@ -164,7 +165,7 @@ export function readFileCredential(force = false): Credential {
 
   if (cred.warning && cred.generation !== lastWarnedGeneration) {
     lastWarnedGeneration = cred.generation;
-    console.warn(
+    log.warn(
       `[AUTH] token expires in ${Math.round(remainingMs / 60000)} min (generation ${cred.generation}) — ` +
         `open the MiniMax Code desktop app before it goes stale`,
     );

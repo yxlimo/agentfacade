@@ -29,7 +29,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { PlatformAvailability } from "../lib/router/availability.ts";
+import type { ProviderCandidate } from "../lib/router/provider-selection.ts";
 import type { ProviderRow } from "../lib/providers.ts";
+import { captureLog } from "./log-capture.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "policy-check-"));
 process.env.FACADE_DATA_DIR = tmp;
@@ -76,7 +78,7 @@ function candidate(
 }
 
 /** 三个候选，次序就是传进去的次序。 */
-function three(tried: string[], first: "ok" | Error): any[] {
+function three(tried: string[], first: "ok" | Error): ProviderCandidate<string>[] {
   return byOrder([
     { id: "first", run: async () => candidate("first", first, tried).run() },
     { id: "second", run: async () => candidate("second", "ok", tried).run() },
@@ -313,7 +315,7 @@ console.log("");
 console.log("只有一个账号的上游");
 
 /** 一个上游只有一个账号时候选长什么样。 */
-function only(tried: string[], outcome: "ok" | Error): any[] {
+function only(tried: string[], outcome: "ok" | Error): ProviderCandidate<string>[] {
   return byOrder([{ id: "only", run: async () => candidate("only", outcome, tried).run() }]);
 }
 
@@ -720,16 +722,13 @@ console.log("重试：没有人可换时无限重试，有人可换时试三次�
     };
   };
 
-  /** 记下这期间 console.log 打出来的 [ROUTE] 行，其他的照旧打出来。 */
-  const logs: string[] = [];
-  const realLog = console.log;
-  console.log = (...parts: unknown[]) => {
-    const line = parts.map(String).join(" ");
-    if (line.startsWith("[ROUTE]")) logs.push(line);
-    else realLog(...parts);
-  };
+  /** 记下这期间 log.info 打出来的 [ROUTE] 行，其他的照旧打出来。 */
+  const captured = captureLog({
+    methods: ["info"],
+    forward: (line) => !line.startsWith("[ROUTE]"),
+  });
   const stopLogging = () => {
-    console.log = realLog;
+    captured.restore();
   };
 
   // 1. 503 一次后成功：客户端拿到答复，冷却没有。
@@ -1296,7 +1295,6 @@ console.log("重试：没有人可换时无限重试，有人可换时试三次�
         accounts: rows.length,
         rows,
         on: rows.length,
-        advice: "测试用的可用性",
         catalog: [],
         ids: [],
         untilMs: null,
@@ -1468,7 +1466,6 @@ console.log("重试：没有人可换时无限重试，有人可换时试三次�
       accounts: rows.length,
       rows,
       on: rows.length,
-      advice: "测试用的可用性",
       catalog: [],
       ids: [],
       untilMs: null,
@@ -1535,6 +1532,7 @@ console.log("重试：没有人可换时无限重试，有人可换时试三次�
   }
 
   stopLogging();
+  const logs = captured.all.filter((line) => line.startsWith("[ROUTE]"));
 
   // 18. 日志：每次重试一行，最后一次失败照旧交给策略。
   {

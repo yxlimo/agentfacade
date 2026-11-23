@@ -20,6 +20,7 @@
 // a platform API key gets 401 on this gateway (measured), because the gateway is locked
 // to audience `agent-backend`. Only this grant works.
 
+import { log } from "../log.ts";
 import { configString, configNumber } from "../config.ts";
 import { createHash, randomBytes } from "node:crypto";
 import { AuthError, DEFAULT_AUDIENCE, DEFAULT_CLIENT_ID, DEFAULT_REGION, DEFAULT_SCOPES, authLog, tokenFingerprint } from "../credential.ts";
@@ -438,17 +439,17 @@ export async function pollDeviceToken(auth: DeviceAuthorization): Promise<Sessio
 export async function login(providerId = "minimax"): Promise<Session> {
   const auth = await startDeviceAuthorization();
   const url = auth.verificationUriComplete ?? `${auth.verificationUri}?code=${auth.userCode}`;
-  console.log("");
-  console.log(`  client_id: ${CLIENT_ID}  audience: ${AUDIENCE}  scope: ${SCOPES.join(" ")}`);
-  console.log(`  user code: ${auth.userCode}`);
-  console.log(`  open in a browser: ${url}`);
-  console.log(`  (waiting for approval, up to ${Math.round(auth.expiresInSec / 60)} min)`);
-  console.log("");
+  log.info("");
+  log.info(`  client_id: ${CLIENT_ID}  audience: ${AUDIENCE}  scope: ${SCOPES.join(" ")}`);
+  log.info(`  user code: ${auth.userCode}`);
+  log.info(`  open in a browser: ${url}`);
+  log.info(`  (waiting for approval, up to ${Math.round(auth.expiresInSec / 60)} min)`);
+  log.info("");
   const session = await pollDeviceToken(auth);
   saveSession(session, providerId, { force: true });
-  console.log(`  logged in: generation ${session.generation}, token good for ${Math.round(session.expiresAtMs / 1000 - Date.now() / 1000)}s`);
-  console.log(`  saved to the database (${sessionId(providerId)})`);
-  console.log("  later refreshes are automatic — nothing else to do.");
+  log.info(`  logged in: generation ${session.generation}, token good for ${Math.round(session.expiresAtMs / 1000 - Date.now() / 1000)}s`);
+  log.info(`  saved to the database (${sessionId(providerId)})`);
+  log.info("  later refreshes are automatic — nothing else to do.");
   authLog(
     dataDir(),
     `minimax/${providerId} login ok`,

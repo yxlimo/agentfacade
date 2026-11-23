@@ -17,6 +17,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { captureLog } from "./log-capture.ts";
 
 let pass = 0;
 let fail = 0;
@@ -128,22 +129,21 @@ section("500 留痕");
 
 // Connect 自己接住实现抛的异常，换成一句 "internal error" 的 500 —— 栈就没了。
 // 留痕的那一层在实现与 Connect 之间：它把栈打出来，再原样抛回去。
-const realError = console.error;
 
-/** 跑一次拦截器，把这段时间 console.error 打出来的行收下来。 */
+/** 跑一次拦截器，把这段时间 log.error 打出来的行收下来。 */
 async function loggedFrom(run: () => Promise<unknown>): Promise<string[]> {
-  const lines: string[] = [];
-  console.error = (...args: unknown[]) => {
-    lines.push(args.map((a) => (a instanceof Error ? a.stack ?? a.message : String(a))).join(" "));
-  };
+  const captured = captureLog({
+    methods: ["error"],
+    format: (args) => args.map((a) => (a instanceof Error ? a.stack ?? a.message : String(a))).join(" "),
+  });
   try {
     await run();
   } catch {
     /* 意料之中：它原样抛回来了 */
   } finally {
-    console.error = realError;
+    captured.restore();
   }
-  return lines;
+  return captured.lines.error;
 }
 
 /** 拿给定的 url 跑一次拦截器，实现里抛 err。 */

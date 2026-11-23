@@ -16,14 +16,14 @@ import {
   type AggregateStrategy,
   type AggregateTarget,
 } from "../aggregate.ts";
-import { catalogGroups, healthSnapshot, type UpstreamId } from "./upstreams.ts";
+import { catalogGroups, healthSnapshot, upstreamStateOf, type UpstreamId } from "./upstreams.ts";
 import { platformCooling } from "./upstream-state.ts";
 // 计费的形状在 lib/catalog-billing.ts 一处定：面板这一层只把它传给契约。
 import type { ModelBilling } from "../catalog-billing.ts";
 import { platformAvailabilities, type PlatformAvailability } from "./platform-state.ts";
 import { aggregateCatalog, type AggregateEntry } from "../router/catalog.ts";
 import type { HealthSnapshot } from "../provider-kinds.ts";
-import { UnpublishedReason } from "../gen/agentfacade/admin/v1/admin_pb.ts";
+import { TargetBlocker, UnpublishedReason, UpstreamState } from "../gen/agentfacade/admin/v1/admin_pb.ts";
 // 失败的机器码与排查用的事实。文案在面板那一侧。
 import type { AdminResult } from "./error-codes.ts";
 
@@ -90,23 +90,13 @@ export interface PublishedTargetView {
    * 停用的目标不算「接不了」—— 它是自己关掉的，面板上写着「已停用」。
    */
   blocked: boolean;
-  /** 为什么接不了，一句话，直接给人看。空 = 能接。 */
-  blockedReason: string;
+  /** 为什么接不了：枚举给事实，文案在面板。没被挡就是 UNSPECIFIED。 */
+  blocker: TargetBlocker;
+  /** 机器词，只有冷却/额度这类才有：refused / rate-limit / quota。空串 = 没有。 */
+  blockerReason: string;
   /** 什么时候能再接（unix 毫秒）。0 = 算不出来（不猜）。 */
   recoversAtMs: number;
 }
-
-/**
- * 目标接不了的理由，给人看的一句话。
- *
- * 只说「接不了」不够用：面板上要能看出是模型没了、平台关了，还是没登录。
- */
-const BLOCKER_REASON_LABELS: Partial<Record<UnpublishedReason, string>> = {
-  [UnpublishedReason.MODEL_GONE]: "模型已下架",
-  [UnpublishedReason.UPSTREAM_DISABLED]: "平台已停用",
-  [UnpublishedReason.NO_CREDENTIAL]: "没有可用凭据",
-  [UnpublishedReason.TARGET_DISABLED]: "目标已停用",
-};
 
 /** 平台那一层现在接不接得上。 */
 interface PlatformLayer {
@@ -114,8 +104,10 @@ interface PlatformLayer {
   usable: boolean;
   /** 最早什么时候能再接（unix 毫秒）。0 = 现在就能接，或者算不出来。 */
   recoversAtMs: number;
-  /** 一句给面板直接用的话。 */
-  reason: string;
+  /** 接不了的理由：只给事实，文案在面板。 */
+  blocker: TargetBlocker;
+  /** 机器词，只有冷却/额度这类才有。空串 = 没有。 */
+  blockerReason: string;
 }
 
 /**
@@ -194,25 +186,63 @@ function targetBlocker(
   return UnpublishedReason.UNSPECIFIED;
 }
 
+/** 现有判定给的目标级理由 → 契约里的枚举。这条路上只会产出这两格。 */
+function mapUnpublishedBlocker(reason: UnpublishedReason): TargetBlocker | null {
+  switch (reason) {
+    case UnpublishedReason.UPSTREAM_DISABLED:
+      return TargetBlocker.UPSTREAM_DISABLED;
+    case UnpublishedReason.NO_CREDENTIAL:
+      return TargetBlocker.NO_CREDENTIAL;
+    default:
+      return null;
+  }
+}
+
+/** 平台接不了的理由 → 契约里的枚举。只给后端真能产出的值。 */
+function platformBlockerOf(availability: PlatformAvailability): TargetBlocker {
+  // 凭据读不出来是网关自己的事：说不清，别猜成别的。
+  if (availability.state === "credential_unknown") return TargetBlocker.UNKNOWN;
+  switch (upstreamStateOf(availability)) {
+    case UpstreamState.LOGGING_IN:
+      return TargetBlocker.LOGGING_IN;
+    case UpstreamState.CREDENTIAL_REJECTED:
+      return TargetBlocker.CREDENTIAL_REJECTED;
+    case UpstreamState.CREDENTIAL_EXPIRED:
+      return TargetBlocker.CREDENTIAL_EXPIRED;
+    case UpstreamState.NO_CREDENTIAL:
+      return TargetBlocker.NO_CREDENTIAL;
+    case UpstreamState.OUT_OF_CREDITS:
+      return TargetBlocker.OUT_OF_CREDITS;
+    case UpstreamState.COOLING:
+      return TargetBlocker.COOLING;
+    case UpstreamState.QUEUED:
+      return TargetBlocker.QUEUED;
+    default:
+      return TargetBlocker.UNKNOWN;
+  }
+}
+
 /**
  * 平台那一层现在接不接得上，以及接得上的时候是什么时候。
  *
  * 能不能接、什么时候能接，都是判定（platform-state.ts）说了算：面板与路由
  * 必须是同一个答案。
  *
- * 冷却那一句更细（几点的窗口、为什么冷却），所以额度与冷却这两种情况用它；
- * 别的（没有账号、账号都关着、没有凭据）只有判定说得清。
+ * 只给事实：能不能接、为什么接不了、什么时候能再接。文案在面板。
  */
 function platformStateOf(availability: PlatformAvailability, snapshot: HealthSnapshot | null): PlatformLayer {
   const cooling = platformCooling({ rows: availability.rows, snapshot });
+  const usable = availability.usable.length > 0;
+  const blocker = usable ? TargetBlocker.UNSPECIFIED : platformBlockerOf(availability);
   return {
-    usable: availability.usable.length > 0,
+    usable,
     // 恢复时间用面板自己的那个（0 = 算不出来，不猜）；判定那边的 untilMs 是
     // 路由用的「最早能试的时刻」，算不出来时它给一个固定时长。
     recoversAtMs: cooling.recoversAtMs,
-    // 冷却与额度那一层的话更细（几点的窗口、为什么冷却、几个账号里的几个），
-    // 别的（没有账号、账号都关着、没有凭据）只有判定说得清。
-    reason: cooling.stateReason || availability.advice,
+    blocker,
+    // 机器词只在冷却/额度这两档有：那是平台给的说法。别的档没有机器词。
+    blockerReason:
+      blocker === TargetBlocker.OUT_OF_CREDITS || blocker === TargetBlocker.COOLING ? cooling.cooldownReason : "",
   };
 }
 
@@ -282,7 +312,7 @@ export function publishedModels(): PublishedModelView[] {
       const availability = availabilityOf(group);
       state = availability
         ? platformStateOf(availability, snapshot)
-        : { usable: false, recoversAtMs: 0, reason: "这个平台不在平台的名单里" };
+        : { usable: false, recoversAtMs: 0, blocker: TargetBlocker.UPSTREAM_DISABLED, blockerReason: "" };
       platformStates.set(group, state);
     }
     return state;
@@ -324,16 +354,16 @@ export function publishedModels(): PublishedModelView[] {
         const row = usage.find(
           (u) => u.modelId === model.id && u.group === target.group && u.upstreamModel === target.upstreamModel,
         );
-        // 目标自己接不了（模型没了、平台关了、没凭据）是目标的事；目标没问题
-        // 但平台接不上（冷却、额度用尽）是平台的事 —— 两种都说清楚。
-        const blocker = targetBlocker(target, availabilityOf);
+        // 目标自己接不了（平台关了、没凭据）是目标的事；目标没问题但平台接不上
+        // （冷却、额度用尽、排队）是平台的事 —— 两种都给出可渲染的事实。
+        const base = targetBlocker(target, availabilityOf);
         const state = stateOf(target.group as UpstreamId);
-        const blocked = target.enabled && (blocker !== UnpublishedReason.UNSPECIFIED || !state.usable);
-        const blockedReason = blocked
-          ? blocker !== UnpublishedReason.UNSPECIFIED
-            ? BLOCKER_REASON_LABELS[blocker] ?? "这个目标现在接不了"
-            : state.reason
-          : "";
+        const blocked = target.enabled && (base !== UnpublishedReason.UNSPECIFIED || !state.usable);
+        // 目标自己的理由优先；它没有理由时用平台那一层的细分。
+        const mapped = blocked ? mapUnpublishedBlocker(base) : null;
+        const blocker = !blocked ? TargetBlocker.UNSPECIFIED : mapped ?? state.blocker;
+        const blockerReason =
+          blocker === TargetBlocker.OUT_OF_CREDITS || blocker === TargetBlocker.COOLING ? state.blockerReason : "";
         return {
           groupName: target.group,
           upstreamModel: target.upstreamModel,
@@ -343,7 +373,8 @@ export function publishedModels(): PublishedModelView[] {
           failed: row?.failed ?? 0,
           current: current === targetKey(target),
           blocked,
-          blockedReason,
+          blocker,
+          blockerReason,
           // 算不出来就是 0：前端不显示时间，不猜。
           recoversAtMs: state.recoversAtMs,
         };
@@ -399,7 +430,9 @@ export function savePublishedModel(input: PublishedModelInput): AdminResult & { 
   if (!input.targets?.length) {
     return { ok: false, id, code: "MODEL_HAS_NO_TARGET", message: `model ${id} has no target` };
   }
-  const strategy: AggregateStrategy = input.strategy === "fallback" ? "fallback" : "single";
+  // 面板给的策略只认这三个：别的（漏传、拼错）都按单一目标兜底。
+  const strategy: AggregateStrategy =
+    input.strategy === "fallback" || input.strategy === "balance" ? input.strategy : "single";
   // 权重从大到小。权重一样时排序是稳定的，面板给的先后留着。
   const sorted = [...input.targets].sort((a, b) => (b.weight ?? 1) - (a.weight ?? 1));
   const targets: AggregateTarget[] = sorted.map((target, index) => ({

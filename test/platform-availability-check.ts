@@ -146,9 +146,8 @@ check(
 );
 
 // 额度用尽：还是就绪的样子，但接不了。
-// 额度由平台那一行指名的插件问回来：指名它，快照里那份才读得到。
+// 额度由行上的地址认出的插件问回来（这一行造的是七牛云的规范地址）。
 // 快照里存的是那一次的结论（状态 + 面板那几行），不是门户的原样答复。
-updateOpenPlatform("qiniu", { quotaPlugin: qiniuQuotaPlugin.id });
 // 两个快照：插件不给时刻的，与插件给了时刻的。同一份快照两处（面板 / 路由）
 // 必须报同一个数。
 const noTimeSnapshot = {
@@ -521,7 +520,7 @@ const queued = platformAvailability("qoder", queueLater);
 check("两条以上、全是排队 → queued", queued.state === "queued", queued.state);
 check("排队没有恢复时刻（untilMs 是 null，不编）", queued.untilMs === null, String(queued.untilMs));
 check("理由里说了是排队", queued.reason.includes("排队"), queued.reason);
-check("面板上给了一句话（不是空的）", queued.advice.length > 0, queued.advice);
+check("面板状态是 QUEUED 而非 COOLING", upstreamStateOf(queued) === UpstreamState.QUEUED && upstreamStateOf(queued) !== UpstreamState.COOLING, String(upstreamStateOf(queued)));
 check(
   "契约里也是 QUEUED（不是就绪）",
   upstreamStateOf(queued) === UpstreamState.QUEUED,

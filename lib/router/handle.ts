@@ -11,6 +11,7 @@
 // started there is nothing left to fall back to: a failure after that point ends
 // the response instead of trying the next target.
 
+import { log } from "../log.ts";
 import type { Json } from "../json.ts";
 import Koa from "koa";
 import { configFlag, configNumber } from "../config.ts";
@@ -20,10 +21,12 @@ import { upstreamStatusOf } from "../upstream-status.ts";
 import { kindOf } from "../provider-kinds.ts";
 import { recordAggregateUsage } from "../aggregate.ts";
 import type { AggregateEntry } from "./catalog.ts";
-import { select, SelectionStop, byWeight } from "./selection.ts";
+import { select, SelectionStop, byWeight, sessionTargetOrder } from "./selection.ts";
+import { extractSessionKey, sessionKeyFingerprint, sessionHeaderNames } from "../session-id.ts";
 import { classifyUpstreamError, describeUpstreamError } from "./provider-selection.ts";
 import { recordUsage, maxTotals, usageTotals } from "../usage.ts";
-import { clientForwardHeaders, detectAgent, detectSession, type SessionInfo } from "../agent.ts";
+import { detectAgent, detectSession, type SessionInfo } from "../agent.ts";
+import { resolveForwardedHeaders } from "../admin/platform-header-injection.ts";
 import { workbuddyCatalog } from "../admin/upstreams.ts";
 import { toMinimax, toZcode, toQoder, toWorkBuddy, type UpstreamContext } from "./upstreams/index.ts";
 import {
@@ -175,7 +178,7 @@ async function handleAggregate(
       // 半开时抢到探测名额的那一个请求照常打上去：没有探测，熔断就永远打不开。
       const breaker = checkBreaker(target.group);
       if (!breaker.allow) {
-        console.log(`[ROUTE] ${target.group}：${breaker.reason}，跳过这个目标，不打上游`);
+        log.info(`[ROUTE] ${target.group}：${breaker.reason}，跳过这个目标，不打上游`);
         throw skipTrippedTarget(entry, target, breaker, ctx, started);
       }
 
@@ -205,9 +208,34 @@ async function handleAggregate(
     },
   }));
 
-  // The order the candidates are tried in: the heaviest first. The log needs
-  // it to say which target takes over.
-  const ordered = byWeight(candidates);
+  // The order the candidates are tried in. `balance` orders them per
+  // session (weighted rendezvous): the same session always meets the same
+  // order, so its prompt cache keeps hitting on one upstream. The other two
+  // strategies are priority orders: the heaviest first.
+  //
+  // 取不到会话就答 400：balance 没有会话标识就没有粘性可言，而答案一旦写出去
+  // 就没有换目标的机会 —— 所以这个判断必须发生在任何上游调用之前。只有这一个
+  // 模型（这一个请求）受影响，也不记成上游失败：上游什么都没收到。
+  let ordered: typeof candidates;
+
+  if (entry.strategy === "balance") {
+    const key = extractSessionKey(ctx.request.headers, body);
+    if (!key) {
+      sendError(
+        ctx,
+        new AuthError(
+          `model ${entry.id} requires a session id`,
+          sessionRequiredHint(),
+          400,
+        ),
+      );
+      return;
+    }
+    log.info(`[ROUTE] ${entry.id}：按会话负载均衡，${sessionKeyFingerprint(key)}`);
+    ordered = sessionTargetOrder(candidates, key.id);
+  } else {
+    ordered = byWeight(candidates);
+  }
 
   // 试过的失败，按尝试的先后记着：给客户端看哪一个由它们决定，不由最后一个决定。
   // 记的是「哪个目标」与「它的错」：客户端要知道每个目标各自为什么失败。
@@ -232,20 +260,22 @@ async function handleAggregate(
         const reason = stopped ? error.reason : error;
         // 客户端走了：这个错不参与挑选，也没有下一个目标了。
         if (reason instanceof ClientGoneError) {
-          console.log(`[ROUTE] ${candidate.id}：客户端走了，答复没送出去`);
+          log.info(`[ROUTE] ${candidate.id}：客户端走了，答复没送出去`);
           return;
         }
         // 答复已经开始的那个错不参与挑选：那时已经没有选择了。
         if (!stopped) failures.push({ id: candidate.id, error: reason });
         const at = ordered.findIndex((c) => c.id === candidate.id);
         const next = ordered[at + 1];
-        console.log(
-          `[ROUTE] ${candidate.id} failed (${describeTargetFailure(reason)}), ` +
-            (stopped
-              ? "the answer had already started"
-              : next
-                ? `trying ${next.id}`
-                : "no target left"),
+        // 这条日志的尾巴先算成变量：嵌套三元读不出「没有目标可试」这一层。
+        let where = "no target left";
+        if (stopped) {
+          where = "the answer had already started";
+        } else if (next) {
+          where = `trying ${next.id}`;
+        }
+        log.info(
+          `[ROUTE] ${candidate.id} failed (${describeTargetFailure(reason)}), ` + where,
         );
       },
       failure: (lastError) => {
@@ -280,6 +310,23 @@ async function handleAggregate(
   } catch (e) {
     sendError(ctx, e);
   }
+}
+
+/**
+ * balance 模型没有会话标识时给客户端的话：它得知道缺什么、能配上什么。
+ */
+function sessionRequiredHint(): string {
+  return [
+    "这个模型配置了按会话负载均衡（balance）：同一个会话的请求会固定打到同一个上游，",
+    "但这次请求里找不到会话标识。",
+    "",
+    "请求头按顺序找过这些（命中即用）：",
+    ...sessionHeaderNames().map((name) => `  - ${name}`),
+    "都没有时再看请求体里的 prompt_cache_key 与 metadata.user_id。",
+    "",
+    "如果客户端用别的头名带会话标识，可以在面板（或 config）里把 SESSION_HEADER",
+    "设成那个头名（可逗号分隔多个）；它是追加在最后，不会抢上面任何内置头。",
+  ].join("\n");
 }
 
 /**
@@ -403,6 +450,7 @@ const CLIENT_KIND_WORDS: Record<string, string> = {
   timeout: "上游太慢",
   connection: "连不上",
   unreachable: "连不上",
+  refused: "上游拒绝服务",
   credential: "凭据被拒",
   "no-balance": "余额用尽",
   quota: "额度用完",
@@ -506,7 +554,7 @@ export async function handle(
   let route: Route;
   try {
     const rctx = routingContext(availabilities);
-    route = routeInGroup(platform!, String(body.model ?? "").trim(), rctx);
+    route = routeInGroup(platform, String(body.model ?? "").trim(), rctx);
   } catch (e) {
     sendError(ctx, e);
     return;
@@ -567,7 +615,22 @@ async function callUpstream(
   // 模拟客户端的那些（Qoder、WorkBuddy、MiniMax Code、ZCode）按客户端的样子
   // 重建请求，不用这些头。
   if (kind?.openPlatform) {
-    uctx.forwardedHeaders = clientForwardHeaders(ctx.request.headers);
+    // 客户端头按 deny-list 透传之后，把平台自己配的头模板盖上（模板值里的
+    // {session-id} 在这里渲染）。模板带了占位符而取不到会话 → 400：这发生在
+    // 任何上游往返之前，也不写一行上游失败的用量。
+    const injected = resolveForwardedHeaders(
+      route.platform,
+      template?.label ?? route.platform,
+      template?.headers ?? [],
+      ctx.request.headers,
+      body,
+    );
+    if (!injected.ok) {
+      ctx.status = 400;
+      ctx.body = { error: { type: "invalid_request_error", message: injected.message } };
+      return;
+    }
+    uctx.forwardedHeaders = injected.headers;
   }
   try {
     switch (kind?.kind) {
@@ -610,7 +673,13 @@ async function callUpstream(
     const err = e as AuthError;
     // 客户端走了：答复那一层给客户端的是 499，用量表也记 499，不要记成 500
     // —— 500 是「上游挂了」，而上游没坏，只是没人要了。
-    const status = e instanceof ClientGoneError ? 499 : typeof err?.status === "number" ? err.status : 500;
+    // 客户端走了记 499；上游自己给了状态码就用它的；都没有才是 500。
+    let status = 500;
+    if (e instanceof ClientGoneError) {
+      status = 499;
+    } else if (typeof err?.status === "number") {
+      status = err.status;
+    }
     recordRequestUsage(
       body,
       route,
@@ -676,14 +745,13 @@ export function effectiveMaxTokens(
   uctx: Pick<UpstreamContext, "upstreamMaxTokens">,
   body: Json,
 ): number | "未指定" {
-  return (
-    uctx.upstreamMaxTokens ??
-    (typeof body.max_tokens === "number"
-      ? body.max_tokens
-      : typeof body.max_completion_tokens === "number"
-        ? body.max_completion_tokens
-        : "未指定")
-  );
+  let fromBody: number | "未指定" = "未指定";
+  if (typeof body.max_tokens === "number") {
+    fromBody = body.max_tokens;
+  } else if (typeof body.max_completion_tokens === "number") {
+    fromBody = body.max_completion_tokens;
+  }
+  return uctx.upstreamMaxTokens ?? fromBody;
 }
 
 /**
@@ -734,7 +802,7 @@ function recordRequestUsage(
     const budget = effectiveMaxTokens(uctx, body);
     // 用掉了多少：思考把预算吃满时这里就是 100%。上限不是数字就不知道。
     const used = budgetUsed(completion, budget);
-    console.warn(
+    log.warn(
       `[UPSTREAM] ${route.platform}/${upstreamModel} 答 200 但没有正文` +
         `（completion=${completion} reasoning=${reasoning} 正文=${completion - reasoning}` +
         ` 上游上限=${budget} 用掉=${used} ${emptyAnswerDetail(uctx, client)}）`,

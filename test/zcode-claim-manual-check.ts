@@ -32,6 +32,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { startFakeUpstream, type CapturedRequest } from "./fake-upstream.ts";
+import { captureLog } from "./log-capture.ts";
 
 // 会话层在模块求值时读配置，所以数据目录与假上游的地址要设好才能 import
 // （与 test/zcode-claim-check.ts 同一套做法）。
@@ -65,8 +66,15 @@ let offerCampaignId = "camp-1";
 let configsHits = 0;
 let touchHits = 0;
 let claimHits = 0;
-/** 最近一次领取请求。 */
-let lastClaim: CapturedRequest | null = null;
+/** 收到的每个领取请求（`.at(-1)` 取最近一次）。
+ *
+ * 不用可空变量：赋值发生在 fake 上游的 handler 里，TS 看不见那次写入，会把
+ * 变量收窄成 null、读处报 never。数组读 `.at(-1)` 不受这个影响。
+ */
+const claimLog: CapturedRequest[] = [];
+
+/** 最近一次领取请求：读处收敛在一个函数里，别在断言里散着取。 */
+const lastClaimOf = (): CapturedRequest | null => claimLog.at(-1) ?? null;
 
 /** 一个带「领取」按钮的投放（实测形状，2026-11）。 */
 const OFFER_DELIVERY = {
@@ -143,7 +151,7 @@ const fake = await startFakeUpstream((req) => {
   }
   if (url.startsWith("/api/v1/zcode-plan/billing/claim")) {
     claimHits++;
-    lastClaim = req;
+    claimLog.push(req);
     if (claimMode === "captcha") {
       return send({ code: 3007, msg: "captcha verify failed", data: { message: "" } });
     }
@@ -242,7 +250,7 @@ function reset(
   configsHits = 0;
   touchHits = 0;
   claimHits = 0;
-  lastClaim = null;
+  claimLog.length = 0;
   // 领取的结论也复位（它存在现役的快照里）：否则上一节领过的投放会让这一节
   // 不再 POST，下面的断言就测不到东西了。
   putHealthSnapshot({ qoder: {}, minimax: {}, zcode: {}, workbuddy: {}, plugins: {} });
@@ -290,13 +298,13 @@ check("领到了", claimed.outcome === "claimed", JSON.stringify(claimed));
 check("领取请求发了一个", claimHits === 1, String(claimHits));
 check(
   "带了 X-Aliyun-Captcha-Verify-Param",
-  lastClaim?.headers["x-aliyun-captcha-verify-param"] === CAPTCHA_PARAM,
-  JSON.stringify(lastClaim?.headers["x-aliyun-captcha-verify-param"]),
+  lastClaimOf()?.headers["x-aliyun-captcha-verify-param"] === CAPTCHA_PARAM,
+  JSON.stringify(lastClaimOf()?.headers["x-aliyun-captcha-verify-param"]),
 );
 check(
   "带了 X-Aliyun-Captcha-Verify-Region",
-  lastClaim?.headers["x-aliyun-captcha-verify-region"] === "cn",
-  JSON.stringify(lastClaim?.headers["x-aliyun-captcha-verify-region"]),
+  lastClaimOf()?.headers["x-aliyun-captcha-verify-region"] === "cn",
+  JSON.stringify(lastClaimOf()?.headers["x-aliyun-captcha-verify-region"]),
 );
 const MODEL_HEADERS = [
   "x-api-key",
@@ -307,18 +315,18 @@ const MODEL_HEADERS = [
   "x-query-id",
   "x-zcode-query-source",
 ];
-const leaked = MODEL_HEADERS.filter((h) => lastClaim?.headers[h] !== undefined);
+const leaked = MODEL_HEADERS.filter((h) => lastClaimOf()?.headers[h] !== undefined);
 check("一个模型头都没带", leaked.length === 0, leaked.join(","));
 check(
   "Authorization 只有一份（叠了上游回 401 空正文）",
-  typeof lastClaim?.headers["authorization"] === "string" &&
-    lastClaim.headers["authorization"].startsWith("Bearer "),
-  JSON.stringify(lastClaim?.headers["authorization"]),
+  typeof lastClaimOf()?.headers["authorization"] === "string" &&
+    lastClaimOf()?.headers["authorization"].startsWith("Bearer ") === true,
+  JSON.stringify(lastClaimOf()?.headers["authorization"]),
 );
 check(
   "body 只有 plan_id",
-  lastClaim?.body === JSON.stringify({ plan_id: "plan-alpha" }),
-  lastClaim?.body,
+  lastClaimOf()?.body === JSON.stringify({ plan_id: "plan-alpha" }),
+  lastClaimOf()?.body,
 );
 check(
   "结论带着领到的计划名与生效时刻",
@@ -338,11 +346,8 @@ check(
 section("二、上游拒了验证码（3007）");
 
 reset("ok", "offer", "captcha", "camp-captcha");
-const logs: string[] = [];
-const realLog = console.log;
-const realWarn = console.warn;
-console.log = (...args: unknown[]) => logs.push(args.map(String).join(" "));
-console.warn = (...args: unknown[]) => logs.push(args.map(String).join(" "));
+const captured = captureLog({ methods: ["info", "warn"] });
+const logs = captured.all;
 let rejected: Awaited<ReturnType<typeof claimZcodePlanManually>>;
 try {
   rejected = await claimZcodePlanManually(ACCOUNT_ID, {
@@ -352,8 +357,7 @@ try {
     captchaRegion: "cn",
   });
 } finally {
-  console.log = realLog;
-  console.warn = realWarn;
+  captured.restore();
 }
 check("3007 → captcha_rejected", rejected.outcome === "captcha_rejected", JSON.stringify(rejected));
 check("结论带着业务码 3007", rejected.code === 3007, JSON.stringify(rejected.code));

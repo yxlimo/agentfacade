@@ -6,6 +6,7 @@
 // answer is converted at most once, and the way it is written out — the
 // headers, the frames, the error events — is the same for every upstream.
 
+import { log } from "../log.ts";
 import type { Json } from "../json.ts";
 import crypto from "node:crypto";
 import type Koa from "koa";
@@ -190,7 +191,7 @@ function armWatchdog(ctx: Koa.Context, state: ReplyState): void {
       armWatchdog(ctx, state);
       return;
     }
-    console.warn(`[DELIVER] 客户端 ${((Date.now() - earliest) / 1000).toFixed(1)}s 没有读，断开连接`);
+    log.warn(`[DELIVER] 客户端 ${((Date.now() - earliest) / 1000).toFixed(1)}s 没有读，断开连接`);
     markGone(ctx, state);
   }, wait);
   // 这个定时器不该让进程活着。
@@ -538,20 +539,20 @@ function idleGates(limits: { firstFrameMs?: number; idleMs?: number }): { firstF
   let idleMs = clampStreamLimit(rawIdleMs);
   if (Number.isNaN(firstFrameMs)) {
     firstFrameMs = STREAM_FIRST_FRAME_DEFAULT_MS;
-    console.warn(`[DELIVER] 首帧上限 ${rawFirstFrameMs} 不是有限数，已回落默认 ${firstFrameMs}`);
+    log.warn(`[DELIVER] 首帧上限 ${rawFirstFrameMs} 不是有限数，已回落默认 ${firstFrameMs}`);
   }
   if (Number.isNaN(idleMs)) {
     idleMs = STREAM_IDLE_DEFAULT_MS;
-    console.warn(`[DELIVER] 空闲上限 ${rawIdleMs} 不是有限数，已回落默认 ${idleMs}`);
+    log.warn(`[DELIVER] 空闲上限 ${rawIdleMs} 不是有限数，已回落默认 ${idleMs}`);
   }
   if (streamLimitWasCapped(rawFirstFrameMs)) {
-    console.warn(`[DELIVER] 首帧上限 ${rawFirstFrameMs} 超过上限，已按 ${firstFrameMs} 生效`);
+    log.warn(`[DELIVER] 首帧上限 ${rawFirstFrameMs} 超过上限，已按 ${firstFrameMs} 生效`);
   }
   if (streamLimitWasCapped(rawIdleMs)) {
-    console.warn(`[DELIVER] 空闲上限 ${rawIdleMs} 超过上限，已按 ${idleMs} 生效`);
+    log.warn(`[DELIVER] 空闲上限 ${rawIdleMs} 超过上限，已按 ${idleMs} 生效`);
   }
-  if (!(firstFrameMs > 0)) console.warn(`[DELIVER] 首帧上限被设成 ${firstFrameMs}，等第一帧不再有超时`);
-  if (!(idleMs > 0)) console.warn(`[DELIVER] 空闲上限被设成 ${idleMs}，流中途不再有超时`);
+  if (!(firstFrameMs > 0)) log.warn(`[DELIVER] 首帧上限被设成 ${firstFrameMs}，等第一帧不再有超时`);
+  if (!(idleMs > 0)) log.warn(`[DELIVER] 空闲上限被设成 ${idleMs}，流中途不再有超时`);
   return { firstFrameMs, idleMs };
 }
 
@@ -890,7 +891,7 @@ export async function peekStream(
           : detail?.message || detail?.msg || parsed?.message || parsed?.msg;
       if (typeof words === "string" && words) said = scrubForClient(words, 300);
     }
-    console.warn("[DELIVER] 上游在正文里报错：" + scrubForLog(said, 200));
+    log.warn("[DELIVER] 上游在正文里报错：" + scrubForLog(said, 200));
     // 上游有时用 200 回一个错（渠道校验就是）。码要带上，否则日志里看不见
     // 11128：状态码说的是 200，看着像成功。
     //
@@ -1057,7 +1058,7 @@ export async function deliverOpenAIStream(
     //
     // 以前这里把错吞成一条 error 帧（头在那之前就发了），换不了目标：生产上
     // fallback 的第三跳首帧就是 403，客户端拿到的是 200 里藏一句 error。
-    console.warn(`[DELIVER] 上游第一帧就失败了：${failureLine(e)}`);
+    log.warn(`[DELIVER] 上游第一帧就失败了：${failureLine(e)}`);
     reportFailure(onFailure, e);
     // 响应从没接管过：它还是 Koa 的，调用方写的 sendError 才会落到 socket 上。
     throw e;
@@ -1084,7 +1085,7 @@ export async function deliverOpenAIStream(
     reportClientGone(ctx, onFailure);
   } catch (e) {
     // The headers are already out, so the failure goes back as an error event.
-    console.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
+    log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
     await writeFrame(ctx, errorEvent(clientMessageOf(e)));
     reportFailure(onFailure, e);
   }
@@ -1137,7 +1138,7 @@ export async function deliverAnthropicStream(
       ctx.res.end();
       return;
     }
-    console.warn(`[DELIVER] 上游第一帧就失败了：${failureLine(e)}`);
+    log.warn(`[DELIVER] 上游第一帧就失败了：${failureLine(e)}`);
     reportFailure(onFailure, e);
     // 响应从没接管过：它还是 Koa 的，调用方写的 sendError 才会落到 socket 上。
     throw e;
@@ -1210,7 +1211,7 @@ export async function deliverAnthropicStream(
       onFinish({ reason: convertedReason ?? "未给", ...converted });
     }
   } catch (e) {
-    console.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
+    log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
     await writeFrame(ctx, errorEvent(clientMessageOf(e)));
     reportFailure(onFailure, e);
   }
@@ -1269,7 +1270,7 @@ export async function deliverOpenAIChunks(
   try {
     first = await iterator.next();
   } catch (e) {
-    console.warn(`[DELIVER] 上游第一帧就失败了：${failureLine(e)}`);
+    log.warn(`[DELIVER] 上游第一帧就失败了：${failureLine(e)}`);
     reportFailure(onFailure, e);
     // 响应从没接管过：它还是 Koa 的，调用方写的 sendError 才会落到 socket 上。
     throw e;
@@ -1292,7 +1293,7 @@ export async function deliverOpenAIChunks(
       reportClientGone(ctx, onFailure);
       await writeFrame(ctx, SSE_DONE);
     } catch (e) {
-      console.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
+      log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
       await writeFrame(ctx, errorEvent(clientMessageOf(e)));
       reportFailure(onFailure, e);
     }
@@ -1309,7 +1310,7 @@ export async function deliverOpenAIChunks(
     // 上游安静的时候客户端断开：这条请求不算成功。
     reportClientGone(ctx, onFailure);
   } catch (e) {
-    console.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
+    log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
     await writeFrame(ctx, errorEvent(clientMessageOf(e)));
     reportFailure(onFailure, e);
   }
@@ -1473,7 +1474,7 @@ async function pipeOpenAIChunks(
     reportClientGone(ctx, onFailure);
     await writeFrame(ctx, SSE_DONE);
   } catch (e) {
-    console.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
+    log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
     await writeFrame(ctx, sseData({ error: { type: "api_error", message: clientMessageOf(e) } }));
     await writeFrame(ctx, SSE_DONE);
     reportFailure(onFailure, e);
@@ -1544,7 +1545,7 @@ async function writeAnthropicFrames(
           const fixed = repairMessageStart(json, model);
           if (fixed.repaired && !warnedMissingMessage) {
             warnedMissingMessage = true;
-            console.warn("[DELIVER] 上游的 message_start 没有 message，已补一个最小对象");
+            log.warn("[DELIVER] 上游的 message_start 没有 message，已补一个最小对象");
           }
           data = JSON.stringify(fixed.json);
         }
@@ -1562,7 +1563,7 @@ async function writeAnthropicFrames(
     // 会被记成成功 —— 客户端其实一个字都没拿到（2026-11-03，作者复查发现）。
     reportClientGone(ctx, onFailure);
   } catch (e) {
-    console.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
+    log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
     await writeFrame(ctx, errorEvent(clientMessageOf(e)));
     reportFailure(onFailure, e);
   } finally {
@@ -1604,7 +1605,7 @@ export function sendError(ctx: Koa.Context, e: unknown, headers: Record<string, 
   if (e instanceof ClientGoneError) {
     // 客户端已经走了：这个答复没人收。日志别写成「上游挂了」—— 上游没坏，
     // 只是没人要了（2026-11-03）。
-    console.log(`[DELIVER] 客户端走了，答复没送出去`);
+    log.info(`[DELIVER] 客户端走了，答复没送出去`);
     if (ctx.res.headersSent) {
       ctx.res.end();
       return;
@@ -1620,7 +1621,7 @@ export function sendError(ctx: Koa.Context, e: unknown, headers: Record<string, 
   }
   ctx.status = status;
   if (Object.keys(extra).length) ctx.set(extra);
-  console.warn(`[DELIVER] 答复 ${status}：${err?.message ?? "request failed"}`);
+  log.warn(`[DELIVER] 答复 ${status}：${err?.message ?? "request failed"}`);
   ctx.body = {
     error: {
       // 503 means the credential is the problem; everything else is the request

@@ -46,6 +46,16 @@ export const PLATFORM_NOT_FOUND = "PLATFORM_NOT_FOUND";
 /** 写库失败，且不是重名（重名有自己的码）。 */
 export const PLATFORM_WRITE_FAILED = "PLATFORM_WRITE_FAILED";
 
+/* 开放平台的注入头模板（HeaderTemplate）校验：面板能按第几条指到输入框。 */
+export const PLATFORM_HEADERS_INVALID = "PLATFORM_HEADERS_INVALID";
+export const PLATFORM_HEADERS_TOO_MANY = "PLATFORM_HEADERS_TOO_MANY";
+export const PLATFORM_HEADERS_NAME_EMPTY = "PLATFORM_HEADERS_NAME_EMPTY";
+/** 头名不是 RFC 7230 token（含空格、冒号、中文时 Node 的 http 客户端会抛错）。 */
+export const PLATFORM_HEADERS_NAME_INVALID = "PLATFORM_HEADERS_NAME_INVALID";
+export const PLATFORM_HEADERS_VALUE_EMPTY = "PLATFORM_HEADERS_VALUE_EMPTY";
+export const PLATFORM_HEADERS_VALUE_INVALID = "PLATFORM_HEADERS_VALUE_INVALID";
+export const PLATFORM_HEADERS_VALUE_TOO_LONG = "PLATFORM_HEADERS_VALUE_TOO_LONG";
+
 /* ------------------------------------------------------------------ *
  * 额度插件
  * ------------------------------------------------------------------ */
@@ -128,6 +138,13 @@ export const ADMIN_ERRORS = {
   [PLATFORM_KIND_FIXED]: Code.FailedPrecondition,
   [PLATFORM_NOT_FOUND]: Code.NotFound,
   [PLATFORM_WRITE_FAILED]: Code.Internal,
+  [PLATFORM_HEADERS_INVALID]: Code.InvalidArgument,
+  [PLATFORM_HEADERS_TOO_MANY]: Code.InvalidArgument,
+  [PLATFORM_HEADERS_NAME_EMPTY]: Code.InvalidArgument,
+  [PLATFORM_HEADERS_NAME_INVALID]: Code.InvalidArgument,
+  [PLATFORM_HEADERS_VALUE_EMPTY]: Code.InvalidArgument,
+  [PLATFORM_HEADERS_VALUE_INVALID]: Code.InvalidArgument,
+  [PLATFORM_HEADERS_VALUE_TOO_LONG]: Code.InvalidArgument,
 
   [QUOTA_PLUGIN_UNKNOWN]: Code.InvalidArgument,
 

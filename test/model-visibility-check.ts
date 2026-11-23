@@ -267,7 +267,7 @@ function publishOne(
       reasoning: model.reasoning,
       toolCall: null,
       effortOptions: model.effortOptions,
-      targets: [{ group: "minimax", upstreamModel: "m", enabled: true, weight: 1 }],
+      targets: [{ group: "minimax", upstreamModel: "m", position: 0, enabled: true, weight: 1 }],
       createdAt: 0,
       updatedAt: 0,
     },

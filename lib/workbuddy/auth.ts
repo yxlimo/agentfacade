@@ -15,6 +15,7 @@
 // gateway was copilot.tencent.com, and the account's own domain decides which
 // one answers for it.
 
+import { log } from "../log.ts";
 import { configString, configNumber } from "../config.ts";
 import { cliFetch } from "../http.ts";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -442,17 +443,17 @@ export async function login(providerId = "workbuddy-cn"): Promise<WorkBuddySessi
   const ctx = loginContext(providerId);
   const ticket = await beginLoginFlow("workbuddy", ctx);
 
-  console.log("");
-  console.log(`  region: ${region}  base: ${ENDPOINTS[region].base}`);
-  console.log(`  open in a browser: ${ticket.authorizationUrl}`);
-  console.log(`  (waiting for approval, up to ${Math.round(LOGIN_TIMEOUT_MS / 60000)} min)`);
-  console.log("");
+  log.info("");
+  log.info(`  region: ${region}  base: ${ENDPOINTS[region].base}`);
+  log.info(`  open in a browser: ${ticket.authorizationUrl}`);
+  log.info(`  (waiting for approval, up to ${Math.round(LOGIN_TIMEOUT_MS / 60000)} min)`);
+  log.info("");
 
   const { session } = await driveLogin<WorkBuddySession>("workbuddy", ctx, ticket, ticket.expiresAtMs);
-  console.log(
+  log.info(
     `  logged in: ${session.nickname}, token good for ${Math.round(session.expiresAtMs / 1000 - Date.now() / 1000)}s`,
   );
-  console.log(`  saved to the database (${sessionId(providerId)})`);
+  log.info(`  saved to the database (${sessionId(providerId)})`);
   authLog(
     dataDir(),
     `workbuddy ${region} login ok`,
@@ -460,7 +461,7 @@ export async function login(providerId = "workbuddy-cn"): Promise<WorkBuddySessi
       `refresh ${tokenFingerprint(session.refreshToken)}, ` +
       `${Math.round(session.expiresAtMs / 1000 - Date.now() / 1000)}s left`,
   );
-  console.log("  later refreshes are automatic — nothing else to do.");
+  log.info("  later refreshes are automatic — nothing else to do.");
   return session;
 }
 

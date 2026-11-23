@@ -35,8 +35,9 @@ function check(name: string, ok: boolean, detail = ""): void {
   }
 }
 
+import type { Json } from "../lib/json.ts";
 /** 把一组帧喂给转换器，返回它吐出来的每一帧。 */
-async function frames(chunks: unknown[]): Promise<string> {
+async function frames(chunks: Json[]): Promise<string> {
   const out: string[] = [];
   for await (const frame of openaiStreamToAnthropic(
     (async function* () {

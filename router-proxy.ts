@@ -25,6 +25,7 @@
 //   Anthropic → Qoder  converted to Anthropic on the way in
 //   Anthropic → MiniMax passes through
 
+import { log } from "./lib/log.ts";
 import { configNumber, configString, logConfig } from "./lib/config.ts";
 import { deleteSecret, listSecrets } from "./lib/store.ts";
 import { requireApiKey } from "./lib/api-keys.ts";
@@ -62,13 +63,13 @@ const clearAt = process.argv.indexOf("--clear");
 if (clearAt >= 0) {
   const id = process.argv[clearAt + 1] ?? "";
   if (!id) {
-    console.error("usage: node router-proxy.ts --clear <credential-id>");
-    console.error("the credentials in the database:");
-    for (const row of listSecrets()) console.error(`  ${row.id}  (${row.kind})`);
+    log.error("usage: node router-proxy.ts --clear <credential-id>");
+    log.error("the credentials in the database:");
+    for (const row of listSecrets()) log.error(`  ${row.id}  (${row.kind})`);
     process.exit(1);
   }
   deleteSecret(id);
-  console.log(`cleared ${id}`);
+  log.info(`cleared ${id}`);
   process.exit(0);
 }
 
@@ -92,34 +93,34 @@ const server = app.listen(PORT, HOST, () => {
   // The usage log grows one row per request, so old rows go. Ninety days is
   // enough for "today" and the monthly view.
   const pruned = pruneUsage(configNumber("USAGE_RETENTION_DAYS", 30));
-  if (pruned > 0) console.log(`  [USAGE] 丢掉了 ${pruned} 条超过 90 天的用量记录`);
-  console.log("");
-  console.log(`  router listening on ${base}`);
-  console.log(`    Anthropic  ${base}/v1/messages`);
-  console.log(`    OpenAI     ${base}/v1/chat/completions`);
-  console.log(`    Models     ${base}/v1/models`);
-  console.log(`    Health     ${base}/health`);
-  console.log(`    Panel      ${base}/admin${hasWebDist() ? "" : " (还没有构建产物)"}`);
-  console.log(`    Admin API  ${base}${CONNECT_PREFIX}/<Method>  (Bearer 令牌)`);
-  console.log("");
+  if (pruned > 0) log.info(`  [USAGE] 丢掉了 ${pruned} 条超过 90 天的用量记录`);
+  log.info("");
+  log.info(`  router listening on ${base}`);
+  log.info(`    Anthropic  ${base}/v1/messages`);
+  log.info(`    OpenAI     ${base}/v1/chat/completions`);
+  log.info(`    Models     ${base}/v1/models`);
+  log.info(`    Health     ${base}/health`);
+  log.info(`    Panel      ${base}/admin${hasWebDist() ? "" : " (还没有构建产物)"}`);
+  log.info(`    Admin API  ${base}${CONNECT_PREFIX}/<Method>  (Bearer 令牌)`);
+  log.info("");
   // 每个平台一行：开着的账号数、策略、服务多少个模型。没有账号的平台也列
   // 出来 —— 新装好的服务一个账号都没有，这是要看出来的常态，不是错误。
-  console.log(`  platforms:`);
+  log.info(`  platforms:`);
   for (const template of PLATFORMS) {
     const accounts = accountsOfPlatform(template.id);
     const on = accounts.filter((row) => row.enabled).length;
     const models = modelsOfPlatform(template.id).length;
     const state = on ? `${on}/${accounts.length} accounts, ${models} models` : `off (${accounts.length} accounts)`;
-    console.log(`    ${template.id.padEnd(13)} ${state}  policy=${platformPolicy(template.id)}`);
+    log.info(`    ${template.id.padEnd(13)} ${state}  policy=${platformPolicy(template.id)}`);
   }
-  console.log(`  auth: ${requireApiKey() ? "api key required" : "public"}`);
-  console.log("");
+  log.info(`  auth: ${requireApiKey() ? "api key required" : "public"}`);
+  log.info("");
 
   // Where the settings came from: the database first, then the environment,
   // then the defaults in the code. A setting that is not the default is
   // printed, so a change in the database is visible in the log.
   logConfig();
-  console.log("");
+  log.info("");
 
   startUpstreams();
   void PING_MS;
@@ -151,15 +152,15 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.on(signal, () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`  [SHUTDOWN] ${signal}: 不再接新请求，等手上的活干完（最多 ${DRAIN_MS / 1000} 秒）`);
+    log.info(`  [SHUTDOWN] ${signal}: 不再接新请求，等手上的活干完（最多 ${DRAIN_MS / 1000} 秒）`);
     server.close(() => {
-      console.log("  [SHUTDOWN] 手上的活干完了");
+      log.info("  [SHUTDOWN] 手上的活干完了");
       process.exit(0);
     });
     // A request that hangs (an upstream that never answers) must not keep the
     // container alive forever.
     setTimeout(() => {
-      console.log("  [SHUTDOWN] 等太久了，走了");
+      log.info("  [SHUTDOWN] 等太久了，走了");
       process.exit(0);
     }, DRAIN_MS).unref?.();
   });

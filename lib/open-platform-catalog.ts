@@ -12,6 +12,7 @@
 //
 // 它不碰额度：额度是那个额度插件的事，还没接。
 
+import { log } from "./log.ts";
 import { randomUUID } from "node:crypto";
 import {
   mergeModelTraits,
@@ -388,25 +389,25 @@ export async function fetchOpenPlatformModels(
       // 上游的正文一起记：面板上那句「细节看日志」指的就是这里。只记状态码
       // 答不出为什么（key 不对、没有 /models、风控拦了，状态码常常一样）。
       const body = await res.text().catch(() => "");
-      console.warn(
+      log.warn(
         `[OPEN-PLATFORM] ${row.id} 的模型目录拉不到：HTTP ${res.status} (request=${requestId})：${body.slice(0, 200)}`,
       );
       return null;
     }
     payload = await res.json();
   } catch (e) {
-    console.warn(
+    log.warn(
       `[OPEN-PLATFORM] ${row.id} 的模型目录拉不到：${(e as Error)?.message ?? e} (request=${requestId})`,
     );
     return null;
   }
   const models = parseModelList(payload, { id: row.id, kind: row.kind });
   if (!models) {
-    console.warn(`[OPEN-PLATFORM] ${row.id} 的模型目录认不出来：上游答的不是模型清单`);
+    log.warn(`[OPEN-PLATFORM] ${row.id} 的模型目录认不出来：上游答的不是模型清单`);
     return null;
   }
   if (!models.length) {
-    console.warn(`[OPEN-PLATFORM] ${row.id} 的模型目录是空的，保留原来那份`);
+    log.warn(`[OPEN-PLATFORM] ${row.id} 的模型目录是空的，保留原来那份`);
     return null;
   }
   return models;
@@ -509,7 +510,7 @@ async function runRefresh(id: string, force: boolean): Promise<CatalogOutcome> {
       // 写不回去是配置或库的问题，不是一般的「拉不到」：把原因写进日志，事后
       // 才查得到「目录为什么没更新」。
       const detail = (e as Error)?.message ?? String(e);
-      console.warn(`[OPEN-PLATFORM] ${id} 的模型目录没写回：${detail}`);
+      log.warn(`[OPEN-PLATFORM] ${id} 的模型目录没写回：${detail}`);
       return { ok: false, message: `模型目录没写回：${detail}` };
     }
     // 成功：这一次的序号就是「上次成功」。
@@ -518,7 +519,7 @@ async function runRefresh(id: string, force: boolean): Promise<CatalogOutcome> {
   } catch (e) {
     // 库开不了、SQLITE_BUSY：这一轮拉不成，但不该把整个网关带走。
     const message = (e as Error)?.message ?? String(e);
-    console.warn(`[OPEN-PLATFORM] ${id} 的模型目录没拉到：${message}`);
+    log.warn(`[OPEN-PLATFORM] ${id} 的模型目录没拉到：${message}`);
     return { ok: false, message: `无法获取模型目录：${message}` };
   }
 }

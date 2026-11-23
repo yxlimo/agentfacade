@@ -17,6 +17,8 @@ import type { BenefitOutcome } from "../lib/benefits.ts";
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "test-provider-policy-"));
 process.env.FACADE_DATA_DIR = DATA_DIR;
 
+import type { UnknownEnum } from "@bufbuild/protobuf";
+import type { HandlerContext } from "@connectrpc/connect";
 const { create } = await import("@bufbuild/protobuf");
 const { accountsOfPlatform, addAccount, listProviders, provider, updateProvider } = await import(
   "../lib/providers.ts"
@@ -55,10 +57,17 @@ function check(name: string, ok: boolean, detail = ""): void {
   }
 }
 
+/** 契约里的策略枚举值。 */
+type ContractPolicyValue = (typeof ContractPolicy)[keyof typeof ContractPolicy] | UnknownEnum;
+
+/** 进程内直调，没有 HTTP 上下文可给。 */
+const noContext = {} as HandlerContext;
+
 /** 打管理服务的方法（不经 HTTP）。 */
-async function setPolicy(platform: string, policy: number) {
+async function setPolicy(platform: string, policy: ContractPolicyValue) {
   return adminService.setPlatformPolicy!(
     create(SetPlatformPolicyRequestSchema, { platform, policy }),
+    noContext,
   );
 }
 
@@ -163,6 +172,8 @@ registerKind({
   kind: "test-kind-no-policies",
   label: "测试种类",
   login: "device",
+  // 凭据这一单不在这里验；按会话种类登记，让注册表收得下。
+  inferWith: "session",
   baseUrl: () => "https://example.invalid",
   credential: () => ({
     kind: "session",
@@ -180,7 +191,7 @@ registerKind({
   // 凭据形状不归这些测试管：只登记一个空形状的声明（凭据这一单不在这里验）。
   credentials: { title: "", slots: () => [], fields: () => [], write: () => 0 },
 });
-const kinds = await adminService.listProviderKinds!(create(ListProviderKindsRequestSchema, {}));
+const kinds = await adminService.listProviderKinds!(create(ListProviderKindsRequestSchema, {}), noContext);
 const listed = (kinds.kinds as { kind: string; policies: number[] }[]).find(
   (k) => k.kind === "test-kind-no-policies",
 );
@@ -252,7 +263,8 @@ check(
   ["single", "fallback"].every((v) => String(unspecified.message).includes(v)),
   String(unspecified.message),
 );
-const unknown = await setPolicy("tokenrhythm", 7);
+// 契约外的枚举值：线上就是一个不在表里的数字，类型上归 UnknownEnum。
+const unknown = await setPolicy("tokenrhythm", 7 as UnknownEnum);
 check("不认识的数字不收", unknown.ok === false, JSON.stringify(unknown));
 check("给错了的没写进库", platformPolicy("tokenrhythm") === "single", platformPolicy("tokenrhythm"));
 
@@ -278,6 +290,7 @@ check("账号加得进去", qoderAccount.ok === true && !!qoderAccount.id, JSON.
 await setPolicy("tokenrhythm", ContractPolicy.FALLBACK);
 const aliasOnly = await adminService.updateProvider!(
   create(UpdateProviderRequestSchema, { id: qoderAccount.id!, alias: "Qoder 主账号" }),
+  noContext,
 );
 check("只改别名是改得掉的", aliasOnly.ok === true, JSON.stringify(aliasOnly));
 check("只改别名不动平台策略", platformPolicy("tokenrhythm") === "fallback", platformPolicy("tokenrhythm"));

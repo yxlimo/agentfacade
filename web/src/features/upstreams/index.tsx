@@ -61,7 +61,10 @@ import { PlatformDialog } from '@/features/open-platforms/platform-dialog'
 import { PlatformModelsButton } from '@/features/open-platforms/models-dialog'
 import { useBenefitStatus, useRunBenefitNow } from '@/features/upstreams/benefits'
 import { BenefitsPanel } from '@/features/upstreams/benefits-panel'
-import { ProviderAccounts } from '@/features/upstreams/provider-accounts'
+import {
+  cooldownReasonLabel,
+  ProviderAccounts,
+} from '@/features/upstreams/provider-accounts'
 import { ProviderPolicySelect } from '@/features/upstreams/provider-policy'
 import { ProviderKeysDialog } from '@/features/accounts/provider-keys-dialog'
 import { DragSortList } from '@/components/drag-sort-list'
@@ -79,16 +82,113 @@ import {
 } from '@/lib/platform-order'
 import { useAccountLogin } from '@/features/login/use-account-login'
 import { LoginDialog } from '@/features/login/login-dialog'
-import type {
-  Account,
-  RunBenefitNowResponse,
-  Upstream,
+import {
+  UpstreamState,
+  type Account,
+  type RunBenefitNowResponse,
+  type Upstream,
 } from '@/gen/agentfacade/admin/v1/admin_pb'
 import type { zh } from '@/lib/i18n/catalogs/zh'
 
 const REGION_LABELS: Record<string, keyof typeof zh> = {
   cn: 'upstreams.regionCn',
   global: 'upstreams.regionGlobal',
+}
+
+
+/**
+ * 平台行上「为什么现在接不了」那一句。
+ *
+ * 后端只给事实（state、计数、时刻），句子在这里按语言拼。认不出的机器词用
+ * cooldownReasonLabel 原样透出，不在这里再抄一份映射。
+ */
+function upstreamStateReason(upstream: Upstream, t: TFunction): string {
+  let reason = ''
+  switch (upstream.state) {
+    case UpstreamState.COOLING:
+      if (upstream.cooldownUntilMs > 0n) {
+        reason = t('upstreams.cooldownUntil', {
+          time: formatLocalMoment(upstream.cooldownUntilMs),
+        })
+        if (upstream.cooldownReason) {
+          reason += t('upstreams.cooldownReason', {
+            reason: cooldownReasonLabel(upstream.cooldownReason, t),
+          })
+        }
+      }
+      break
+    case UpstreamState.OUT_OF_CREDITS:
+      reason = t('upstreams.stateReasonOutOfCredits')
+      if (upstream.creditsRecoverAtMs > 0n) {
+        reason += t('upstreams.creditsWindowEnds', {
+          time: formatLocalMoment(upstream.creditsRecoverAtMs),
+        })
+      }
+      break
+    case UpstreamState.NO_CREDENTIAL:
+      reason = t(
+        upstream.accountCount === 0
+          ? 'upstreams.stateReasonNoAccount'
+          : 'upstreams.stateReasonNoCredential'
+      )
+      break
+    case UpstreamState.DISABLED:
+      reason = t('upstreams.stateReasonDisabled')
+      break
+    case UpstreamState.CREDENTIAL_EXPIRED:
+      reason = t('upstreams.stateReasonExpired')
+      break
+    case UpstreamState.CREDENTIAL_REJECTED:
+      reason = t('upstreams.stateReasonRejected')
+      break
+    case UpstreamState.QUEUED:
+      reason = t('upstreams.stateReasonQueued')
+      break
+    case UpstreamState.LOGGING_IN:
+      // 徽标已经说了「正在登录」，原因句不再重复同一句话。
+      break
+    case UpstreamState.READY:
+      reason = readyAccountsReason(upstream, t)
+      break
+    default:
+      break
+  }
+  // 熔断是另一件事：平台本来能接，但这会儿被跳过了；跟原因并排说。
+  if (upstream.breakerSkipped && upstream.breakerUntilMs > 0n) {
+    const skipped = t('upstreams.breakerSkipped', {
+      time: formatLocalMoment(upstream.breakerUntilMs),
+    })
+    reason = reason
+      ? `${reason}${t('upstreams.reasonBreak')}${skipped}`
+      : skipped
+  }
+  return reason
+}
+
+/**
+ * 平台还能接，但名下账号有冷却或用尽时把数说出来。
+ * 一段都没有时不编话；哪一段计数是 0 就不出现那一段。
+ */
+function readyAccountsReason(upstream: Upstream, t: TFunction): string {
+  const details: string[] = []
+  if (upstream.coolingAccounts > 0 && upstream.cooldownUntilMs > 0n) {
+    details.push(
+      t('upstreams.accountsCooling', {
+        count: upstream.coolingAccounts,
+        time: formatLocalMoment(upstream.cooldownUntilMs),
+      })
+    )
+  }
+  if (upstream.exhaustedAccounts > 0) {
+    details.push(
+      t('upstreams.accountsExhausted', { count: upstream.exhaustedAccounts })
+    )
+  }
+  if (details.length === 0) return ''
+  return t('upstreams.enabledAccounts', {
+    count: upstream.enabledAccounts,
+    detail: details.join(t('upstreams.reasonJoin')),
+  })
 }
 
 /**
@@ -359,20 +459,10 @@ export function UpstreamsPage() {
                                   : t('upstreams.claimable')}
                               </Badge>
                             ) : null}
-                            {/* 后端拼好的一句话：为什么现在不能接。 */}
-                            {upstream.stateReason ? (
+                            {/* 为什么接不了：后端给事实，这里按语言渲染。 */}
+                            {upstreamStateReason(upstream, t) ? (
                               <span className='text-xs text-muted-foreground'>
-                                {upstream.stateReason}
-                              </span>
-                            ) : null}
-                            {/* 冷却到什么时候：stateReason 里已经说了的时候不重复。 */}
-                            {!upstream.stateReason && upstream.cooldownUntilMs > 0n ? (
-                              <span className='text-xs text-muted-foreground'>
-                                {t('upstreams.cooldownUntil', {
-                                  time: formatLocalMoment(
-                                    upstream.cooldownUntilMs
-                                  ),
-                                })}
+                                {upstreamStateReason(upstream, t)}
                               </span>
                             ) : null}
                           </div>

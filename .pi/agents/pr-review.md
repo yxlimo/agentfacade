@@ -4,8 +4,8 @@ description: 外部 PR 的独立 review：只读、不改代码、不跑测试�
 inheritSkills: false
 inheritProjectContext: true
 tools: read, grep, find, ls, bash
-# 扩展在后台子代理里会被环境自动发现，用空数组显式关掉（见 pi-subagents-extend#10）
-extensions: []
+# 不写 extensions：后台子代理要加载环境扩展（pi-agentfacade 注册的 provider
+# agentfacade 就是从这里来的），写成空数组会把 provider 一起关掉，模型解析不到。
 thinking: high
 systemPromptMode: replace
 ---

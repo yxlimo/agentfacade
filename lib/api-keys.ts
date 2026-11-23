@@ -8,6 +8,7 @@
 // tier is gated by the client's own login, not by a client-supplied key.
 // `REQUIRE_API_KEY=true` turns the front door on for every proxy in the repo.
 
+import { log } from "./log.ts";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -62,7 +63,7 @@ export function loadKeys(prefix = "oc-"): KeyStore {
       "user-default": prefix + crypto.randomBytes(20).toString("hex"),
     };
     setSecret(KEYS_ID, "key", { keys });
-    console.log("[INIT] Generated new API keys → the database");
+    log.info("[INIT] Generated new API keys → the database");
   }
   return keys;
 }

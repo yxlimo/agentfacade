@@ -3,6 +3,7 @@
 // The plan's own credits, the ones bought on top of it, and the account's
 // standing (the server says PASS, WAIT, or why it may not be used).
 
+import { log } from "../log.ts";
 import {
   ENDPOINTS,
   USER_AGENT,
@@ -59,6 +60,27 @@ export interface QoderCredits {
  */
 export type QoderCreditsProbe = VendorProbe<QoderCredits>;
 
+/** Observed in a live Qoder response: expiresAt = 253402214400000 (9999-12-31T00:00:00Z) */
+const NEVER_EXPIRES_SENTINEL_MS = 253402214400000;
+
+/**
+ * Qoder uses that far-future timestamp to say a credit lot never expires
+ * It is not a real "expires in the year 9999" date; showing it as a reset
+ * time made the panel promise a refill in year 9999
+ *
+ * Judge by class, not by one hardcoded number: no real plan renews more than
+ * a century out, so any instant beyond a 100-year horizon is the same kind of
+ * placeholder - this stays correct if upstream swaps in another far-future value
+ */
+const NEVER_EXPIRES_AFTER_MS = 100 * 365.25 * 24 * 60 * 60 * 1000;
+
+/** Raw upstream expiresAt -> reset time, or null when the lot never expires */
+export function qoderResetsAt(expiresAt: unknown): string | null {
+  if (typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) return null;
+  if (expiresAt === NEVER_EXPIRES_SENTINEL_MS || expiresAt - Date.now() > NEVER_EXPIRES_AFTER_MS) return null;
+  return new Date(expiresAt).toISOString();
+}
+
 /**
  * Qoder 的鉴权失败有时不在 HTTP 码上：status 接口的 whitelistStatus 会明说
  * `LoginExpire`。额度接口没给这份码时，只把 401/403 算 unauthorized；
@@ -83,7 +105,7 @@ export async function fetchQoderCredits(providerId = "qoder"): Promise<QoderCred
       // 正文只在这一处拿得到：额度读不出来时面板上只会写「没有额度」，
       // 没人知道上游到底答了什么。
       const text = await r.text().catch(() => "");
-      console.warn(`[UPSTREAM] Qoder 额度查询 ${r.status}：${scrubForLog(text, 300)}`);
+      log.warn(`[UPSTREAM] Qoder 额度查询 ${r.status}：${scrubForLog(text, 300)}`);
       if (r.status === 401 || r.status === 403) {
         return vendorUnauthorized(`上游拒绝了这把令牌（HTTP ${r.status}）`);
       }
@@ -101,7 +123,7 @@ export async function fetchQoderCredits(providerId = "qoder"): Promise<QoderCred
       plan: pot(body?.userQuota),
       addOn: pot(body?.addOnQuota),
       quotaExceeded: body?.isQuotaExceeded === true,
-      resetsAt: typeof body?.expiresAt === "number" ? new Date(body.expiresAt).toISOString() : null,
+      resetsAt: qoderResetsAt(body?.expiresAt),
     });
   } catch (e) {
     return vendorFailed(`问不到额度：${(e as Error)?.message ?? String(e)}`);
@@ -134,7 +156,7 @@ export async function checkAccountHealth(providerId = "qoder"): Promise<QoderAcc
     }
     const code = body?.errorCode ?? body?.code ?? `HTTP ${r.status}`;
     // 只留一个代码在面板上，上游到底说了什么只有这里知道。
-    console.warn(`[UPSTREAM] Qoder 账号状态 ${r.status}：${scrubForLog(text, 300)}`);
+    log.warn(`[UPSTREAM] Qoder 账号状态 ${r.status}：${scrubForLog(text, 300)}`);
     return {
       region,
       authorized: false,

@@ -3,6 +3,7 @@
 // One protocol, the CLI's own (COSY): its answer is Qoder's own frame format,
 // which is unwrapped into plain chunks here.
 
+import { log } from "../../log.ts";
 import type { Json } from "../../json.ts";
 import crypto from "node:crypto";
 import type Koa from "koa";
@@ -64,7 +65,7 @@ export async function toQoder(
   const region: QoderRegion = platformOf(route.platform)?.region === "cn" ? "cn" : "global";
   const { model, key } = resolveModelRoute(upstreamModel(route), effort, region);
   if (ctx.logRoute) {
-    console.log(`[ROUTE] model=${route.model} region=${region} effort=${effort ?? "-"} -> upstream key=${key}`);
+    log.info(`[ROUTE] model=${route.model} region=${region} effort=${effort ?? "-"} -> upstream key=${key}`);
   }
   await toQoderLegacy(ctx, openaiBody, model, key, dialect, stream, out, region, route.label, route.platform);
 }
@@ -242,7 +243,7 @@ function parseJsonObject(text: string): Json | undefined {
  * 帧内错误都是上游拒了，两条路都得有这一行。
  */
 function logLegacyFrameError(error: { code?: string; message?: string }): void {
-  console.warn(
+  log.warn(
     `[UPSTREAM] Qoder 老协议帧内错误 ${error.code ?? "unknown"}：${scrubLegacyMessage(error.message ?? "")}`,
   );
 }
@@ -322,7 +323,7 @@ function queueExhausted(
   // 跳过等待是个行为变更：日志里要有它的名字，否则「这次为什么没等」只能靠
   // 去翻配置才知道（见 LEGACY_SKIP_QUEUE_WAIT）。
   if (queueWaits === 0) {
-    console.warn("[UPSTREAM] Qoder 老协议排队，跳过那一次等待（QODER_SKIP_QUEUE_WAIT 开着）");
+    log.warn("[UPSTREAM] Qoder 老协议排队，跳过那一次等待（QODER_SKIP_QUEUE_WAIT 开着）");
   }
   return new QueuedError(
     attempts > 1
@@ -421,7 +422,7 @@ export async function* legacyWithRetry(
       if (!first.done && first.value.error && attempt <= queueWaits && isRetryableLegacy(first.value.error)) {
         const waitMs = legacyWaitMs(first.value.error, retryMs);
         // 等多久只有这一行留得住：下一次尝试成功的话，别的日志里一点痕迹都没有。
-        console.warn(`[UPSTREAM] Qoder 老协议排队，等 ${waitMs}ms 后再试一次`);
+        log.warn(`[UPSTREAM] Qoder 老协议排队，等 ${waitMs}ms 后再试一次`);
         await sleep(waitMs);
         continue;
       }

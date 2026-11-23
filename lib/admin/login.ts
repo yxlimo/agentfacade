@@ -11,6 +11,7 @@
 // 半凭据（device_code / code_verifier / nonce / machine_token / state）存在
 // 这一行里，一个都不进日志。
 
+import { log } from "../log.ts";
 import crypto from "node:crypto";
 import { deleteCached, listCached, peekCached, setCached, withLock } from "../store.ts";
 import { AuthError, authLog } from "../credential.ts";
@@ -26,17 +27,15 @@ import { providerSecretId } from "../credential-ids.ts";
 // Side-effect import: this module registers zcode's login flow
 import "../zcode/auth.ts";
 import type { ZcodeLogin } from "../zcode/auth.ts";
-import { beginLoginFlow, driveLogin, submitLogin, submitLoginResult, type LoginContext, type LoginMethod, type LoginTicket } from "../login-flow.ts";
+import { beginLoginFlow, driveLogin, type LoginContext, type LoginMethod, type LoginTicket } from "../login-flow.ts";
 export type { LoginMethod };
 import { regionOf as workBuddyRegionOf } from "../workbuddy/auth.ts";
 // Side-effect import: this module registers tokenrhythm's login flow
 import "../tokenrhythm/accounts.ts";
 // Side-effect import: this module registers sensenova's login flow
 import "../sensenova/auth.ts";
-import type { SenseNovaLogin } from "../sensenova/auth.ts";
 // Side-effect import: this module registers intern-ai's login flow
 import "../intern-ai/login-flow.ts";
-import type { InternAiLogin } from "../intern-ai/login-flow.ts";
 import {
   importToken as importInternAiToken,
   storedAccount as storedInternAiAccount,
@@ -318,13 +317,13 @@ async function pollLoop(session: StoredLogin): Promise<void> {
     // 登录的结果要留痕：容器重建就没有日志了，凭据自己的日志里也只有
     // 「刷新成功」，看不出当初是怎么登上去的。
     authLog(dataDir(), `${session.accountId} 登录成功`, credentialId);
-    console.log(`[LOGIN] ${session.accountId} 登录成功`);
+    log.info(`[LOGIN] ${session.accountId} 登录成功`);
   } catch (e) {
     const current = loadLogin(session.loginId);
     if (!current || current.status === "cancelled") return;
     updateLogin(session.loginId, { status: "failed", message: errorText(e) });
     authLog(dataDir(), `${session.accountId} 登录失败`, errorText(e));
-    console.warn(`[LOGIN] ${session.accountId} 登录失败：${errorText(e)}`);
+    log.warn(`[LOGIN] ${session.accountId} 登录失败：${errorText(e)}`);
   }
 }
 
@@ -509,6 +508,25 @@ export function cancelLogin(loginId: string): { ok: boolean; message: string } {
   return { ok: true, message: "登录已取消。" };
 }
 
+/**
+ * 删账号时把这个账号的登录会话全部清掉，包括还在轮询的那几条。
+ *
+ * 账号 id 会被复用：留一条 pending 会话，下一个顶着这个 id 的账号就会显示
+ * 「正在登录」，明明没人在登。先把会话标记取消（在途的轮询看到不是 pending
+ * 就不会写回凭据），再删掉缓存行 —— 顺序反过来，轮询回调可能又把会话写回来。
+ * 账已经不在了，这些会话没有任何人还需要它。
+ */
+export function forgetLogins(accountId: string): number {
+  const sessions = loginsOf(accountId);
+  for (const session of sessions) {
+    // 先停：把在途轮询的会话合上，回调醒来就不会再写凭据。
+    if (session.status === "pending") cancelLogin(session.loginId);
+    // 再删行：一条不留，id 会被下一个账号复用。
+    deleteCached(cacheKey(session.loginId));
+  }
+  return sessions.length;
+}
+
 /* ------------------------------------------------------------------ *
  * 账号密码
  * ------------------------------------------------------------------ */
@@ -521,15 +539,6 @@ export interface PasswordLoginResult {
   credentialId: string;
   /** 账号的 id。 */
   accountId: string;
-}
-
-/**
- * 账号行 → 登录链要的那三样。
- *
- * 凭据落在哪一行（accountId）、它是哪个平台（platform）、哪个区域（region）。
- */
-function contextOf(row: ProviderRow): LoginContext {
-  return { accountId: row.id, platform: row.platform, region: row.region ?? "" };
 }
 
 /**

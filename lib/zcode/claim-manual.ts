@@ -26,6 +26,7 @@
 // 上游的业务码与 data.message 原样带回去：那一套映射是猜的，而猜错的话
 // 面板会说错原因 —— 让面板念上游的原话。
 
+import { log } from "../log.ts";
 import { configNumber } from "../config.ts";
 import { scrubForLog } from "../log-scrub.ts";
 import { provider } from "../providers.ts";
@@ -453,8 +454,8 @@ export function logManualClaim(fields: {
   const message = scrubForLog(String(fields.message ?? "").replace(/\s+/g, " ").trim(), 300);
   if (message) parts.push(`msg=「${message}」`);
   const line = parts.join(" ");
-  if (fields.outcome === "failed") console.warn(line);
-  else console.log(line);
+  if (fields.outcome === "failed") log.warn(line);
+  else log.info(line);
 }
 
 /**

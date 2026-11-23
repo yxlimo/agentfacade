@@ -298,12 +298,12 @@ globalThis.fetch = (async (input: any) => {
  * ------------------------------------------------------------------ */
 
 // 厂商那几行不再由代码补（平台行是用户在面板上自己建的）：这一节要用的三行，
-// 测试自己造。地址取这一类的默认地址（额度请求认得「行上的地址还是默认那台」），
-// 插件指名各家自己的那一个。
+// 测试自己造。地址取这一类的默认地址（额度请求认得「行上的地址还是默认那台」，
+// 额度插件也按行上的地址认）。
 const { insertVendorPlatform } = await import("./vendor-platform.ts");
-insertVendorPlatform("sensenova", "sensenova", { quotaPlugin: "sensenova-pools" });
-insertVendorPlatform("intern-ai", "intern-ai", { quotaPlugin: "intern-ai-credits" });
-insertVendorPlatform("tokenrhythm", "tokenrhythm", { quotaPlugin: "tokenrhythm-wallet" });
+insertVendorPlatform("sensenova", "sensenova");
+insertVendorPlatform("intern-ai", "intern-ai");
+insertVendorPlatform("tokenrhythm", "tokenrhythm");
 
 function accountOf(platform: string, alias: string): any {
   const made = addAccount({ platform, alias });

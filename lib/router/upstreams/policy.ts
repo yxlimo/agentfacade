@@ -5,6 +5,7 @@
 // failure is shaped into what the client sees. UpstreamContext is what an
 // adapter is handed.
 
+import { log } from "../../log.ts";
 import { AuthError } from "../../credential.ts";
 import type { WorkBuddyModel } from "../../workbuddy/models.ts";
 import { TokenRhythmNoBalanceError } from "../../tokenrhythm/transport.ts";
@@ -133,7 +134,7 @@ export function upstreamStatusError(
   // stdout 是容器日志：它会被复制、归档、发到别处 —— 那里不该有账号标识、
   // 邮箱、令牌这样的东西。所以打出去之前先抹一遍（正文本身不丢，只是敏感值
   // 没了）。
-  console.warn(`[UPSTREAM] ${what}上游 ${status}：${scrubForLog(text, 500)}`);
+  log.warn(`[UPSTREAM] ${what}上游 ${status}：${scrubForLog(text, 500)}`);
   const error = new AuthError(
     `upstream HTTP ${status}`,
     // 这一句是客户端看的，上游正文里可能带着 key 片段、cookie、邮箱：抹的规矩
@@ -304,12 +305,13 @@ export function transientRetryPlan(): { delaysMs: readonly number[]; repeatLastM
 }
 
 /**
- * 这些失败值得在**同一个账号**上再试一次。
+ * 「同一个账号上立刻再试一次」只有一份判据：classifyUpstreamError 的
+ * `retryable`（见 lib/router/provider-selection.ts）。不再另列一张表 ——
+ * 两张表总有不一致的一天，而那天的重试决定是说不清的。
  *
- * 用现成的分类，不另判一遍：5xx（server）与连接断掉（connection）说的是
- * 「这一次没成事」，隔几百毫秒多半就好了。
+ * 它说是 true 的只有 5xx（server）与连接断掉（connection）：「这一次没成事」，
+ * 隔几百毫秒多半就好了。其余都是 false，各有各的路：
  *
- * 不在这里的：
  *   - timeout：这一次等得太久了，再等一次只是再久一次。超时直接交回客户端，
  *     让它自己决定要不要重试（见 underPolicy 里不写冷却那一条）。
  *   - unreachable：主机名在 DNS 里查不到 —— 隔 300ms 再问一次还是查不到。
@@ -317,17 +319,17 @@ export function transientRetryPlan(): { delaysMs: readonly number[]; repeatLastM
  *     豁免也不适用于它（那个豁免是为「上游抽一下」设计的，重试一个不存在的
  *     主机抽不好任何东西）。
  *   - rate-limit 走等窗口那条路（等的是分钟级的窗口，不是几十毫秒）；
+ *   - refused：上游回的是 HTML 网关错误页，不是它的 API —— 同一个端点再问一次
+ *     还是那一页，不是抖动。一次就结束，让记账那一层记冷却、让策略换目标；重试
+ *     它只会把客户端挂到总时限（refused 的 retryable 是 false）。
  *     quota / no-balance / credential 是账号真的接不了，再试一次也是一样的答复；
  *     request 是请求本身的问题，换谁都一样；unknown 说不清是什么，不猜。
  */
-const TRANSIENT_KINDS = new Set(["server", "connection"]);
-
-/** 这个失败在同一账号上再试一次有没有意义。 */
 function isTransientFailure(error: unknown): boolean {
   // 客户端已经走了：再打一次上游只是白花钱，答复也没人要，而且那次尝试的
   // 失败还会被记成账号的账（见 onAttempt 里 ClientGoneError 那一条）。
   if (error instanceof ClientGoneError) return false;
-  return TRANSIENT_KINDS.has(classifyUpstreamError(error).kind);
+  return classifyUpstreamError(error).retryable;
 }
 
 /** 这个失败是「等太久了」吗。 */
@@ -498,7 +500,7 @@ export async function runWithRetries<A extends { id: string }, T>(
       // 冷却，下一个请求又挑它、再白等一轮。
       if (rateWaits >= MAX_RATE_WAITS) rateWaitsExhausted = true;
       else rateWaited = false;
-      console.log(
+      log.info(
         `[ROUTE] ${what} account=${account.id} out of time (${Math.round(budgetMs / 1000)}s), not trying again`,
       );
       stop(lastFailure, true);
@@ -519,7 +521,7 @@ export async function runWithRetries<A extends { id: string }, T>(
           // 下一个请求不用再拿一个坏窗口试它。
           rateWaitsExhausted = true;
           if (e && typeof e === "object") withoutRateWaited(e);
-          console.log(
+          log.info(
             `[ROUTE] ${what} account=${account.id} is still rate limited after ${rateWaits} waits, not waiting again`,
           );
           stop(e, true);
@@ -532,14 +534,14 @@ export async function runWithRetries<A extends { id: string }, T>(
         // 再白等一轮。所以在这里先把标记摘掉。
         if (clock() + wait > deadline) {
           rateWaited = false;
-          console.log(
+          log.info(
             `[ROUTE] ${what} account=${account.id} is rate limited, no time left for a ${Math.ceil(wait / 1000)}s wait, not waiting`,
           );
           stop(e, true);
         }
         rateWaits += 1;
         rateWaited = true;
-        console.log(
+        log.info(
           `[ROUTE] ${what} account=${account.id} is rate limited, waiting ${Math.ceil(wait / 1000)}s then retrying (wait ${rateWaits}/${MAX_RATE_WAITS})`,
         );
         await nap(wait);
@@ -551,7 +553,7 @@ export async function runWithRetries<A extends { id: string }, T>(
       // 换人，不是把一个账号打满整个时限。没有人可换的时候：一直试到总时限
       // （上游抽一下，多试几次就通）。
       if (!unbounded && attempts >= BOUNDED_ATTEMPTS) {
-        console.log(
+        log.info(
           `[ROUTE] ${what} account=${account.id} ${describedForLog(e)}, no attempt left (${attempts}/${BOUNDED_ATTEMPTS})`,
         );
         stop(e, true);
@@ -559,13 +561,13 @@ export async function runWithRetries<A extends { id: string }, T>(
       // 隔完这一段也过了这一轮的总时限就不等了。
       const delay = retryDelayMs(retries);
       if (clock() + delay > deadline) {
-        console.log(
+        log.info(
           `[ROUTE] ${what} account=${account.id} ${describedForLog(e)}, no time left for a ${delay}ms retry`,
         );
         stop(e, true);
       }
       retries += 1;
-      console.log(
+      log.info(
         `[ROUTE] ${what} account=${account.id} ${describedForLog(e)}, retry ${retries} in ${delay}ms`,
       );
       await nap(delay);
@@ -869,7 +871,7 @@ export function settlement(): Settlement {
       try {
         clearCooldown(accountId);
       } catch (e) {
-        console.warn(`[ROUTE] ${what} account=${accountId} cannot clear its cooldown: ${errorText(e)}`);
+        log.warn(`[ROUTE] ${what} account=${accountId} cannot clear its cooldown: ${errorText(e)}`);
       }
     },
     failure(error: unknown): void {
@@ -878,7 +880,7 @@ export function settlement(): Settlement {
       // 客户端走了：账号没有问题，答复只是没人要。所以既不记冷却，也不把它
       // 写成「这个账号接不了」——那会把一个好好的账号说成坏的。
       if (error instanceof ClientGoneError) {
-        console.log(`[ROUTE] ${what} account=${accountId}: the client went away, the answer was cut short`);
+        log.info(`[ROUTE] ${what} account=${accountId}: the client went away, the answer was cut short`);
         return;
       }
       // 这次失败值多少冷却：判据在 cooldownForFailure（记账那一层）里，这里
@@ -890,10 +892,10 @@ export function settlement(): Settlement {
           setCooldown(accountId, decision.untilMs, decision.reason);
         } catch (e) {
           // 记账失败不许顶掉上游真正的错误。
-          console.warn(`[ROUTE] ${what} account=${accountId} cannot record its cooldown: ${errorText(e)}`);
+          log.warn(`[ROUTE] ${what} account=${accountId} cannot record its cooldown: ${errorText(e)}`);
         }
       }
-      console.log(
+      log.info(
         `[ROUTE] ${what} account=${accountId} cannot serve it (${describedForLog(error)})` +
           (decision ? `, cooling down until ${cooldownStamp(decision.untilMs)}` : ", not cooling down"),
       );
@@ -963,7 +965,7 @@ export async function underPolicy<T>(
     const only = serving[0];
     const onlyUntil = cooling.get(only.id);
     if (onlyUntil !== undefined) {
-      console.log(
+      log.info(
         `[ROUTE] ${what} account=${only.id} cooling down (until ${cooldownStamp(onlyUntil)}), not switching`,
       );
       throw coolingError(only.id, onlyUntil);
@@ -975,7 +977,7 @@ export async function underPolicy<T>(
     // 不拿一个固定时长冒充恢复时间。
     const onlySpent = judged.spent.get(only.id);
     if (onlySpent !== undefined) {
-      console.log(
+      log.info(
         `[ROUTE] ${what} account=${only.id} is out of credits (until ${untilText(onlySpent)}), not switching`,
       );
       throw accountSpentError(platform, only.id, onlySpent);
@@ -989,7 +991,7 @@ export async function underPolicy<T>(
     // 而 serving 里只有凭据能用（ok）与凭据读不出来（unknown）这两种账号 ——
     // 凭据能用却不在 usable 里的那两种，上面已经答过了。
     if (!usable.some((row) => row.id === only.id)) {
-      console.log(
+      log.info(
         `[ROUTE] ${what} account=${only.id} credential cannot be read, not switching`,
       );
       throw credentialFaultError(platform, "credential_unknown", 503);
@@ -1001,7 +1003,7 @@ export async function underPolicy<T>(
     // 都在冷却 —— 哪一种由判定说。恢复时间只有额度用尽与冷却有（凭据那两档等
     // 的是人，不是钟）。
     if (judged.state === "out_of_credits") {
-      console.log(
+      log.info(
         `[ROUTE] ${what} every account is out of credits (until ${untilText(judged.untilMs)}), not switching`,
       );
       throw spentError(judged.untilMs);
@@ -1009,19 +1011,19 @@ export async function underPolicy<T>(
     // 网关自己的故障：不是「等一会儿就好」，所以没有 Retry-After —— 等一会儿
     // 不会让凭据自己读出来，也不会让它自己过期。
     if (judged.state === "credential_unknown") {
-      console.log(
+      log.info(
         `[ROUTE] ${what} the credential of platform ${platform} cannot be read, not switching`,
       );
       throw credentialFaultError(platform, "credential_unknown", 503);
     }
     if (judged.state === "credential_expired") {
-      console.log(
+      log.info(
         `[ROUTE] ${what} the credential of platform ${platform} is expired, not switching`,
       );
       throw credentialFaultError(platform, "credential_expired", 503);
     }
     const until = judged.untilMs ?? now;
-    console.log(
+    log.info(
       `[ROUTE] ${what} every account is cooling down (until ${cooldownStamp(until)}), not switching`,
     );
     throw coolingError(serving[0].id, until, true);
@@ -1034,7 +1036,7 @@ export async function underPolicy<T>(
     if (until === undefined) continue;
     const after = usable.find((other) => (position.get(other.id) ?? 0) > (position.get(row.id) ?? 0));
     if (after) {
-      console.log(
+      log.info(
         `[ROUTE] ${what} account=${row.id} cooling down (until ${cooldownStamp(until)}), trying ${after.id}`,
       );
       continue;
@@ -1043,7 +1045,7 @@ export async function underPolicy<T>(
     // 的人也不行——那上面已经报过了。
     const before = usable.find((other) => (position.get(other.id) ?? 0) < (position.get(row.id) ?? 0));
     if (!before) {
-      console.log(
+      log.info(
         `[ROUTE] ${what} account=${row.id} cooling down (until ${cooldownStamp(until)}), no account left`,
       );
     }
@@ -1139,14 +1141,14 @@ export async function underPolicy<T>(
         try {
           clearCooldown(candidate.id);
         } catch (e) {
-          console.warn(`[ROUTE] ${what} account=${candidate.id} cannot clear its cooldown: ${errorText(e)}`);
+          log.warn(`[ROUTE] ${what} account=${candidate.id} cannot clear its cooldown: ${errorText(e)}`);
         }
         return;
       }
       // 客户端走了：账号没有问题，答复只是没人要。不换账号（换了也一样没人
       // 要），也不说这个账号「接不了」——那会把一个好好的账号说成坏的。
       if (error instanceof ClientGoneError) {
-        console.log(`[ROUTE] ${what} account=${candidate.id}: the client went away, the answer was cut short`);
+        log.info(`[ROUTE] ${what} account=${candidate.id}: the client went away, the answer was cut short`);
         return;
       }
       // 这次失败值多少冷却：判据在 cooldownForFailure（记账那一层）里，这里
@@ -1158,7 +1160,7 @@ export async function underPolicy<T>(
           setCooldown(candidate.id, decision.untilMs, decision.reason);
         } catch (e) {
           // 记账失败不许顶掉上游真正的错误：那会让 429 变成一个没头没脑的 500。
-          console.warn(`[ROUTE] ${what} account=${candidate.id} cannot record its cooldown: ${errorText(e)}`);
+          log.warn(`[ROUTE] ${what} account=${candidate.id} cannot record its cooldown: ${errorText(e)}`);
         }
       }
       const moves = isDegradableUpstreamError(error);
@@ -1169,7 +1171,7 @@ export async function underPolicy<T>(
       let switching = ", not switching";
       if (next) switching = `, trying ${next}`;
       else if (moves && policy === "fallback") switching = ", no account left";
-      console.log(
+      log.info(
         `[ROUTE] ${what} account=${candidate.id} cannot serve it (${describedForLog(error)})` +
           switching +
           (decision ? `, cooling down until ${cooldownStamp(decision.untilMs)}` : whyNotCooling(error)),

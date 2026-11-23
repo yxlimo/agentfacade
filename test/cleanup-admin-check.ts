@@ -172,8 +172,9 @@ const { testCredential, credentialsOf, listAccounts } = await import("../lib/adm
 const { insertVendorPlatform } = await import("./vendor-platform.ts");
 insertVendorPlatform("sensenova");
 insertVendorPlatform("tokenrhythm");
-// 七牛要两段凭据（推理 Key + 额度 Cookie），额度那一段由插件带进来：行上指名它。
-insertVendorPlatform("qiniu", "qiniu", { quotaPlugin: "qiniu" });
+// 七牛要两段凭据（推理 Key + 额度 Cookie）：额度插件按行上地址认，造行只要
+// 地址对得上就够了。
+insertVendorPlatform("qiniu", "qiniu");
 const { setProviderKeys } = await import("../lib/admin/credentials.ts");
 
 // 迁移后的形状：SenseNova 的行上 kind=openai。登录会话随 kind 退场不再列

@@ -34,7 +34,11 @@ import {
   simulatedPresetOf,
   type PlatformKindList,
 } from './platform-kinds'
-import { PLATFORM_TEMPLATES, type PlatformTemplate } from './templates'
+import {
+  PLATFORM_TEMPLATES,
+  type HeaderField,
+  type PlatformTemplate,
+} from './templates'
 import { platformProblems, missingText, type PlatformField } from './platform-form'
 
 export type PlatformSubmit = AddPlatformSubmit | UpdatePlatformSubmit
@@ -50,6 +54,8 @@ export type AddPlatformSubmit = {
   baseUrl: string
   /** 用哪一类适配器（清单里的一个 kind）。 */
   kind: string
+  /** 转发时注入的头（有序）：开放平台每次带完整列表，模拟客户端不带这一格。 */
+  headers?: HeaderField[]
 }
 
 /**
@@ -73,6 +79,11 @@ export type UpdatePlatformSubmit = {
    * 明确写了一遍）。关掉这一格要带 `false`，它与「没给」不是一回事。
    */
   traitsFromCommon?: boolean
+  /**
+   * 转发时注入的头（有序）：开放平台每次保存都发完整列表（含空列表 = 清空）。
+   * 模拟客户端不带这一格。
+   */
+  headers?: HeaderField[]
 }
 
 type Draft = {
@@ -109,6 +120,8 @@ type Draft = {
    * 一遍。
    */
   traitsFromCommonEdited: boolean
+  /** 注入头草稿：有序，删光就是空列表（保存 = 清空）。 */
+  headers: HeaderField[]
 }
 
 /**
@@ -222,6 +235,44 @@ export function PlatformDialog({
   const touch = (field: PlatformField) =>
     setTouched((prev) => (prev[field] ? prev : { ...prev, [field]: true }))
 
+  /** 注入头：按序改一格。下标靠 React key 与顺序绑在一起，移动时整行跟着走。 */
+  const changeHeader = (
+    index: number,
+    field: keyof HeaderField,
+    value: string
+  ) =>
+    setDraft((prev) => ({
+      ...prev,
+      headers: prev.headers.map((item, i) =>
+        i === index ? { ...item, [field]: value } : item
+      ),
+    }))
+
+  /** 加一条空行：顺序就是发送顺序，新行追加在末尾。 */
+  const addHeader = () =>
+    setDraft((prev) => ({
+      ...prev,
+      headers: [...prev.headers, { name: '', value: '' }],
+    }))
+
+  /** 删一条：删光之后草稿是空列表，保存时按「清空」发出去。 */
+  const removeHeader = (index: number) =>
+    setDraft((prev) => ({
+      ...prev,
+      headers: prev.headers.filter((_, i) => i !== index),
+    }))
+
+  /** 上下移动：换两行的位置，顺序跟着变。 */
+  const moveHeader = (index: number, delta: number) =>
+    setDraft((prev) => {
+      const target = index + delta
+      if (target < 0 || target >= prev.headers.length) return prev
+      const headers = [...prev.headers]
+      const [row] = headers.splice(index, 1)
+      headers.splice(target, 0, row)
+      return { ...prev, headers }
+    })
+
   const editing = platform !== undefined
   // 清单到手了才有可选项；没到手、取不到的时候一个也没有。
   const kindOptions = kinds.status === 'ready' ? kinds.kinds : []
@@ -292,7 +343,15 @@ export function PlatformDialog({
     return draft[field].trim() === '' && !touched[field] ? undefined : text
   }
   // 有一格不对就不发请求：那些错在保存前就看得见。
-  const blocked = Object.keys(problems).length > 0
+  // 注入头只做最轻的同步检查：name / value 非空。其余判据（token、换行、长度、
+  // 条数）交服务端，机器码由 describeErrorText 翻人话显示在弹窗里。模拟客户端
+  // 不摆这一区，也不拿它的空值挡保存。
+  const headersIncomplete =
+    !simulated &&
+    draft.headers.some(
+      (item) => item.name.trim() === '' || item.value.trim() === ''
+    )
+  const blocked = Object.keys(problems).length > 0 || headersIncomplete
   /** 还差哪几格（页脚那一行用）：只说缺哪几格，不把三句「没填」在页脚再摆一遍。 */
   const missing = (['id', 'label', 'baseUrl'] as PlatformField[]).filter(
     (field) => problems[field] === missingText(field)
@@ -384,6 +443,12 @@ export function PlatformDialog({
       // 模板给的名字是面板填的，不是用户敲的：换一条类型时该跟着换。
       labelEdited: false,
       baseUrl: template.baseUrl,
+      // 模板里的注入头一起预填（没有这一格的模板就是空）。模板只是起点，
+      // 用户照旧能改能删 —— 删光保存会把这一格清空。
+      headers: (template.headers ?? []).map((item) => ({
+        name: item.name,
+        value: item.value,
+      })),
     })
   }
 
@@ -402,6 +467,11 @@ export function PlatformDialog({
       const update: UpdatePlatformSubmit = {
         ...shared,
         baseUrl: draft.baseUrl.trim(),
+        // 每次保存都发完整列表：用户删光所有行 = 空列表 = 清空服务端那一份。
+        headers: draft.headers.map((item) => ({
+          name: item.name.trim(),
+          value: item.value.trim(),
+        })),
       }
       // 只有用户动过这一格才带：契约里它是 optional bool，没给就是「别动这一格」。
       // 带一个默认值等于替用户写一遍，把它自己改过的值盖回去。
@@ -419,6 +489,15 @@ export function PlatformDialog({
       label: draft.label.trim(),
       baseUrl: simulated ? '' : draft.baseUrl.trim(),
       kind: chosenKind?.kind ?? '',
+      // 开放平台每次都发完整列表（空 = 没配）；模拟客户端这一格整格不出现。
+      ...(simulated
+        ? {}
+        : {
+            headers: draft.headers.map((item) => ({
+              name: item.name.trim(),
+              value: item.value.trim(),
+            })),
+          }),
     }
     onSubmit(add)
   }
@@ -640,6 +719,81 @@ export function PlatformDialog({
             </div>
           )}
 
+          {/* 注入头：只有开放平台有这一区（模拟客户端的请求指纹归代码）。
+              顺序就是发送顺序，上行按钮改顺序，末尾追加新行，删光保存 = 清空。
+              只查 name/value 非空，其余交给服务端拒并把机器码翻人话。 */}
+          {simulated ? null : (
+            <div className='grid gap-2'>
+              <Label>{t('openPlatforms.headersLabel')}</Label>
+              <p className='text-xs text-muted-foreground'>
+                {t('openPlatforms.headersHint')}
+              </p>
+              <div className='grid gap-2'>
+                {draft.headers.map((header, index) => (
+                  <div
+                    key={index}
+                    className='grid grid-cols-[1fr_1fr_auto_auto_auto] items-start gap-1'
+                  >
+                    <Input
+                      aria-label={t('openPlatforms.headerName', { n: index + 1 })}
+                      value={header.name}
+                      placeholder='x-opencode-session'
+                      onChange={(event) =>
+                        changeHeader(index, 'name', event.target.value)
+                      }
+                    />
+                    <Input
+                      aria-label={t('openPlatforms.headerValue', { n: index + 1 })}
+                      value={header.value}
+                      placeholder='{session-id}'
+                      onChange={(event) =>
+                        changeHeader(index, 'value', event.target.value)
+                      }
+                    />
+                    <button
+                      type='button'
+                      aria-label={t('openPlatforms.headerMoveUp', { n: index + 1 })}
+                      disabled={index === 0}
+                      onClick={() => moveHeader(index, -1)}
+                      className='h-9 w-8 rounded-md border text-sm disabled:opacity-40'
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type='button'
+                      aria-label={t('openPlatforms.headerMoveDown', {
+                        n: index + 1,
+                      })}
+                      disabled={index === draft.headers.length - 1}
+                      onClick={() => moveHeader(index, 1)}
+                      className='h-9 w-8 rounded-md border text-sm disabled:opacity-40'
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type='button'
+                      aria-label={t('openPlatforms.headerRemove', { n: index + 1 })}
+                      onClick={() => removeHeader(index)}
+                      className='h-9 w-8 rounded-md border text-sm'
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+              {headersIncomplete ? (
+                <p className='text-xs text-destructive'>
+                  {t('openPlatforms.headersIncomplete')}
+                </p>
+              ) : null}
+              <div>
+                <Button variant='outline' size='sm' onClick={addHeader}>
+                  {t('openPlatforms.headerAdd')}
+                </Button>
+              </div>
+            </div>
+          )}
+
           {/* 额度插件按平台地址自动匹配，不是能填的一格：没有控件也没有提示。
               匹配不到插件就是没有额度接口，账号的凭据里只有推理那一格。 */}
 
@@ -736,6 +890,8 @@ function toDraft(platform?: Upstream): Draft {
       // 新增没有平台行，这一格没有意义（界面上也不摆）。
       traitsFromCommon: false,
       traitsFromCommonEdited: false,
+      // 新增：还没配注入头，模板可以在选模板那一步预填。
+      headers: [],
     }
   }
   return {
@@ -751,6 +907,11 @@ function toDraft(platform?: Upstream): Draft {
     // 还没动过：提交时不带这一格。
     traitsFromCommon: traitsFromCommonOf(platform),
     traitsFromCommonEdited: false,
+    // 改平台：从服务端返回的模板回填（用户删光保存后这里就是空）。
+    headers: platform.headers.map((item) => ({
+      name: item.name,
+      value: item.value,
+    })),
   }
 }
 

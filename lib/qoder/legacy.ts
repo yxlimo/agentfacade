@@ -27,6 +27,7 @@
 // `data:{"headers":…,"body":"<json string>"}`, where the inner JSON is a regular
 // OpenAI chat completion chunk. Errors arrive as their own frames.
 
+import { log } from "../log.ts";
 import type { Json } from "../json.ts";
 import { configString } from "../config.ts";
 import crypto from "node:crypto";
@@ -382,7 +383,7 @@ export async function legacyChatCompletion(
     const text = await r.text().catch(() => "");
     // 正文只放在 hint 里，而日志与用量表都只记 message。上游为什么拒，
     // 只能靠这一行（容器一重建，hint 就没了）。
-    console.warn(`[UPSTREAM] Qoder 老协议上游 ${r.status}：${scrubForLog(text, 500)}`);
+    log.warn(`[UPSTREAM] Qoder 老协议上游 ${r.status}：${scrubForLog(text, 500)}`);
     // 上游自己的状态带在错误上：路由要分清「请求本身的问题」（400，换个账号
     // 一样错）与「这个账号接不了」（401/5xx，换一个也许行）。少了它，每个失败
     // 都只是「未知」—— 既不敢重试，也不敢换目标。这是这条链路上唯一一条路了，

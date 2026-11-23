@@ -36,6 +36,7 @@ const { syncPlatformModels, openPlatformOf } = await import("../lib/open-platfor
 const { addAccount } = await import("../lib/providers.ts");
 const { setProviderKeys } = await import("../lib/admin/credentials.ts");
 const { listAccounts } = await import("../lib/admin/accounts.ts");
+const { CredentialState } = await import("../lib/gen/agentfacade/admin/v1/admin_pb.ts");
 const { beginLogin } = await import("../lib/admin/login.ts");
 const { openPlatformKeyOf } = await import("../lib/open-platform-credentials.ts");
 
@@ -148,7 +149,7 @@ check("加好了讯飞星火的账号", account.ok && accountId !== "", account.
   check("key 写进去了", result.ok && result.count === 1, result.message);
   const row = listAccounts().find((a) => a.id === accountId);
   check("账号在列表里", row !== undefined, accountId);
-  check("状态不是 missing", row?.status !== "missing", String(row?.status));
+  check("状态不是 missing", row?.status !== CredentialState.MISSING, String(row?.status));
   check("说是有可用的推理 Key", row?.detail === "有可用的推理 Key", String(row?.detail));
 }
 
@@ -183,7 +184,8 @@ section("控制组");
 {
   const result = setProviderKeys("zcode", ["x"]);
   check("ZCode 仍然被拒", !result.ok, result.message);
-  check("机器码说的是没有这个账号", result.code === "ACCOUNT_NOT_FOUND", JSON.stringify(result));
+  // 收窄过再读 code：union 的成功枝上没有 code，运行时走到这里的必是失败枝。
+  check("机器码说的是没有这个账号", !result.ok && result.code === "ACCOUNT_NOT_FOUND", JSON.stringify(result));
   check("一段都没写", result.count === 0, String(result.count));
 }
 

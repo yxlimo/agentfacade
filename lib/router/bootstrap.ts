@@ -6,6 +6,7 @@
 // refresh of the same session looks like a replay to the platform
 // (lib/periodic.ts).
 
+import { log } from "../log.ts";
 import { configNumber } from "../config.ts";
 import { AuthError } from "../credential.ts";
 import { readCredential } from "../minimax/auth.ts";
@@ -39,7 +40,7 @@ export function startUpstreams(): void {
       .then(async (outcome) => {
         const c = await readCredential(provider);
         const state = `generation ${c.generation}, expires in ${Math.round(c.remainingMs / 60000)} min`;
-        console.log(
+        log.info(
           outcome === "logged-in"
             ? `  [AUTH] ${provider}: logged in: ${state}`
             : `  [AUTH] ${provider}: token ok: ${state}`,
@@ -47,8 +48,8 @@ export function startUpstreams(): void {
       })
       .catch((e) => {
         const err = e as AuthError;
-        console.warn(`  [AUTH] minimax: ${err.message}`);
-        console.warn(`         ${err.hint}`);
+        log.warn(`  [AUTH] minimax: ${err.message}`);
+        log.warn(`         ${err.hint}`);
       });
   }
 
@@ -66,7 +67,7 @@ export function startUpstreams(): void {
     void ensureQoderSession(provider)
       .then((outcome) => {
         const s = qoderStatus(provider);
-        console.log(
+        log.info(
           outcome === "logged-in"
             ? `  [AUTH] ${provider}: logged in`
             : `  [AUTH] ${provider}: session ok, expires in ${Math.round(Number(s.remainingSec ?? 0) / 60)} min`,
@@ -74,7 +75,7 @@ export function startUpstreams(): void {
         // A fresh session is worth a run right away.
         void benefits.runOnce();
       })
-      .catch((e) => console.warn(`  [AUTH] ${provider} login failed: ${(e as Error).message}`));
+      .catch((e) => log.warn(`  [AUTH] ${provider} login failed: ${(e as Error).message}`));
   }
 
   // WorkBuddy 的目录：库里那份先顶着，后台按 TTL 再抓一次（全新库里没有，
@@ -96,18 +97,18 @@ export function startUpstreams(): void {
     // 出去就是一次未处理的 rejection（Node 当它致命，网关就退了）。
     void refreshOpenPlatformCatalog(row.id)
       .then((outcome) => {
-        if (outcome.ok) console.log(`  [OPEN-PLATFORM] ${row.id} 模型目录：${outcome.message}`);
+        if (outcome.ok) log.info(`  [OPEN-PLATFORM] ${row.id} 模型目录：${outcome.message}`);
         // 拉不到的那一行告警由目录自己写（lib/open-platform-catalog.ts）：同一
         // 次失败只留一行，两处都写就是刷屏。
       })
-      .catch((e) => console.warn(`  [OPEN-PLATFORM] ${row.id} 的模型目录没拉到：${(e as Error).message}`));
+      .catch((e) => log.warn(`  [OPEN-PLATFORM] ${row.id} 的模型目录没拉到：${(e as Error).message}`));
   }
 
   for (const provider of providersNeedingLogin("workbuddy")) {
     void ensureWorkBuddySession(provider)
       .then(async (outcome) => {
         const s = workbuddyStatus(provider);
-        console.log(
+        log.info(
           outcome === "logged-in"
             ? `  [AUTH] ${provider}: logged in`
             : `  [AUTH] ${provider}: session ok, expires in ${Math.round(Number(s.remainingSec ?? 0) / 60)} min`,
@@ -117,7 +118,7 @@ export function startUpstreams(): void {
         // A fresh session is worth a run right away.
         void benefits.runOnce();
       })
-      .catch((e) => console.warn(`  [AUTH] ${provider} login failed: ${(e as Error).message}`));
+      .catch((e) => log.warn(`  [AUTH] ${provider} login failed: ${(e as Error).message}`));
   }
 
   // The daily benefits of the China accounts — the check-in, the growth centre
@@ -130,7 +131,7 @@ export function startUpstreams(): void {
     () => {
       const days = configNumber("USAGE_RETENTION_DAYS", 30);
       const dropped = pruneUsage(days);
-      if (dropped > 0) console.log(`  [USAGE] 丢掉了 ${dropped} 条超过 ${days} 天的用量记录`);
+      if (dropped > 0) log.info(`  [USAGE] 丢掉了 ${dropped} 条超过 ${days} 天的用量记录`);
     },
     60 * 60 * 1000,
   ).unref?.();

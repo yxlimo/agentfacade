@@ -40,7 +40,8 @@ function check(name: string, ok: boolean, detail = ""): void {
 // 厂商那几行不再由代码补（平台行是用户在面板上自己建的）：这一节要用的行，
 // 测试自己造一行。
 const { insertVendorPlatform } = await import("./vendor-platform.ts");
-insertVendorPlatform("intern-ai", "intern-ai", { quotaPlugin: "intern-ai-credits" });
+// 额度插件按行上地址认（quotaPluginForBaseUrl），行上没有「指名插件」这一格。
+insertVendorPlatform("intern-ai", "intern-ai");
 
 const PROVIDER = {
   id: "intern-ai-test",
@@ -150,7 +151,9 @@ console.log("面板看得到窗口（那才是端砚的使用限额）");
 
 {
   const views = kindOf("openai")?.quotas(PROVIDER, snapshotWith(balance()));
-  const view = views[0];
+  // kindOf may have no quotas hook at all: the checks below already treat a
+  // missing view as a failure, this only narrows the type to match.
+  const view = views?.[0];
   const win = view?.tokenPlan?.windows?.[0];
 
   check("报出一个套餐窗口", Boolean(win), JSON.stringify(view?.tokenPlan));

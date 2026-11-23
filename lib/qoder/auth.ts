@@ -20,6 +20,7 @@
 // The official client 1.1.86 has no other one — its host table no longer lists the
 // OpenAI-dialect host, and its `model_server_transport` gate defaults to off.
 
+import { log } from "../log.ts";
 import { configString, configNumber } from "../config.ts";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { AuthError, authLog, tokenFingerprint } from "../credential.ts";
@@ -473,15 +474,15 @@ export async function pollDeviceToken(auth: DeviceAuthorization, providerId = "q
 export async function login(providerId = "qoder"): Promise<QoderSession> {
   const region = regionOf(providerId);
   const auth = buildDeviceAuthorization(providerId);
-  console.log("");
-  console.log(`  region: ${region}  client_id: ${CLIENT_ID}`);
-  console.log(`  open in a browser: ${auth.authUrl}`);
-  console.log(`  (waiting for approval, up to ${Math.round(POLL_TIMEOUT_MS / 60000)} min)`);
-  console.log("");
+  log.info("");
+  log.info(`  region: ${region}  client_id: ${CLIENT_ID}`);
+  log.info(`  open in a browser: ${auth.authUrl}`);
+  log.info(`  (waiting for approval, up to ${Math.round(POLL_TIMEOUT_MS / 60000)} min)`);
+  log.info("");
   const session = await pollDeviceToken(auth, providerId);
   saveSession(session, providerId, { force: true });
-  console.log(`  logged in: generation ${session.generation}, token good for ${Math.round(session.expiresAtMs / 1000 - Date.now() / 1000)}s`);
-  console.log(`  saved to the database (${sessionId(providerId)})`);
+  log.info(`  logged in: generation ${session.generation}, token good for ${Math.round(session.expiresAtMs / 1000 - Date.now() / 1000)}s`);
+  log.info(`  saved to the database (${sessionId(providerId)})`);
   authLog(
     dataDir(),
     `qoder ${region} login ok`,
@@ -489,7 +490,7 @@ export async function login(providerId = "qoder"): Promise<QoderSession> {
       `refresh ${tokenFingerprint(session.refreshToken)}, ` +
       `${Math.round(session.expiresAtMs / 1000 - Date.now() / 1000)}s left`,
   );
-  console.log("  later refreshes are automatic — nothing else to do.");
+  log.info("  later refreshes are automatic — nothing else to do.");
   return session;
 }
 

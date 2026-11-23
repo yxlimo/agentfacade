@@ -16,7 +16,12 @@ import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fromJsonString, toJsonString } from "@bufbuild/protobuf";
-import { TokenPlanWindowSchema, UpstreamQuotaSchema, CheckinState } from "../lib/gen/agentfacade/admin/v1/admin_pb.ts";
+import {
+  TokenPlanWindowSchema,
+  UpstreamQuotaSchema,
+  CheckinState,
+} from "../lib/gen/agentfacade/admin/v1/admin_pb.ts";
+import type { BenefitOutcome } from "../lib/benefits.ts";
 import { startGateway as startHarness, type Gateway } from "./harness.ts";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -1011,14 +1016,14 @@ console.log("权益：签到那一行写什么");
     benefits.lastRun.lastOutcome = [outcome as any];
     const res = await adminService.getBenefitStatus!({} as any, {} as any);
     // 签到是账号的事：行按 accountId 找；upstreamId 是它所属的平台。
-    const row = res.benefits.find((b: any) => b.accountId === accountId);
+    const row = (res.benefits ?? []).find((b) => b.accountId === accountId);
     return String(row?.summary ?? "");
   };
 
   // 字段语义钉死：upstream_id 是平台 id，account_id 是账号 id，不能混。
   benefits.lastRun.lastOutcome = [];
   const pinned = await adminService.getBenefitStatus!({} as any, {} as any);
-  const row = pinned.benefits.find((b: any) => b.accountId === accountId);
+  const row = (pinned.benefits ?? []).find((b) => b.accountId === accountId);
   check("upstreamId 是平台 id", row?.upstreamId === "qoder-cn", String(row?.upstreamId));
   check("accountId 是账号 id", row?.accountId === accountId, String(row?.accountId));
   const at = new Date().toISOString();
@@ -1078,7 +1083,7 @@ console.log("权益：签到那一行写什么");
   const stateOf = async (outcome: Record<string, unknown>): Promise<number> => {
     benefits.lastRun.lastOutcome = [outcome as any];
     const res = await adminService.getBenefitStatus!({} as any, {} as any);
-    const row = res.benefits.find((b: any) => b.accountId === accountId);
+    const row = (res.benefits ?? []).find((b) => b.accountId === accountId);
     return Number(row?.checkinState ?? -1);
   };
   check(
@@ -1095,6 +1100,43 @@ console.log("权益：签到那一行写什么");
     "没签映射成 NOT_SIGNED",
     (await stateOf({ upstream: accountId, ok: true, credits: 0, report: [], at })) ===
       CheckinState.NOT_SIGNED,
+  );
+
+  // The row is what the panel renders. Pin the numeric fields against the
+  // outcome so a constant here cannot pass as a valid value
+  // 返回类型不写死成 BenefitStatus：答复里的字段类型是 MessageInit，find 出来的
+  // 元素不是 Message。这里只读字段，让 TS 自己推就够了。
+  const rowOf = async (outcome: BenefitOutcome | null) => {
+    benefits.lastRun.lastOutcome = outcome ? [outcome] : [];
+    const res = await adminService.getBenefitStatus!({} as any, {} as any);
+    const rows = res.benefits ?? [];
+    return rows.find((b) => b.accountId === accountId);
+  };
+
+  // A sign-in that paid credits reports the exact upstream number, and the
+  // summary quotes that same number -- a hardcoded constant breaks both
+  const paid = await rowOf({ upstream: accountId, ok: true, credits: 100, signedIn: true, report: [], at });
+  check("签到带积分时 credits 是上游报的那个数", paid?.credits === 100, String(paid?.credits));
+  const quoted = /\+(\d+)/.exec(paid?.summary ?? "")?.[1];
+  check(
+    "summary 里的数字与 credits 一致",
+    quoted !== undefined && Number(quoted) === paid?.credits,
+    `${paid?.summary} / credits=${paid?.credits}`,
+  );
+
+  // A sign-in that paid nothing is still a sign-in; "+0" would invent a payout
+  const unpaid = await rowOf({ upstream: accountId, ok: true, credits: 0, signedIn: true, report: [], at });
+  check("签到零积分时 credits 是 0", unpaid?.credits === 0, String(unpaid?.credits));
+  check("零积分的 summary 不带「+0」", !/\+0/.test(unpaid?.summary ?? ""), unpaid?.summary ?? "");
+
+  // Never asked is unknown, not "not signed in": credits stay at the zero
+  // sentinel and the state says UNKNOWN
+  const never = await rowOf(null);
+  check("没问过时 credits 是 0", never?.credits === 0, String(never?.credits));
+  check(
+    "没问过时 checkinState 是 UNKNOWN",
+    never?.checkinState === CheckinState.UNKNOWN,
+    String(never?.checkinState),
   );
 }
 

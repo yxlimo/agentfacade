@@ -16,6 +16,7 @@
 // （平台那边按周期翻）；领取半小时一次（活动名额按天放）；扫余额跟钱包的缓存
 // 一样，五分钟；读状态跟健康快照的缓存一样。
 
+import { log } from "./log.ts";
 import { listProviders } from "./providers.ts";
 import { platformPolicy } from "./platforms.ts";
 // 余额到期优先的次序：余额从额度快照读，钉住的状态按平台存在那一层。
@@ -51,8 +52,8 @@ const lastFailure = new Map<string, string>();
 function noteFailure(id: string, message: string, hint?: string): void {
   if (message === lastFailure.get(id)) return;
   lastFailure.set(id, message);
-  console.warn(`[AUTH] ${id}: ${message}`);
-  if (hint) console.warn(`       ${hint}`);
+  log.warn(`[AUTH] ${id}: ${message}`);
+  if (hint) log.warn(`       ${hint}`);
 }
 
 /** 这一步该做了吗。 */
@@ -214,7 +215,7 @@ async function runOnce(): Promise<void> {
   if (due("cooldown")) {
     try {
       const swept = sweepExpiredCooldowns();
-      if (swept > 0) console.log(`[COOLDOWN] 清掉 ${swept} 条过期的冷却`);
+      if (swept > 0) log.info(`[COOLDOWN] 清掉 ${swept} 条过期的冷却`);
       done("cooldown");
     } catch (e) {
       noteFailure("cooldown", (e as Error)?.message ?? String(e));
@@ -248,7 +249,7 @@ function periodicEnabled(): boolean {
  */
 export function startPeriodic(intervalMs = INTERVAL_MS): void {
   if (!periodicEnabled()) {
-    console.log(
+    log.info(
       "[PERIODIC] 定时器关了（PERIODIC_ENABLED=false）：不换令牌、不签到、不扫余额。",
     );
     return;

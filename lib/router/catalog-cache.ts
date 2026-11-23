@@ -13,6 +13,7 @@
 // list the upstream published — its age says whether to fetch again, never
 // that the list itself is wrong.
 
+import { log } from "../log.ts";
 import { syncPlatformModels } from "../open-platforms.ts";
 import { peekCached, setCached } from "../store.ts";
 
@@ -90,14 +91,14 @@ export class CatalogCache<T> {
     // 了。记一句，让人能对上。
     const nameless = ids.filter((id) => !id).length;
     if (nameless) {
-      console.warn(
+      log.warn(
         `[catalog] 上游目录里有 ${nameless} 项没有 id（字段名换了？），这些不会写进平台行`,
       );
     }
     try {
       syncPlatformModels(this.platform, ids);
     } catch (e) {
-      console.warn(`[catalog] 把目录写回平台行失败：${(e as Error)?.message}`);
+      log.warn(`[catalog] 把目录写回平台行失败：${(e as Error)?.message}`);
     }
   }
 
@@ -119,7 +120,7 @@ export class CatalogCache<T> {
       const at = Number(row?.data?.at);
       this.at = Number.isFinite(at) && at > 0 ? at : Number(row?.at ?? 0);
     } catch (e) {
-      console.warn(`[catalog] 读取模型目录缓存失败：${(e as Error)?.message}`);
+      log.warn(`[catalog] 读取模型目录缓存失败：${(e as Error)?.message}`);
     }
   }
 
@@ -129,7 +130,7 @@ export class CatalogCache<T> {
     try {
       setCached(this.cacheId, { items: this.items, at: this.at });
     } catch (e) {
-      console.warn(`[catalog] 写入模型目录缓存失败：${(e as Error)?.message}`);
+      log.warn(`[catalog] 写入模型目录缓存失败：${(e as Error)?.message}`);
     }
   }
 }

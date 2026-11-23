@@ -6,6 +6,7 @@
 // 临时目录。没有任何一次请求出机器。
 
 import fs from "node:fs";
+import { captureLog } from "./log-capture.ts";
 
 const DATA_DIR = "/tmp/opencode/test-quota-plugin";
 process.env.FACADE_DATA_DIR = DATA_DIR;
@@ -20,6 +21,7 @@ const {
   quotaPluginOf,
   registerQuotaPlugin,
 } = await import("../lib/quota-plugins.ts");
+import type { QuotaPlugin } from "../lib/quota-plugin-registry.ts";
 // 种类与插件都是导入时登记的：导入它，它们才都在。
 await import("../lib/kinds/index.ts");
 const { kindOf } = await import("../lib/provider-kinds.ts");
@@ -78,7 +80,8 @@ check(
   allQuotaPlugins().map((p) => p.id).join(","),
 );
 
-const dummy = {
+// 声明成插件本尊：字面量不标注的话 state 会被放宽成 string。
+const dummy: QuotaPlugin = {
   id: "dummy-plugin",
   label: "假的",
   baseUrls: [],
@@ -707,19 +710,16 @@ check(
 check("两个账号不是同一个", twoAId !== twoBId, `${twoAId} ${twoBId}`);
 
 // 刷一轮：问到的写进快照，问不到的就不写。
-const refreshWarnings: string[] = [];
-const realRefreshWarn = console.warn;
-console.warn = (...args: unknown[]) => {
-  refreshWarnings.push(args.map((a) => String(a)).join(" "));
-};
+const captured = captureLog({ methods: ["warn"] });
 let refreshThrew = false;
 try {
   await refreshHealthSnapshot();
 } catch {
   refreshThrew = true;
 } finally {
-  console.warn = realRefreshWarn;
+  captured.restore();
 }
+const refreshWarnings = captured.all;
 check("刷新不抛", !refreshThrew);
 
 const livePayload = pluginBucket().qiniu?.[liveId] as any;

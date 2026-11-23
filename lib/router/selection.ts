@@ -12,13 +12,19 @@
 // every failure as "try the next one", the upstream side only moves on when
 // the account itself is the problem.
 
+import { createHash } from "node:crypto";
+
 /** How the candidates are used. */
-export type SelectionStrategy = "single" | "fallback";
+
+export type SelectionStrategy = "single" | "fallback" | "balance";
 
 export interface SelectionCandidate<T> {
   /** The candidate's name: the log and the counters use it. */
   id: string;
-  /** The weight: the bigger one is tried first. */
+  /**
+   * The weight: the bigger one is tried first — under `balance` it is a
+   * share instead (the bigger one gets more sessions, see sessionTargetOrder).
+   */
   weight: number;
   /** Try this candidate once. */
   run: () => Promise<T>;
@@ -65,6 +71,10 @@ export class SelectionStop extends Error {
  * failure, because a caller that asked for one candidate must not silently
  * get another one.
  *
+ * `balance` runs them in the order the caller gave: a session always meets
+ * the same order, so a failed first target hands the session to the same
+ * second one every time.
+ *
  * `fallback` runs them from the heaviest to the lightest and stops at the
  * first one that answers. A failure moves on to the next candidate only when
  * `degradable` says the candidate itself was the problem; a failure that is
@@ -73,10 +83,13 @@ export class SelectionStop extends Error {
 export async function select<T>(options: SelectionOptions<T>): Promise<T> {
   // A strategy nobody knows is not a fallback. Running one anyway would send
   // the traffic somewhere the operator did not ask for, without a word.
-  if (options.strategy !== "single" && options.strategy !== "fallback") {
+  if (options.strategy !== "single" && options.strategy !== "fallback" && options.strategy !== "balance") {
     throw new Error(`unknown selection strategy: ${String(options.strategy)}`);
   }
-  const candidates = byWeight(options.candidates);
+  // `balance` comes in already ordered: the caller worked out the HRW order
+  // for the session. Sorting it again would turn shares back into priorities.
+  const candidates =
+    options.strategy === "balance" ? options.candidates : byWeight(options.candidates);
   if (!candidates.length) {
     throw failureOf(options, undefined, []);
   }
@@ -111,6 +124,41 @@ export async function select<T>(options: SelectionOptions<T>): Promise<T> {
     }
   }
   throw failureOf(options, lastError, tried);
+}
+
+/**
+ * The deterministic `balance` order for one session: weighted rendezvous
+ * (highest-random-weight) over sha256.
+ *
+ * Each target gets a score `weight / -ln(u)`, where u comes from hashing the
+ * session and the target id into (0, 1]. The winner is the biggest score; the
+ * rest follow, biggest first — so when the winner fails, the session lands on
+ * the same second target every time. sha256 keeps the answer stable across
+ * processes and restarts; nothing is stored anywhere.
+ *
+ * Targets with a weight of 0 or less take no share and are not in the order.
+ * Unrelated to `lib/router/balance-order.ts`, which pins accounts by credit
+ * expiry for the `expiry_first` strategy — different mechanism, same word.
+ */
+export function sessionTargetOrder<T>(
+  candidates: SelectionCandidate<T>[],
+  sessionKey: string,
+): SelectionCandidate<T>[] {
+  return candidates
+    .filter((candidate) => candidate.weight > 0)
+    .map((candidate, index) => ({ candidate, index, score: rendezvousScore(sessionKey, candidate) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map((entry) => entry.candidate);
+}
+
+/** weight / -ln(u): the weighted-rendezvous score of one target for one session. */
+function rendezvousScore<T>(sessionKey: string, candidate: SelectionCandidate<T>): number {
+  const hash = createHash("sha256").update(sessionKey + "\u0000" + candidate.id).digest();
+  // The first 8 bytes cover [0, 1); (0, 1] keeps the logarithm defined. Every
+  // representable value is hit, so no target is structurally favoured by the
+  // mapping itself.
+  const u = 1 - Number(hash.readBigUInt64BE(0)) / 2 ** 64;
+  return candidate.weight / -Math.log(u);
 }
 
 /**

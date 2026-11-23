@@ -216,7 +216,7 @@ const { senseNovaPoolsViews } = await import("../lib/sensenova/quota-plugin.ts")
 // 厂商那几行不再由代码补（平台行是用户在面板上自己建的）：这一节要用的行，
 // 测试自己造一行。
 const { insertVendorPlatform } = await import("./vendor-platform.ts");
-insertVendorPlatform("sensenova", "sensenova", { quotaPlugin: "sensenova-pools" });
+insertVendorPlatform("sensenova", "sensenova");
 
 const SENSE_ROW = {
   id: "sensenova",

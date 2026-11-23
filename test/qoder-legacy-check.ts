@@ -29,6 +29,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { captureLog } from "./log-capture.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "qoder-legacy-"));
 process.env.FACADE_DATA_DIR = tmp;
@@ -149,17 +150,13 @@ async function thrownBy(run: () => Promise<unknown>): Promise<any> {
 
 /** 跑一次，把它打出去的警告收下来。 */
 async function warningsDuring(run: () => Promise<unknown>): Promise<string[]> {
-  const warnings: string[] = [];
-  const original = console.warn;
-  console.warn = (...args: unknown[]) => {
-    warnings.push(args.map((a) => String(a)).join(" "));
-  };
+  const captured = captureLog({ methods: ["warn"] });
   try {
     await run();
   } finally {
-    console.warn = original;
+    captured.restore();
   }
-  return warnings;
+  return captured.lines.warn;
 }
 
 /* ------------------------------------------------------------------ *

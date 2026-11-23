@@ -11,6 +11,7 @@
 // 这个插件不要任何额外的凭据段（fields 是空的）：查额度用的就是登录换来的会话，
 // 用户不必再填第二个东西。会话不在 —— 那是「还没登录」，翻成 missing。
 
+import { log } from "../log.ts";
 import type { CreditLotView, QuotaView } from "../provider-kinds.ts";
 import type { ProviderRow } from "../providers.ts";
 import { quotaProbe } from "../quota-state.ts";
@@ -195,7 +196,7 @@ export const internAiCreditsPlugin = registerQuotaPlugin({
     try {
       packs = await internAiCreditPacks(session, token, INTERN_AI_DISCOVERY_BASE);
     } catch (e) {
-      console.warn(`[INTERN-AI] 墨点批次查询失败：${(e as Error)?.message}`);
+      log.warn(`[INTERN-AI] 墨点批次查询失败：${(e as Error)?.message}`);
     }
 
     const credits: InternAiCredits = { balance, packs };

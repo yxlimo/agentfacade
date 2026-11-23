@@ -126,7 +126,7 @@ check(
 const manualWins = traitsDoc.models?.["deepseek-v4-1-flash"];
 check(
   "the hand-written output limit beats the one pi reports",
-  manualWins?.maxOutputTokens === 384000 && (manualWins?.providers as unknown[] | undefined)?.length,
+  manualWins?.maxOutputTokens === 384000 && ((manualWins?.providers as unknown[] | undefined)?.length ?? 0) > 0,
   JSON.stringify([manualWins?.maxOutputTokens, (manualWins?.providers as unknown[] | undefined)?.length]),
 );
 check(

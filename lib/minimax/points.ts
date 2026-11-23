@@ -40,6 +40,7 @@
 // Adding them back as a fallback would report a paying account as broke, so
 // leave them alone even when the credit ledger answers nothing.
 
+import { log } from "../log.ts";
 import { buildRequest } from "./checkin.ts";
 import { resolveHost } from "./hosts.ts";
 
@@ -93,12 +94,12 @@ async function ask(
   try {
     const res = await fetch(url, { method, headers, body, signal: AbortSignal.timeout(15_000) });
     if (!res.ok) {
-      console.warn(`[MINIMAX] ${new URL(url).pathname} 答 HTTP ${res.status}`);
+      log.warn(`[MINIMAX] ${new URL(url).pathname} 答 HTTP ${res.status}`);
       return null;
     }
     return await res.json().catch(() => null);
   } catch (e) {
-    console.warn(`[MINIMAX] ${new URL(url).pathname} 没答上来：${(e as Error)?.message}`);
+    log.warn(`[MINIMAX] ${new URL(url).pathname} 没答上来：${(e as Error)?.message}`);
     return null;
   }
 }
@@ -155,7 +156,7 @@ async function selectedWorkspace(token: string, region: string): Promise<Workspa
     ? ""
     : String(chosen.workspace_id);
   if (id === "") {
-    console.warn("[MINIMAX] 拿不到 workspace_id（get_user_extra_info 里没有 workspaces）");
+    log.warn("[MINIMAX] 拿不到 workspace_id（get_user_extra_info 里没有 workspaces）");
     return null;
   }
   const value: Workspace = { id, groupId: String(chosen.op_group_id ?? "") };
@@ -225,7 +226,7 @@ export async function fetchMiniMaxLedger(
     if (!body) return null;
     const rows: any[] | null = Array.isArray(body.details) ? body.details : null;
     if (!rows) {
-      console.warn("[MINIMAX] 积分明细答复里没有 details 数组，当作不知道");
+      log.warn("[MINIMAX] 积分明细答复里没有 details 数组，当作不知道");
       return null;
     }
     return rows.map((row) => ({
@@ -237,7 +238,7 @@ export async function fetchMiniMaxLedger(
       creditType: Number(row?.credit_type ?? 0),
     }));
   } catch (e) {
-    console.warn(`[MINIMAX] 读积分失败：${(e as Error)?.message}`);
+    log.warn(`[MINIMAX] 读积分失败：${(e as Error)?.message}`);
     return null;
   }
 }
@@ -284,17 +285,17 @@ export async function fetchMiniMaxCreditFallback(
     if (!body) return null;
     const code = body?.base_resp?.status_code;
     if (code !== undefined && Number(code) !== 0) {
-      console.warn(`[MINIMAX] 积分自动消耗开关答了业务码 ${code}`);
+      log.warn(`[MINIMAX] 积分自动消耗开关答了业务码 ${code}`);
       return null;
     }
     const enabled = body.token_plan_credit_fallback_enabled;
     if (typeof enabled !== "boolean") {
-      console.warn("[MINIMAX] 积分自动消耗开关答复里没有布尔值，当作不知道");
+      log.warn("[MINIMAX] 积分自动消耗开关答复里没有布尔值，当作不知道");
       return null;
     }
     return enabled;
   } catch (e) {
-    console.warn(`[MINIMAX] 读积分自动消耗开关失败：${(e as Error)?.message}`);
+    log.warn(`[MINIMAX] 读积分自动消耗开关失败：${(e as Error)?.message}`);
     return null;
   }
 }

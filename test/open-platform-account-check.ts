@@ -374,8 +374,9 @@ registerQuotaPlugin({
     { name: "portal_account", label: "门户账号", secret: true },
     { name: "portal_cookie", label: "门户 cookie", secret: true },
   ],
-  fetch: async () => null,
-  quotas: () => [],
+  // 老形状的 fetch/quotas 早已退场：插件只回答 probe（这个插件只用来数段，
+  // probe 不会被叫到，给一个按「不知道」回答的实现把接口凑齐）。
+  probe: async () => ({ state: "unknown", views: [], recoverAt: null, message: "" }),
 });
 
 const portalPlatform = createOpenPlatform({
@@ -421,7 +422,7 @@ check("账号加得起来", portalAccountId !== "", portalAccountId);
   check("一段都没写", result.count === 0, String(result.count));
   check(
     "机器码说的是段数不够，细节里说清要几段、发来几段",
-    result.code === "ACCOUNT_KEY_COUNT_SHORT" && result.message.includes("got 1"),
+    !result.ok && result.code === "ACCOUNT_KEY_COUNT_SHORT" && result.message.includes("got 1"),
     JSON.stringify(result),
   );
   check("细节里说了没有任何改动", result.message.includes("nothing written"), result.message);
@@ -469,7 +470,7 @@ section("控制组：别的平台不收");
 {
   const result = setProviderKeys("zcode", ["x"]);
   check("被拒了", result.ok === false, result.message);
-  check("机器码说的是没有这个账号", result.code === "ACCOUNT_NOT_FOUND", JSON.stringify(result));
+  check("机器码说的是没有这个账号", !result.ok && result.code === "ACCOUNT_NOT_FOUND", JSON.stringify(result));
   check("一段都没写", result.count === 0, String(result.count));
 }
 

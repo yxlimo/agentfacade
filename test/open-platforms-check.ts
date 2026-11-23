@@ -500,7 +500,7 @@ const badKind = createOpenPlatform({
 check("没登记的 kind 不收", badKind.ok === false, badKind.message);
 check(
   "拒绝的机器码是「没有这一类」，细节里带着那个 kind 与能建的那几类",
-  badKind.code === "PLATFORM_KIND_UNKNOWN" &&
+  !badKind.ok && badKind.code === "PLATFORM_KIND_UNKNOWN" &&
     badKind.message.includes("no-such-kind") &&
     badKind.message.includes("openai") &&
     badKind.message.includes("anthropic") &&
@@ -522,7 +522,7 @@ for (const kind of ["sensenova"]) {
     kind,
   });
   check(`厂商类型不再能建：${kind}`, built.ok === false, built.message);
-  check(`${kind} 的机器码是「没有这一类」`, built.code === "PLATFORM_KIND_UNKNOWN", JSON.stringify(built));
+  check(`${kind} 的机器码是「没有这一类」`, !built.ok && built.code === "PLATFORM_KIND_UNKNOWN", JSON.stringify(built));
   check(`${kind} 那一行没写进表`, openPlatformOf(`kinds-${kind}`) === null, String(openPlatformOf(`kinds-${kind}`)));
   // kind 也从登记表里退场了：迁移之后的行上是 openai，不再有靠旧 kind 解析的行。
   check(`${kind}：kind 已从登记表退场`, kindOf(kind) === null, String(kindOf(kind)));
@@ -605,7 +605,7 @@ check("表里没有 qoder-xx", openPlatformOf("qoder-xx") === null);
 // 建好之后换不了类型：换类型要连它名下的凭据一起重算，那是另一件事。
 const switched = updateOpenPlatform("kinds-demo", { kind: "openai", label: "Kinds Demo 改" });
 check("换类型被拒", switched.ok === false, switched.message);
-check("机器码说的是类型定死了", switched.code === "PLATFORM_KIND_FIXED", JSON.stringify(switched));
+check("机器码说的是类型定死了", !switched.ok && switched.code === "PLATFORM_KIND_FIXED", JSON.stringify(switched));
 check(
   "库里 kind 没变",
   openPlatformOf("kinds-demo")?.kind === "anthropic",

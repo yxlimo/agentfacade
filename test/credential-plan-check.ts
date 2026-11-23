@@ -96,15 +96,6 @@ const PLATFORM_ROWS: Record<string, [string, string, boolean][]> = {
   "workbuddy-cn": [["登录会话", "session", true]],
   "workbuddy-global": [["登录会话", "session", true]],
   zcode: [["登录会话", "session", true]],
-  // 会话只用来问额度：推理用的是那把 key。
-  sensenova: [
-    ["登录会话", "session", false],
-    ["推理 Key", "api_key", true],
-  ],
-  "intern-ai": [
-    ["登录会话", "session", false],
-    ["推理 Key", "api_key", true],
-  ],
   // 迁移后的形状：厂商 kind 退场，五家都是 kind=openai + 行上的 quota_plugin。
   // 登录会话那一行随 kind 一起消失（登录流是 kind 带的）；额度那格由插件声明
   // —— 五家里只有七牛的插件要格（额度 Cookie），其余三家读存量会话、不占格子。

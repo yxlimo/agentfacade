@@ -26,6 +26,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { CatalogModel } from "../lib/gen/agentfacade/admin/v1/admin_pb.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "catalog-billing-panel-"));
 // The data directory has to be set before the store is imported: the store opens
@@ -102,10 +103,23 @@ function platformWithUpstreamCatalog(
 /** The panel's answer for one platform, model by model. */
 async function listModels(upstreamId: string): Promise<any[]> {
   const res = await adminService.listModels!(create(ListModelsRequestSchema, { upstreamId }), {} as never);
-  return [...res.models];
+  return [...(res.models ?? [])];
 }
 
 const modelOf = (models: any[], id: string) => models.find((model) => model.id === id);
+// toJson comes back as plain JsonValue: the generated code is built without the
+// json_types option, so MessageJsonType falls back to JsonValue instead of the
+// message's JSON shape. These are the wire fields the assertions below read.
+type BillingWire = {
+  mode?: string;
+  currency?: string;
+  inputPerMillion?: number;
+  outputPerMillion?: number;
+  cacheReadPerMillion?: number;
+  unknown?: boolean;
+};
+const wireOf = (m: unknown): { billing?: BillingWire } =>
+  toJson(CatalogModelSchema, m as CatalogModel) as { billing?: BillingWire };
 
 /* ------------------------------------------------------------------ *
  * 1. tokenrhythm: prices, in the currency the platform stated
@@ -137,7 +151,7 @@ check("没有倍率（这是按 token 算的那一种）", !("credits" in (price
 
 // Wire shape: the same numbers, with the optional fields present only where there
 // is something to say.
-const wire = toJson(CatalogModelSchema, priced);
+const wire = wireOf(priced);
 check(
   "线上也是 mode/currency/8/28/2",
   wire.billing?.mode === "token" &&
@@ -179,7 +193,7 @@ check(
 );
 check("币种不编", !snPriced?.billing?.currency, String(snPriced?.billing?.currency));
 
-const snWire = toJson(CatalogModelSchema, snPriced);
+const snWire = wireOf(snPriced);
 check(
   "线上没有价格字段（不是 0）",
   snWire.billing?.unknown === true &&
@@ -201,7 +215,7 @@ check("建起一个自建的开放平台", madeUp.ok, madeUp.message);
 const barePrice = modelOf(await listModels("my-relay"), tokenrhythmEntry.id);
 check("模型在答复里", Boolean(barePrice), JSON.stringify(barePrice));
 check("没有计费这一格", barePrice !== undefined && barePrice.billing === undefined, JSON.stringify(barePrice));
-check("线上也没有这一格", !("billing" in toJson(CatalogModelSchema, barePrice)), JSON.stringify(toJson(CatalogModelSchema, barePrice)));
+check("线上也没有这一格", !("billing" in wireOf(barePrice)), JSON.stringify(wireOf(barePrice)));
 
 closeStore();
 fs.rmSync(tmp, { recursive: true, force: true });

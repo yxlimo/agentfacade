@@ -46,9 +46,10 @@ function rows(accountId: string): string[] {
 }
 
 // 账号行：key 挂在账号名下，所以先有这个账号。
-// 平台行带 quota_plugin=qiniu：插件声明了「额度 Cookie」那一段，凭据才是两格。
+// 平台行地址是七牛云的规范推理地址：额度插件按地址认出 qiniu，插件声明了
+// 「额度 Cookie」那一段，凭据才是两格。
 const { insertVendorPlatform } = await import("./vendor-platform.ts");
-insertVendorPlatform("qiniu", "qiniu", { quotaPlugin: "qiniu" });
+insertVendorPlatform("qiniu", "qiniu");
 
 const account = addAccount({ platform: "qiniu" });
 const id = account.id ?? "";
@@ -115,7 +116,7 @@ console.log("别的平台不放开");
 {
   const result = setProviderKeys("zcode", ["x"]);
   check("被拒了", !result.ok, result.message);
-  check("机器码说的是没有这个账号", result.code === "ACCOUNT_NOT_FOUND", JSON.stringify(result));
+  check("机器码说的是没有这个账号", !result.ok && result.code === "ACCOUNT_NOT_FOUND", JSON.stringify(result));
   check("一段都没写", result.count === 0, String(result.count));
 }
 

@@ -4,6 +4,7 @@
 // name the log uses, how the message names them, and how the call is
 // made — so the difference is passed in.
 
+import { log } from "../../log.ts";
 import type Koa from "koa";
 import { randomUUID } from "node:crypto";
 import { AuthError } from "../../credential.ts";
@@ -53,7 +54,7 @@ export function attributionHeaders(
  * 开关打的归因行」与「策略打的选路行」。也不打 key。
  */
 function logAttempt(tag: string, accountId: string, requestId: string, model: string): void {
-  console.log(`[ATTRIB] ${tag} account=${accountId} request=${requestId} model=${model}`);
+  log.info(`[ATTRIB] ${tag} account=${accountId} request=${requestId} model=${model}`);
 }
 
 /**
@@ -90,7 +91,7 @@ export async function toOpenAiPlatform(
   openaiBody.model = model;
   openaiBody.stream = stream;
   if (ctx.logRoute) {
-    console.log(`[ROUTE] ${opts.log} model=${route.model} stream=${stream}`);
+    log.info(`[ROUTE] ${opts.log} model=${route.model} stream=${stream}`);
   }
 
   // 流式答复是在 underPolicy 返回之后才消费的：冷却由调用方在流结束时结算。
@@ -331,7 +332,7 @@ export async function toAnthropicPlatform(
   // 生效上限：客户端给了就是它的，没给才是上面那个默认值。日志拿它算用掉多少。
   if (typeof anthropicBody.max_tokens === "number") ctx.upstreamMaxTokens = anthropicBody.max_tokens;
   if (ctx.logRoute) {
-    console.log(`[ROUTE] ${opts.log} model=${route.model} stream=${stream}`);
+    log.info(`[ROUTE] ${opts.log} model=${route.model} stream=${stream}`);
   }
 
   // 流式答复是在 underPolicy 返回之后才消费的：冷却由调用方在流结束时结算。

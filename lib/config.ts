@@ -25,6 +25,7 @@
 // read through lib/env.ts and lib/store.ts, not through here — they have
 // nowhere else to live.
 
+import { log } from "./log.ts";
 import { parseBool, readEnvValue } from "./env.ts";
 import { deleteConfig, getConfig, listConfig, setConfig } from "./store.ts";
 
@@ -318,11 +319,11 @@ export function logConfig(): void {
     acc[s.source] = (acc[s.source] ?? 0) + 1;
     return acc;
   }, {});
-  console.log(
+  log.info(
     `[CONFIG] ${snapshot.length} settings (${bySource.database ?? 0} from the database, ` +
       `${bySource.environment ?? 0} from the environment, ${bySource.default ?? 0} default)`,
   );
   for (const s of changed) {
-    console.log(`[CONFIG] ${s.key} = ${s.value}  [${s.source}]`);
+    log.info(`[CONFIG] ${s.key} = ${s.value}  [${s.source}]`);
   }
 }

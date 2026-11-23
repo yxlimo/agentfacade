@@ -97,11 +97,14 @@ check("自适应思考也带档位", adaptive.reasoning_effort === "max", JSON.s
 console.log("");
 console.log("OpenAI → Anthropic");
 
-const toAnthropic = openaiToAnthropic({
-  model: "m",
-  messages: [],
-  reasoning_effort: "max",
-});
+const toAnthropic = openaiToAnthropic(
+  {
+    model: "m",
+    messages: [],
+    reasoning_effort: "max",
+  },
+  8192,
+);
 check(
   "max 是一个大预算",
   Number(toAnthropic.thinking?.budget_tokens) > 16384,
@@ -178,15 +181,17 @@ check("没写：不强加 thinking", !("thinking" in bareToOpenAI), JSON.stringi
 console.log("");
 console.log("兼容层：OpenAI → Anthropic 方言");
 
-const offToAnthropic = openaiToAnthropic({ model: "m", messages: [], reasoning_effort: "none" });
+// 签名要求 defaultMaxTokens（body 没带 max_tokens 时兜底）：用开放平台那份
+// 8192 默认值；这些用例不断言 max_tokens。
+const offToAnthropic = openaiToAnthropic({ model: "m", messages: [], reasoning_effort: "none" }, 8192);
 check("关：发 thinking disabled", offToAnthropic.thinking?.type === "disabled", JSON.stringify(offToAnthropic.thinking));
 check("关：不发 output_config（Anthropic 没有 none 这档）", !("output_config" in offToAnthropic), JSON.stringify(offToAnthropic));
 check("关：不发 reasoning_effort", !("reasoning_effort" in offToAnthropic), JSON.stringify(offToAnthropic));
 
-const anthropicSpelledOff = openaiToAnthropic({ model: "m", messages: [], thinking: { type: "disabled" } });
+const anthropicSpelledOff = openaiToAnthropic({ model: "m", messages: [], thinking: { type: "disabled" } }, 8192);
 check("关：Anthropic 拼法也认", anthropicSpelledOff.thinking?.type === "disabled", JSON.stringify(anthropicSpelledOff.thinking));
 
-const lowToAnthropic = openaiToAnthropic({ model: "m", messages: [], reasoning_effort: "low" });
+const lowToAnthropic = openaiToAnthropic({ model: "m", messages: [], reasoning_effort: "low" }, 8192);
 check("分级：换成预算", lowToAnthropic.thinking?.type === "enabled" && Number(lowToAnthropic.thinking?.budget_tokens) > 0, JSON.stringify(lowToAnthropic.thinking));
 
 const bareToAnthropic = openaiToAnthropic({ model: "m", messages: [] }, 4096);

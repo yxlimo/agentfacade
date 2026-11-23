@@ -227,7 +227,6 @@ const mixed: PlatformAvailability = {
   accounts: 2,
   rows: [row, spare],
   on: 2,
-  advice: "凭据读不出来：看日志",
   catalog: [],
   ids: [],
   untilMs: null,

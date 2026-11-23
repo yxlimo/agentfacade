@@ -7,6 +7,7 @@
 // 开关在数据库的 provider.enabled 上，每次现读：面板改了，下一个请求就是新的
 // —— 不用重启，也不用重新读配置。
 
+import { log } from "../log.ts";
 import { configNumber, configString } from "../config.ts";
 import { zcodeQuota } from "../zcode/credits.ts";
 import { zcodeClaimSnapshot, mergePendingClaims } from "../zcode/auto-claim.ts";
@@ -496,7 +497,7 @@ export async function refreshHealthSnapshot(): Promise<void> {
         try {
           partials.set(platform, await refreshPlatform(platform, rows));
         } catch (e) {
-          console.warn(`[HEALTH] ${platform} 的额度没问到：${(e as Error)?.message}`);
+          log.warn(`[HEALTH] ${platform} 的额度没问到：${(e as Error)?.message}`);
         }
       })(),
     );
@@ -547,13 +548,13 @@ async function refreshPluginQuota(snapshot: HealthSnapshot, row: ProviderRow): P
   } catch (e) {
     // 插件不许 reject（翻不动的都归 unknown）。真 reject 了是插件的错：这一轮当
     // 「问不到」，但要说出来 —— 否则面板上它就是个没有理由的空。
-    console.warn(`[QUOTA] 账号 ${row.id} 的额度没问到（插件 ${plugin.id}）：${(e as Error)?.message}`);
+    log.warn(`[QUOTA] 账号 ${row.id} 的额度没问到（插件 ${plugin.id}）：${(e as Error)?.message}`);
     probe = quotaProbe("unknown", `额度插件执行时抛出异常：${(e as Error)?.message ?? String(e)}`);
   }
   const table = { ...snapshot.plugins[plugin.id] };
   table[row.id] = probe;
   snapshot.plugins[plugin.id] = table;
-  applyProbeEffect(row, probe, plugin.id, (line) => console.warn(line));
+  applyProbeEffect(row, probe, plugin.id, (line) => log.warn(line));
 }
 
 /** 问一家上游，把它那段填进快照。 */
@@ -645,7 +646,7 @@ async function refreshPlatformRows(rows: ProviderRow[]): Promise<HealthSnapshot>
         try {
           await refreshOne(partial, row);
         } catch (e) {
-          console.warn(`[HEALTH] ${row.id} 的额度没问到：${(e as Error)?.message}`);
+          log.warn(`[HEALTH] ${row.id} 的额度没问到：${(e as Error)?.message}`);
         }
       })(),
     );
@@ -682,7 +683,7 @@ function startHealthRefresh(): Promise<void> {
     healthRefresh = refreshHealthSnapshot()
       .catch((e) => {
         clearHealthSnapshot();
-        console.warn(`[HEALTH] 刷新失败：${(e as Error)?.message}`);
+        log.warn(`[HEALTH] 刷新失败：${(e as Error)?.message}`);
       })
       .finally(() => {
         healthRefresh = null;
@@ -761,7 +762,7 @@ async function freshPlatformSnapshot(id: string, force = false): Promise<HealthS
         mergePendingClaims(merged);
         putHealthSnapshot(merged);
       } catch (e) {
-        console.warn(`[HEALTH] ${platform} 的额度没问到：${(e as Error)?.message}`);
+        log.warn(`[HEALTH] ${platform} 的额度没问到：${(e as Error)?.message}`);
       }
     }
   }
@@ -840,7 +841,7 @@ function safeCredential(row: ProviderRow): CredentialView | null {
   try {
     return kind.credential(row);
   } catch (e) {
-    console.warn(`[ADMIN] 账号 ${row.id} 的凭据状态读不出来：${(e as Error)?.message}`);
+    log.warn(`[ADMIN] 账号 ${row.id} 的凭据状态读不出来：${(e as Error)?.message}`);
     return {
       kind: "session",
       status: CredentialState.ERROR,

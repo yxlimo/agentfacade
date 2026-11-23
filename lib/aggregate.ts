@@ -29,8 +29,13 @@ export type AggregateGroup = string;
  * `fallback` tries the targets in the order they are listed and stops at the
  * first one that answers. An upstream that runs out of credits then costs the
  * traffic instead of taking the model down with it.
+ *
+ * `balance` keeps every session on one target (the upstream's prompt cache
+ * keeps hitting): the target is picked per session by a weighted rendezvous
+ * hash, and the weight is that target's share of the sessions, not a priority.
+ * A request without any session id is refused (400).
  */
-export type AggregateStrategy = "single" | "fallback";
+export type AggregateStrategy = "single" | "fallback" | "balance";
 
 /** One upstream model behind an exposed model. */
 export interface AggregateTarget {

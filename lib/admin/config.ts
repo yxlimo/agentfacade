@@ -9,6 +9,7 @@
 // 说清是哪种（configPendingRestart）。
 // 服务自己内部的设置（config-cli.ts 改的那些）只有重启这一条路。
 
+import { log } from "../log.ts";
 import {
   configClear,
   configFlag,
@@ -74,6 +75,12 @@ configNumber("QODER_LEGACY_RETRY_MS", 10_000);
 // lib/router/upstreams/qoder.ts 每次调用都读一次。
 configFlag("QODER_SKIP_QUEUE_WAIT", false);
 
+// balance 策略用的自定义会话头：默认空（不启用）。它是在每条请求开始时读的
+// （lib/session-id.ts），所以是热设置 —— 面板改完下一个请求就生效。
+// 这里显式问一次，理由与上面那几条一样：没问过的设置不在快照里。
+configString("SESSION_HEADER", "");
+markHotSetting("SESSION_HEADER");
+
 // 上游级（平台级）短熔断的总开关：默认关。开着的时候，连续几次可熔断的失败
 // 之后，一段时间内不往那个平台发请求（省掉那次上游往返），到点放一个探测进去。
 // 旋钮（失败次数、窗口、封顶）不上面板 —— 那是调参的事，不是开关。
@@ -127,6 +134,8 @@ const DESCRIPTIONS: Record<string, string> = {
   QODER_LEGACY_RETRY_MS: "Qoder 旧协议排队后隔多久重试（毫秒）",
   QODER_SKIP_QUEUE_WAIT: "开着时排队不等待，直接交给下一个目标。关着时先等一次再放弃",
   UPSTREAM_BREAKER_ENABLED: "开着时某个上游连续失败几次就暂时不往它发请求，到点放一个探测进去",
+  SESSION_HEADER:
+    "balance 策略的自定义会话头名（可逗号分隔多个，按顺序试）。它是追加在内置头之后，不会覆盖内置头。空表示不用",
 };
 
 /**
@@ -149,6 +158,7 @@ const LABELS: Record<string, string> = {
   QODER_LEGACY_RETRY_MS: "排队重试间隔",
   QODER_SKIP_QUEUE_WAIT: "排队时不等待",
   UPSTREAM_BREAKER_ENABLED: "上游级熔断",
+  SESSION_HEADER: "自定义会话头",
 };
 
 /** 这两个键是流的两道闸，它们的取值受同一个上限约束。 */
@@ -196,6 +206,8 @@ const USER_FACING = new Set([
   "QODER_SKIP_QUEUE_WAIT",
   // 上游级熔断的开关（旋钮不上面板）
   "UPSTREAM_BREAKER_ENABLED",
+  // balance 策略的自定义会话头
+  "SESSION_HEADER",
 ]);
 
 /** 这个设置是不是敏感值。 */
@@ -244,7 +256,7 @@ export function configItems(): ConfigItemView[] {
       const n = Number(raw);
       if (Number.isFinite(n) && streamLimitWasCapped(n)) {
         const capped = clampStreamLimit(n);
-        console.warn(`[CONFIG] ${setting.key} 现在是 ${n}，超过上限，已按 ${capped} 生效`);
+        log.warn(`[CONFIG] ${setting.key} 现在是 ${n}，超过上限，已按 ${capped} 生效`);
         shown = String(capped);
       }
     }
@@ -335,7 +347,7 @@ export function setConfigValue(key: string, value: string, clear = false): { ok:
   if (key === "USAGE_RETENTION_DAYS") {
     const days = configNumber("USAGE_RETENTION_DAYS", 30);
     const dropped = pruneUsage(days);
-    if (dropped > 0) console.log(`  [USAGE] 丢掉了 ${dropped} 条超过 ${days} 天的用量记录`);
+    if (dropped > 0) log.info(`  [USAGE] 丢掉了 ${dropped} 条超过 ${days} 天的用量记录`);
   }
   return { ok: true, message: cappedNote ? `已保存 ${key}：${cappedNote}` : `已保存 ${key}` };
 }

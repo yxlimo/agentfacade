@@ -262,7 +262,10 @@
   {
     "id": "opencode-go",
     "label": "OpenCode Go",
-    "baseUrl": "https://opencode.ai/zen/go/v1"
+    "baseUrl": "https://opencode.ai/zen/go/v1",
+    "headers": [
+      { "name": "x-opencode-session", "value": "{session-id}" }
+    ]
   },
   {
     "id": "openrouter",

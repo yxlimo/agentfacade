@@ -6,6 +6,7 @@
 //
 // 敏感的值只写不读：列表里给的是掩码与指纹。
 
+import { log } from "../log.ts";
 import crypto from "node:crypto";
 import { deleteProviderCredentials, deleteProviderRow, listProviders, provider } from "../providers.ts";
 import { clearDeadSession } from "../session.ts";
@@ -27,6 +28,7 @@ import { openPlatformOf } from "../open-platforms.ts";
 import { fetchOpenPlatformModels } from "../open-platform-catalog.ts";
 import { forgetAccountSnapshot } from "./upstreams.ts";
 import { clearCooldown } from "../cooldown.ts";
+import { forgetLogins } from "./login.ts";
 import { CredentialState } from "../gen/agentfacade/admin/v1/admin_pb.ts";
 import { quotaPluginOfAccount } from "../quota-state.ts";
 import { credentialStateText, hasUsableCredential, openPlatformOfAccount, parseCredentialId } from "./credentials.ts";
@@ -298,7 +300,7 @@ export function logoutAccount(accountId: string): { ok: boolean; message: string
   if (!row) return { ok: false, message: `没有这个账号：${id}`, removed: 0 };
   const removed = forgetAccountRecords(id);
   if (!removed) return { ok: true, message: "这个账号没有凭据", removed: 0 };
-  console.log(`[ADMIN] ${id} 注销了，删掉 ${removed} 条凭据`);
+  log.info(`[ADMIN] ${id} 注销了，删掉 ${removed} 条凭据`);
   return { ok: true, message: `已注销，删除 ${removed} 条凭据`, removed };
 }
 
@@ -309,6 +311,9 @@ export function logoutAccount(accountId: string): { ok: boolean; message: string
  * 带着旧身份回来 —— 快照里的额度会继续显示着一个已经不存在的账号。
  */
 export function forgetAccountRecords(accountId: string): number {
+  // 登录会话先停再删：账号 id 会被复用，留一条 pending 会话就等于把
+  // 「正在登录」送给下一个顶着这个 id 的账号（面板该说「没有可用凭据」）。
+  forgetLogins(accountId);
   let removed = deleteProviderCredentials(accountId);
   // 开放平台的凭据自己清一遍：那把 key 是这个账号的全部身份，删账号就得删它
   // —— 不然它就成了一条没人认领的孤儿记录（存凭据的地方换了位置也不怕）。
@@ -319,7 +324,7 @@ export function forgetAccountRecords(accountId: string): number {
   try {
     clearCooldown(accountId);
   } catch (e) {
-    console.warn(`[ADMIN] ${accountId} 的冷却删不掉：${(e as Error)?.message}`);
+    log.warn(`[ADMIN] ${accountId} 的冷却删不掉：${(e as Error)?.message}`);
   }
   return removed;
 }
@@ -336,7 +341,7 @@ export function deleteAccount(accountId: string): { ok: boolean; message: string
   if (!row) return { ok: false, message: `没有这个账号：${id}`, removed: 0 };
   const removed = forgetAccountRecords(id);
   deleteProviderRow(id);
-  console.log(`[ADMIN] ${id} 删了，连 ${removed} 条凭据一起`);
+  log.info(`[ADMIN] ${id} 删了，连 ${removed} 条凭据一起`);
   return { ok: true, message: removed > 0 ? `已删除该账号及其 ${removed} 条凭据` : "已删除", removed };
 }
 

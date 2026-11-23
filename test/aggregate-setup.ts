@@ -28,7 +28,9 @@ switch (command) {
       strategy: (rest[2] as "single" | "fallback") ?? "single",
       targets: rest.slice(3).map((spec, index) => {
         const [group, upstreamModel] = spec.split(":");
-        return { group, upstreamModel, position: index, enabled: true };
+        // AggregateTarget 现在要求 weight（也由它定序）：给一个随列表位置递减的
+        // 权重，保住「先列的先试」的原意。
+        return { group, upstreamModel, position: index, weight: rest.length - 3 - index, enabled: true };
       }),
     });
     console.log(`saved ${rest[0]} with ${rest.length - 3} targets`);

@@ -338,11 +338,11 @@ async function ask(gw: Gateway, model = "pub-brk"): Promise<{ status: number; te
   return { status: res.status, text: await res.text() };
 }
 
-/** 面板上那个平台的一句话。 */
-async function stateReasonOf(gw: Gateway, platform: string): Promise<string> {
+/** 面板上那个平台的熔断两格。 */
+async function breakerStateOf(gw: Gateway, platform: string): Promise<{ skipped: boolean; untilMs: bigint }> {
   const res = await call(gw, "ListUpstreams");
   const row = (res.body?.upstreams ?? []).find((u: any) => u.id === platform);
-  return String(row?.stateReason ?? "");
+  return { skipped: row?.breakerSkipped === true, untilMs: BigInt(row?.breakerUntilMs ?? 0) };
 }
 
 /** 用量表里某个平台有几行（跳过的那些也算进去）。 */
@@ -384,9 +384,9 @@ section("二、真的网关：熔断命中时不花那次上游往返");
     );
     check("降级的那个上游接了手", cnHits === 4, String(cnHits));
 
-    const reason = await stateReasonOf(gw, "qoder");
-    check("面板上写着「已跳过，恢复时间」", reason.includes("已跳过，恢复时间"), reason);
-    check("面板上写的是时刻而不是「未知」", /恢复时间 \d{2}:\d{2}/.test(reason), reason);
+    const breaker = await breakerStateOf(gw, "qoder");
+    check("面板上报熔断中（已跳过）", breaker.skipped === true, String(breaker.skipped));
+    check("面板报了真实的恢复时刻（不是 0）", breaker.untilMs > 0n, String(breaker.untilMs));
     // 跳过的那一次也要留一行用量：不然面板上会少一条记录。
     const rows = usageRowsOf(gw, "qoder");
     check("用量表里那个平台有四行（三次打上去 + 一次跳过）", rows === 4, String(rows));
@@ -435,8 +435,8 @@ section("四、探测成功之后关闭");
     const after = await ask(gw);
     check("探测成功之后照常打上游", qoderHits === 5, String(qoderHits));
     check("那个请求也答得出来", after.status === 200, `${after.status} ${after.text.slice(0, 160)}`);
-    const reason = await stateReasonOf(gw, "qoder");
-    check("面板上不再说「已跳过」", !reason.includes("已跳过"), reason);
+    const breaker = await breakerStateOf(gw, "qoder");
+    check("面板上不再报熔断中", breaker.skipped === false, String(breaker.skipped));
   } finally {
     gw.stop();
   }
@@ -455,8 +455,8 @@ section("五、控制组：开关关着的时候每个请求都打到上游");
       check(`第 ${i + 1} 个请求答得出来（降级）`, res.status === 200, `${res.status} ${res.text.slice(0, 160)}`);
     }
     check("五个请求都打到了那个上游", qoderHits === 5, String(qoderHits));
-    const reason = await stateReasonOf(gw, "qoder");
-    check("面板上也没有「已跳过」", !reason.includes("已跳过"), reason);
+    const breaker = await breakerStateOf(gw, "qoder");
+    check("面板上也没有报熔断中", breaker.skipped === false, String(breaker.skipped));
   } finally {
     gw.stop();
   }
@@ -492,8 +492,8 @@ section("六、不可熔断的失败（400）连打五次也不熔断");
       );
     }
     check("五次都打到了上游（没有跳过）", qoderHits === 5, String(qoderHits));
-    const reason = await stateReasonOf(gw, "qoder");
-    check("面板上也没有「已跳过」", !reason.includes("已跳过"), reason);
+    const breaker = await breakerStateOf(gw, "qoder");
+    check("面板上也没有报熔断中", breaker.skipped === false, String(breaker.skipped));
   } finally {
     gw.stop();
   }

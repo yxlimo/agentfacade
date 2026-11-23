@@ -23,6 +23,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { legacyStatusErrorFrame } from "./legacy-wire.ts";
+import { captureLog } from "./log-capture.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "upstream-status-"));
 process.env.FACADE_DATA_DIR = tmp;
@@ -127,19 +128,15 @@ async function caught(run: () => Promise<unknown>): Promise<any> {
  * 上游为什么拒只留在日志里（hint 容器一重建就没了），所以日志本身要能查。
  */
 async function warningsDuring(run: () => Promise<unknown>): Promise<string[]> {
-  const warnings: string[] = [];
-  const original = console.warn;
-  console.warn = (...args: unknown[]) => {
-    warnings.push(args.map(String).join(" "));
-  };
+  const captured = captureLog({ methods: ["warn"] });
   try {
     await run();
   } catch {
     /* 错误由调用方自己抓 */
   } finally {
-    console.warn = original;
+    captured.restore();
   }
-  return warnings;
+  return captured.lines.warn;
 }
 
 /** 把这个生成器读完（错误照样抛出来）。 */

@@ -34,6 +34,7 @@ import os from "node:os";
 import path from "node:path";
 import type { HealthSnapshot } from "../lib/provider-kinds.ts";
 import type { ProviderRow } from "../lib/providers.ts";
+import { captureLog } from "./log-capture.ts";
 
 // 会话层在模块求值时读配置，所以数据目录与假上游的地址要设好才能 import
 // （与 test/zcode-quota-check.ts 同一套做法）。
@@ -863,28 +864,18 @@ section("九、每次尝试都有一行日志");
 /**
  * 收一轮里打出去的行（log 与 warn 分开：失败那一行得是 warn）。
  *
- * 不真的连上游，只是把 console 换掉。
+ * 不真的连上游，只是把 log 抓下来。
  */
 async function captureLogs(
   fn: () => Promise<unknown>,
 ): Promise<{ log: string[]; warn: string[] }> {
-  const log: string[] = [];
-  const warn: string[] = [];
-  const realLog = console.log;
-  const realWarn = console.warn;
-  console.log = (...args: unknown[]) => {
-    log.push(args.map(String).join(" "));
-  };
-  console.warn = (...args: unknown[]) => {
-    warn.push(args.map(String).join(" "));
-  };
+  const captured = captureLog({ methods: ["info", "warn"] });
   try {
     await fn();
   } finally {
-    console.log = realLog;
-    console.warn = realWarn;
+    captured.restore();
   }
-  return { log, warn };
+  return { log: captured.lines.info, warn: captured.lines.warn };
 }
 
 /** 一轮里的 [ZCODE] 那几行。 */
