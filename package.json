@@ -1,6 +1,6 @@
 {
   "name": "agentfacade",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "One facade for agents: callers see one model list, while many upstream accounts sit behind OpenAI and Anthropic compatible APIs",
   "packageManager": "pnpm@12.16.1",
   "type": "module",
