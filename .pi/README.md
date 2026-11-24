@@ -6,8 +6,7 @@
 
 | 路径 | 作用 |
 | --- | --- |
-| `.pi/agents/` | 9 个 agent 定义。实现岗（`be-core`、`be-admin`、`fe`、`e2e`、`js-reverse`）带 `write`/`edit`，审核岗（`be-review`、`fe-review`、`pr-review`、`privacy-review`）只读。 |
-| `.pi/subagent-bindings.json` | 派单档位：`default` / `coder` / `review`。bash 白名单、环境变量与拒绝预算在这里，派单只再写 `scope` 与 `writeScope`。 |
+| `.pi/agents/` | 14 个 agent 定义，权限写在各文件自己的 `extend:` 块里（读范围、写范围、bash 白名单、拒绝预算、默认工作树）。实现岗带 `write`，审核岗 `readOnly`。派单只传 `agent` + `model` + `task`。 |
 | `.pi/main-only.md` | 只注入主会话的操作手册：派单模板、审批边界、生产机边界。子代理看不到。 |
 | `.pi/worklogs/` | 子代理的任务日志，随任务提交；形状见该目录的 `README.md`。 |
 | `.pi/worktree-setup.sh` | pi-subagents 建工作树后的安装钩子，根与 `web/` 两个项目都装、各自校验 `node_modules/.bin`。 |
@@ -49,7 +48,28 @@ skillPath: ../../.agents/skills
 - `src/main-context.ts`：主会话注入 `.pi/main-only.md`；后台子代理里剥掉 `AGENTS.md` 的 `<!-- main-agent-only -->` 段落。
 - `src/child-context.ts`：只由 agent 定义的 `subagentOnlyExtensions` 声明，让前台子代理也剥标记。三个入口的分工见该包自带的 `skills/pi-subagents-extend-context`。
 
-派单档位的载入口不在本仓库：`~/.pi/agent-profiles/coder.ts` 与 `review.ts` 两个文件，内容只有注释加一句 `export default profile("<档名>")`。放外面是因为里面必须是绝对路径 import（Node 不在 import specifier 里展开 `~`），进库会被 `mise run privacy` 扫出本机路径。agent 定义引用它们用 `~` 形状。
+## 子代理的权限从哪来
+
+权限写在 `.pi/agents/<role>.md` 的 `extend:` 块里，扩展是 `pi-subagents-extend`（`npm:pi-subagents-extend`，在 `~/.pi/agent/settings.json` 的 `packages` 里，后台子代理按环境自动加载）。派单只写 `agent` + `model` + `task`：
+
+```text
+subagent(agent: "fe", model: "agentfacade/coder-d", task: "……")
+```
+
+`extend` 块里四个字段决定这孩子能干什么：
+
+| 字段 | 含义 |
+| --- | --- |
+| `permissions.scope` | 能读哪儿（`read`/`grep`/`find`/`ls`）。写 `["."]` = 整个仓库可读。 |
+| `permissions.write` | 能写哪儿（`write` 与锚点工具族都算写）。工具链产物目录（`web/.gen`、`web/.tanstack`、`web/dist`、`.e2e`）必须逐个列出来，否则构建与 e2e 在 `EACCES` 上停住。 |
+| `permissions.bash.allow` | 能跑哪些命令，按 token 前缀匹配（`mise run` 覆盖所有任务名，`git status` 覆盖 `git status --short`）。 |
+| `permissions.bash.deny` | 拒绝下限，`allow` 再宽也压不住它。九条写死搬一遍（`git commit`/`push`/`rebase`/`merge`/`reset`/`clean`/`checkout`/`restore`/`switch`、`rm -rf`），外加本项目的 `mise run deploy`、`mise run proto`、`podman`、`docker`、`systemctl`、`gh`。 |
+
+另外三条现在的规矩，都是从踩过的坑里来的：
+
+- **不要写 `tools:`**。那是严格的已注册名单。锚点编辑工具由 `pi-hashline-edit-pro` 提供，`edit` 在某些宿主上根本不存在，写进去子代理起不来。工具边界靠 `scope`/`write` 收，不靠 `tools:`。
+- **`systemPromptMode: append`**。`replace` 会把角色正文当成整个系统提示词，孩子丢掉标准工具用法那一套。
+- **新加一个角色** = 复制一个 `.md`，改 `name`/`description`/`scope`/`write`/`bash.allow`，别在派单里手传 `extensionBindings`（那条只在单次派单或 `async: false` 的前台子里用，且会被写范围在启动瞬间锁死）。
 
 `pi-wake` 只装在这里，没写进 `.pi/agents/*.md` 的 `subagentOnlyExtensions`：子代理是等结果返回的，自己排定时唤醒没有意义；需要定时续做的场景在主会话里。
 
