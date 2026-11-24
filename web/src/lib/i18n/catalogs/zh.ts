@@ -498,6 +498,9 @@ export const zh = {
   'models.reasonUnknown': '原因未知',
   'models.strategyFallback': '依次回退',
   'models.strategySingle': '单一目标',
+  'models.strategyBalance': '按会话负载均衡',
+  'models.balanceWeightHint':
+    '权重是被路由到这个目标的概率，同一会话始终落同一个目标；会话键来自请求头或请求体，取不到会返回 400',
   'models.inherit': '继承',
   'models.targetBlocked': '接不了：{{reason}}',
   'models.blockerUpstreamDisabled': '平台已停用',

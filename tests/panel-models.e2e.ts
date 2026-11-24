@@ -392,3 +392,112 @@ test('自定义模型（目录报了档位）：档位可选摆的是目录那�
     await dropPlatform(platform).catch(() => {});
   }
 });
+
+test('主路由模型：策略选按会话负载均衡，列表徽章、刷新与重新打开都回填这个策略', async ({
+  app,
+  screen,
+  browser,
+}) => {
+  const platform = 'e2e-strategy-balance';
+  const label = 'E2E 策略站';
+  const modelId = 'e2e-balance-model';
+  let saved = false;
+  try {
+    await seedOpenPlatform(platform, label);
+
+    await app.open();
+    await login(screen);
+    await screen.getByRole('link', { name: '主路由模型' }).click();
+    await expect(screen.getByRole('heading', { name: '主路由模型' })).toBeVisible();
+
+    // 先建一条默认策略的模型：用户看到的是「单一目标」。
+    await screen.getByRole('button', { name: '新增' }).click();
+    const create = screen.getByRole('dialog', { name: '新增主路由模型' });
+    await expect(create).toBeVisible();
+    await create.getByLabel('对外 id').fill(modelId);
+    await create.getByRole('tab', { name: /平台目标/ }).click();
+    await create.getByLabel('平台组').click();
+    await screen.getByRole('option', { name: /E2E 策略站/ }).click();
+    await create
+      .getByRole('textbox', { name: '平台模型 id' })
+      .fill('fake-model-balance');
+    await create.getByRole('button', { name: '保存' }).click();
+    await expect(create).toBeHidden();
+    saved = true;
+
+    const row = rowOf(screen, modelId);
+    await expect(row).toBeVisible();
+    await expect(row.getByText('单一目标')).toBeVisible();
+
+    // 编辑：下拉里三档都在，选「按会话负载均衡」后权重说明跟着出现。
+    await row.getByRole('button', { name: '编辑' }).click();
+    const edit = screen.getByRole('dialog', { name: '编辑主路由模型' });
+    await expect(edit).toBeVisible();
+    // 编辑对话框记住上次停的页签：新建时点过「平台目标」，策略在「基本」页，先切回去读。
+    await edit.getByRole('tab', { name: '基本' }).click();
+    const strategy = edit.getByRole('combobox', { name: '策略' });
+    await expect(strategy).toHaveText('单一目标');
+    await strategy.click();
+    for (const option of ['单一目标', '依次回退', '按会话负载均衡']) {
+      await expect(
+        screen.getByRole('option', { name: option, exact: true }),
+      ).toBeVisible();
+    }
+    await screen.getByRole('option', { name: '按会话负载均衡', exact: true }).click();
+    await expect(
+      screen.getByRole('option', { name: '按会话负载均衡', exact: true }),
+    ).toBeHidden();
+    await edit.getByRole('tab', { name: /平台目标/ }).click();
+    await expect(
+      edit.getByText('权重是被路由到这个目标的概率', { exact: false }),
+    ).toBeVisible();
+
+    // 权重说明是 balance 专属：切回 single / fallback 时同一句必须消失，
+    // 而这两档下原本那句顺序说明逐字还在 —— 不是被 balance 顶掉或改空了。
+    const weightHint = edit.getByText('权重是被路由到这个目标的概率', { exact: false });
+    const orderHint = '顺序就是先后，排在前面的先接。要拖动排序就点下面的按钮';
+    for (const label of ['单一目标', '依次回退']) {
+      await edit.getByRole('tab', { name: '基本' }).click();
+      await pickOption(screen, strategy, label);
+      await edit.getByRole('tab', { name: /平台目标/ }).click();
+      await expect(weightHint).toHaveCount(0);
+      await expect(edit.getByText(orderHint, { exact: true })).toBeVisible();
+    }
+    // 选回 balance 再保存：权重说明回来，落库的才是这个策略。
+    await edit.getByRole('tab', { name: '基本' }).click();
+    await pickOption(screen, strategy, '按会话负载均衡');
+    await edit.getByRole('tab', { name: /平台目标/ }).click();
+    await expect(weightHint).toBeVisible();
+
+    await markPage(browser);
+    await edit.getByRole('button', { name: '保存' }).click();
+    await expect(edit).toBeHidden();
+    await expectSamePage(browser);
+
+    // 列表徽章换成新策略，旧的不再出现。
+    await expect(row.getByText('按会话负载均衡')).toBeVisible();
+    await expect(row.getByText('单一目标')).toHaveCount(0);
+
+    // 整页刷新后仍是这个策略。
+    await browser.goto('/admin/models');
+    await expect(screen.getByRole('heading', { name: '主路由模型' })).toBeVisible();
+    const fresh = rowOf(screen, modelId);
+    await expect(fresh.getByText('按会话负载均衡')).toBeVisible();
+
+    // 重新打开对话框：下拉当前值回填 balance，不是退回单一目标。
+    await fresh.getByRole('button', { name: '编辑' }).click();
+    const again = screen.getByRole('dialog', { name: '编辑主路由模型' });
+    await expect(again).toBeVisible();
+    await again.getByRole('tab', { name: '基本' }).click();
+    await expect(again.getByRole('combobox', { name: '策略' })).toHaveText(
+      '按会话负载均衡',
+    );
+    await browser.keyboard.press('Escape');
+    await expect(again).toBeHidden();
+  } finally {
+    if (saved) {
+      await adminRpc('DeletePublishedModel', { id: modelId }).catch(() => {});
+    }
+    await dropPlatform(platform).catch(() => {});
+  }
+});

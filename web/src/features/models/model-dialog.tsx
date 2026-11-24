@@ -426,6 +426,9 @@ export function ModelDialog({
                   <SelectItem value='fallback'>
                     {t('models.strategyFallback')}
                   </SelectItem>
+                  <SelectItem value='balance'>
+                    {t('models.strategyBalance')}
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -596,6 +599,11 @@ export function ModelDialog({
             {targetsMissing && !sorting ? (
               <p className='text-xs text-destructive'>
                 {t('models.targetsRequired')}
+              </p>
+            ) : null}
+            {draft.strategy === 'balance' ? (
+              <p className='text-xs text-muted-foreground'>
+                {t('models.balanceWeightHint')}
               </p>
             ) : null}
             {sorting ? (

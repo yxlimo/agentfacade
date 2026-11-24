@@ -512,6 +512,9 @@ export const en: Record<keyof typeof zh, string> = {
   'models.reasonUnknown': 'Unknown reason',
   'models.strategyFallback': 'Fallback in order',
   'models.strategySingle': 'Single target',
+  'models.strategyBalance': 'Session-balanced',
+  'models.balanceWeightHint':
+    'Weight is the probability of routing to this target, and the same session always lands on the same target. The session key comes from the request header or body; without one the request returns 400',
   'models.inherit': 'Inherited',
   'models.targetBlocked': 'Unavailable: {{reason}}',
   'models.blockerUpstreamDisabled': 'Platform disabled',

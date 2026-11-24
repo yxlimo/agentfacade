@@ -175,3 +175,67 @@ test('热设置：改「流空闲上限」立刻生效，弹窗不说要重启�
 
   await expect(browser).toHaveURL('/admin/config');
 });
+
+test('配置页：自定义会话头来自后端清单，写入后刷新仍在且来源是数据库覆盖', async ({
+  app,
+  screen,
+  browser,
+}) => {
+  // 先问接口：这一行必须是后端 ListConfig 给的，不是面板自己编的设置项。
+  const listed = await adminRpc<{
+    items?: Array<{ key: string; label: string }>;
+  }>('ListConfig');
+  const item = (listed.items ?? []).find((entry) => entry.key === 'SESSION_HEADER');
+  expect(item).toBeTruthy();
+  expect(item?.label).toBe('自定义会话头');
+
+  try {
+    await app.open();
+    await login(screen);
+    await screen.getByRole('link', { name: '配置' }).click();
+    await expect(screen.getByRole('heading', { name: '配置' })).toBeVisible();
+
+    const row = screen.getByRole('row').filter({ hasText: '自定义会话头' });
+    await expect(row).toBeVisible();
+
+    await row.getByRole('button', { name: '改' }).click();
+    const dialog = screen.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    await dialog.getByLabel('新值').fill('x-my-session');
+    await dialog.getByRole('button', { name: '保存' }).click();
+    await expect(dialog).toBeHidden();
+
+    // 界面上立刻是新值，来源变成数据库覆盖。
+    await expect(row).toContainText('x-my-session');
+    await expect(row).toContainText('数据库覆盖');
+
+    const saved = await adminRpc<{
+      items?: Array<{ key: string; value: string; source: string }>;
+    }>('ListConfig');
+    const savedItem = (saved.items ?? []).find(
+      (entry) => entry.key === 'SESSION_HEADER',
+    );
+    expect(savedItem?.value).toBe('x-my-session');
+    expect(savedItem?.source).toBe('database');
+
+    // 整页刷新后还在，不是只活在这一次渲染里。
+    await browser.goto('/admin/config');
+    await expect(screen.getByRole('heading', { name: '配置' })).toBeVisible();
+    const after = screen.getByRole('row').filter({ hasText: '自定义会话头' });
+    await expect(after).toContainText('x-my-session');
+    await expect(after).toContainText('数据库覆盖');
+
+    // 清回默认，不给后面的测试留状态。
+    await after.getByRole('button', { name: '清回默认' }).click();
+    await expect(after).not.toContainText('x-my-session');
+    // 清理要清到「来源」这一层：只把值抹成空串、留着数据库覆盖，
+    // 会把别人的环境变量态改成数据库态 —— 来源必须不再是「数据库覆盖」。
+    await expect(after).not.toContainText('数据库覆盖');
+  } finally {
+    await adminRpc('SetConfig', {
+      key: 'SESSION_HEADER',
+      value: '',
+      clear: true,
+    }).catch(() => {});
+  }
+});

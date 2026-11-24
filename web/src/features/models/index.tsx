@@ -52,6 +52,18 @@ import { cooldownReasonLabel } from '@/features/upstreams/provider-accounts'
 import { formatCount, formatDate, formatLocalMoment } from '@/lib/format'
 
 
+/**
+ * 列表上的策略徽章：后端给的是字符串，三选一查表，别把没见过的当成 single。
+ */
+const STRATEGY_LABEL_KEYS: Record<
+  string,
+  'models.strategySingle' | 'models.strategyFallback' | 'models.strategyBalance'
+> = {
+  single: 'models.strategySingle',
+  fallback: 'models.strategyFallback',
+  balance: 'models.strategyBalance',
+};
+
 
 /**
  * 模型目标上「为什么接不了」那一句。
@@ -285,9 +297,9 @@ export function PublishedModelsPage() {
                     <TableCell>{model.displayName || '—'}</TableCell>
                     <TableCell>
                       <Badge variant='outline'>
-                        {model.strategy === 'fallback'
-                          ? t('models.strategyFallback')
-                          : t('models.strategySingle')}
+                        {STRATEGY_LABEL_KEYS[model.strategy]
+                          ? t(STRATEGY_LABEL_KEYS[model.strategy])
+                          : model.strategy}
                       </Badge>
                     </TableCell>
                     <TableCell>
