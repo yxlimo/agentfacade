@@ -52,7 +52,8 @@ extend:
         - docker
         - systemctl
         - gh
-  worktree: false
+  worktree:
+    enabled: false
 ---
 
 仓库对**子代理**的通用约定见根目录 `CONVENTIONS.md`；`AGENTS.md` 里被 `main-agent-only` 标记的段落不适用于你。
