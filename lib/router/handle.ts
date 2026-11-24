@@ -244,7 +244,8 @@ async function handleAggregate(
   try {
     await select({
       strategy: entry.strategy,
-      candidates,
+      // HRW order is the entire point of balance: passing publish order degrades it into priority
+      candidates: ordered,
       // 客户端走了不是上游的错：不能再打下一个目标。
       //
       // 别的错都往下走（这是根路由一贯的做法）：换一个上游也许能答得出来。
