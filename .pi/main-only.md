@@ -80,6 +80,8 @@ sh: line 1: tsr: command not found                          ← web/node_modules
 
 `~/.pi/agent/extensions/subagent/config.json` 用 `worktreeSetupHook` 指向一个全局 shim，shim 转调仓库自己的 `.pi/worktree-setup.sh`（根与 `web/` 两个项目各装一次，装完各自校验 `node_modules/.bin`）。没有 `worktreeSetupHook` 这一项时钩子根本不跑 —— 工作树只有自动建的 `node_modules` 软链，`web/node_modules` 是空的。
 
+**这份配置在 pi 启动时读进内存，改了要重启 pi 才生效**，改文件本身不会热加载。钩子没跑时的症状不是报错而是挂着：`mise run web:*` 停在「Verifying lockfile against supply-chain policies」，看着像卡死。判据一条：`ls <工作树>/web/node_modules/.bin`（有 `tsc`/`tsr` 才算装上了）。
+
 钩子的两个契约，破一条就起不来：
 
 ```text
