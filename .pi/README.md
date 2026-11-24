@@ -9,9 +9,28 @@
 | `.pi/agents/` | 14 个 agent 定义，权限写在各文件自己的 `extend:` 块里（读范围、写范围、bash 白名单、拒绝预算、默认工作树）。实现岗带 `write`，审核岗 `readOnly`。派单只传 `agent` + `model` + `task`。 |
 | `.pi/main-only.md` | 只注入主会话的操作手册：派单模板、审批边界、生产机边界。子代理看不到。 |
 | `.pi/worklogs/` | 子代理的任务日志，随任务提交；形状见该目录的 `README.md`。 |
-| `.pi/worktree-setup.sh` | pi-subagents 建工作树后的安装钩子，根与 `web/` 两个项目都装、各自校验 `node_modules/.bin`。 |
+| `.pi/worktree-setup.sh` | 建工作树后的安装钩子，根与 `web/` 两个项目都装、各自校验 `node_modules/.bin`，并把 `web/.gen`、`web/.tanstack`、`web/dist` 先建出来（沙箱只授权已经存在的路径）。它由全局 `~/.pi/agent/extensions/subagent/config.json` 的 `worktreeSetupHook` 转调，改那份配置要重启 pi 才生效。 |
 | `.pi/check-subagent-only-skill.mjs` | 不调模型的回归检查：技能只出现在子代理提示词里（见文末）。 |
 | `.pi/reviews/` | 审核报告的本机落点，用 `.git/info/exclude` 排除，不入库。 |
+
+## 工作树钩子的接线（改了要重启 pi）
+
+pi-subagents 从 `~/.pi/agent/extensions/subagent/config.json` 读 `worktreeSetupHook`，**在 pi 启动时读进内存**——改了那份配置要重启一次 pi 才生效，改文件本身不会热加载。钩子的两个契约，破一条就起不来：
+
+```text
+stdout   只能是一行 {"syntheticPaths": [...]}；pnpm 的 "✓ Lockfile is up to date" 漏到
+         stdout 就会让 launch 报 invalid JSON
+退出码   0 = 成功；非 0 = 这单不启动
+```
+
+钩子没跑的症状不是报错，而是**门禁挂在「Verifying lockfile against supply-chain policies」**：工作树只有指回主检出的 `node_modules` 软链，`web/node_modules` 是空的，pnpm 于是自己在沙箱里装（没网、store 不可写），命令看起来像卡死。判据是 `ls <工作树>/web/node_modules/.bin`。手动验一次钩子：
+
+```sh
+git worktree add --detach /tmp/hooktest HEAD
+cd /tmp/hooktest && echo '{}' | ~/.pi/agent/extensions/subagent/worktree-setup.sh
+ls web/node_modules/.bin | head -3     # 有 tsc / tsr 就对了
+cd - && git worktree remove --force /tmp/hooktest
+```
 
 ## 技能放哪
 
