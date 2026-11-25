@@ -62,6 +62,12 @@ configNumber("ROUTER_FIRST_FRAME_MS", STREAM_FIRST_FRAME_DEFAULT_MS);
 configNumber("ROUTER_STREAM_IDLE_MS", STREAM_IDLE_DEFAULT_MS);
 configNumber("ROUTER_RETRY_BUDGET_MS", 180_000);
 
+// 流中途静默超时后的自动续写：开关默认关，次数默认 2。deliver.ts 与
+// open-platform.ts 在每条请求开始时读这两个键，所以是热的 —— 标记由读它的
+// 那个模块写，与上面三个超时旋钮同一套做法。
+configFlag("ROUTER_CONTINUE_ON_IDLE", false);
+configNumber("ROUTER_CONTINUE_MAX", 2);
+
 // 剩下这几个是「读一次就定在常量里」的（lib/periodic.ts 的定时器、
 // lib/admin/upstreams.ts 的快照过期时间、lib/admin/benefits.ts 的间隔、
 // lib/router/handle.ts 的排队重试）：面板改得动，但要重启才生效。同样在这里显式
@@ -127,6 +133,8 @@ const DESCRIPTIONS: Record<string, string> = {
   ROUTER_FIRST_FRAME_MS: `等首字最多多久（毫秒），上限 ${STREAM_LIMIT_MAX_MS}`,
   ROUTER_STREAM_IDLE_MS: `停顿多久算断（毫秒），上限 ${STREAM_LIMIT_MAX_MS}`,
   ROUTER_RETRY_BUDGET_MS: "一次请求的重试总时限（毫秒）。调小会让上游抽一下就直接报错",
+  ROUTER_CONTINUE_ON_IDLE: "流中途静默超时后自动续写，关闭时超时就断不续写",
+  ROUTER_CONTINUE_MAX: "每个请求最多续写几次，0 到 5，0 就是不续写",
   PERIODIC_ENABLED: "后台定时任务总开关。关闭后不换令牌、不签到、不扫余额",
   HEALTH_CACHE_MS: "额度与状态快照多久刷新一次（毫秒）",
   BENEFITS_DISABLED: "关闭每日签到与领奖。关闭后积分不会自动到账",
@@ -151,6 +159,8 @@ const LABELS: Record<string, string> = {
   ROUTER_FIRST_FRAME_MS: "等首帧时限",
   ROUTER_STREAM_IDLE_MS: "流空闲上限",
   ROUTER_RETRY_BUDGET_MS: "重试总时限",
+  ROUTER_CONTINUE_ON_IDLE: "静默超时后自动续写",
+  ROUTER_CONTINUE_MAX: "最多续写次数",
   PERIODIC_ENABLED: "后台定时任务",
   HEALTH_CACHE_MS: "快照刷新间隔",
   BENEFITS_DISABLED: "关闭签到与领奖",
@@ -164,6 +174,29 @@ const LABELS: Record<string, string> = {
 /** 这两个键是流的两道闸，它们的取值受同一个上限约束。 */
 function isStreamLimitKey(key: string): boolean {
   return key === "ROUTER_FIRST_FRAME_MS" || key === "ROUTER_STREAM_IDLE_MS";
+}
+
+/** ROUTER_CONTINUE_MAX 的合法范围：0 到 5，0 就是不续写。 */
+const ROUTER_CONTINUE_MAX_MIN = 0;
+const ROUTER_CONTINUE_MAX_MAX = 5;
+
+/** 把续写次数夹回 0 到 5。NaN 原样交还，由读它的那一层决定回退值。 */
+function clampContinueMax(value: number): number {
+  if (Number.isNaN(value)) return value;
+  if (value < ROUTER_CONTINUE_MAX_MIN) return ROUTER_CONTINUE_MAX_MIN;
+  if (value > ROUTER_CONTINUE_MAX_MAX) return ROUTER_CONTINUE_MAX_MAX;
+  return value;
+}
+
+/** 这个值是不是被夹回边界了。NaN 不算。 */
+function continueMaxWasCapped(value: number): boolean {
+  if (Number.isNaN(value)) return false;
+  return value < ROUTER_CONTINUE_MAX_MIN || value > ROUTER_CONTINUE_MAX_MAX;
+}
+
+/** 这个键是不是续写次数那一项。 */
+function isContinueMaxKey(key: string): boolean {
+  return key === "ROUTER_CONTINUE_MAX";
 }
 
 /** 值的结尾像密钥的，就不给人看。 */
@@ -195,6 +228,9 @@ const USER_FACING = new Set([
   "ROUTER_FIRST_FRAME_MS",
   "ROUTER_STREAM_IDLE_MS",
   "ROUTER_RETRY_BUDGET_MS",
+  // 流中途静默超时后的自动续写
+  "ROUTER_CONTINUE_ON_IDLE",
+  "ROUTER_CONTINUE_MAX",
   // 后台的定时任务与它刷的那份快照
   "PERIODIC_ENABLED",
   "HEALTH_CACHE_MS",
@@ -257,6 +293,14 @@ export function configItems(): ConfigItemView[] {
       if (Number.isFinite(n) && streamLimitWasCapped(n)) {
         const capped = clampStreamLimit(n);
         log.warn(`[CONFIG] ${setting.key} 现在是 ${n}，超过上限，已按 ${capped} 生效`);
+        shown = String(capped);
+      }
+    }
+    if (isContinueMaxKey(setting.key)) {
+      const n = Number(raw);
+      if (Number.isFinite(n) && continueMaxWasCapped(n)) {
+        const capped = clampContinueMax(n);
+        log.warn(`[CONFIG] ${setting.key} 现在是 ${n}，不在 0 到 5 之间，已按 ${capped} 生效`);
         shown = String(capped);
       }
     }
@@ -328,6 +372,13 @@ export function setConfigValue(key: string, value: string, clear = false): { ok:
     if (Number.isFinite(n) && streamLimitWasCapped(n)) {
       stored = String(clampStreamLimit(n));
       cappedNote = `上限 ${STREAM_LIMIT_MAX_MS}，填的值已按上限收下（填 ${value}，存 ${stored}）`;
+    }
+  }
+  if (isContinueMaxKey(key)) {
+    const n = Number(value);
+    if (Number.isFinite(n) && continueMaxWasCapped(n)) {
+      stored = String(clampContinueMax(n));
+      cappedNote = `范围 0 到 5，填的值已夹回边界（填 ${value}，存 ${stored}）`;
     }
   }
   configOverride(key, stored);

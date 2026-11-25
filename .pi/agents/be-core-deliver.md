@@ -15,6 +15,7 @@ extend:
       - lib/router/stream-limits.ts
       - lib/router/app.ts
       - lib/router/client-gone.ts
+      - lib/router/upstreams/**
       - test/**
       - tests/**
       - .e2e

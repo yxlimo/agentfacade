@@ -33,7 +33,7 @@ for (const key of ["ROUTER_FIRST_FRAME_MS", "ROUTER_STREAM_IDLE_MS", "ROUTER_RET
   delete process.env[key];
 }
 
-const { configItems } = await import("../lib/admin/config.ts");
+const { configItems, setConfigValue } = await import("../lib/admin/config.ts");
 const { configClear, configNumber, configOverride, configPendingRestart, reloadConfig } = await import(
   "../lib/config.ts"
 );
@@ -83,6 +83,8 @@ const NEW_KEYS = [
   "BENEFITS_DISABLED",
   "BENEFITS_INTERVAL_MS",
   "QODER_LEGACY_RETRY_MS",
+  "ROUTER_CONTINUE_ON_IDLE",
+  "ROUTER_CONTINUE_MAX",
 ];
 const keys = configItems().map((i) => i.key);
 for (const key of NEW_KEYS) {
@@ -260,6 +262,41 @@ for (const [key, value] of NEEDS_RESTART) {
 
 check("变得回去：首帧上限又是 300000", configNumber("ROUTER_FIRST_FRAME_MS", 300_000) === 300_000, String(configNumber("ROUTER_FIRST_FRAME_MS", -1)));
 check("变得回去：快照间隔又是 300000", configNumber("HEALTH_CACHE_MS", 300_000) === 300_000, String(configNumber("HEALTH_CACHE_MS", -1)));
+
+/* ------------------------------------------------------------------ *
+ * 六、两个续写设置的默认值与范围夹取
+ * ------------------------------------------------------------------ */
+
+section("续写设置的默认值与范围夹取");
+
+check("ROUTER_CONTINUE_ON_IDLE 默认是关", item("ROUTER_CONTINUE_ON_IDLE")?.value === "false", String(item("ROUTER_CONTINUE_ON_IDLE")?.value));
+check("ROUTER_CONTINUE_ON_IDLE 默认值也是关", item("ROUTER_CONTINUE_ON_IDLE")?.fallback === "false", String(item("ROUTER_CONTINUE_ON_IDLE")?.fallback));
+check("ROUTER_CONTINUE_MAX 默认是 2", configNumber("ROUTER_CONTINUE_MAX", -1) === 2, String(configNumber("ROUTER_CONTINUE_MAX", -1)));
+check("ROUTER_CONTINUE_MAX 面板显示的默认值也是 2", item("ROUTER_CONTINUE_MAX")?.fallback === "2", String(item("ROUTER_CONTINUE_MAX")?.fallback));
+
+// 0 到 5 是合法范围。越界写进去的值要夹回边界，并且说出来，不静默改数。
+const clampMin = setConfigValue("ROUTER_CONTINUE_MAX", "-1");
+check("越界下界夹回 0", clampMin.ok === true && configNumber("ROUTER_CONTINUE_MAX", -1) === 0, String(configNumber("ROUTER_CONTINUE_MAX", -1)));
+check("下界夹取在返回里说出来", clampMin.message.includes("夹回"), clampMin.message);
+check("面板显示的是夹后的 0", item("ROUTER_CONTINUE_MAX")?.value === "0", String(item("ROUTER_CONTINUE_MAX")?.value));
+
+const clampMax = setConfigValue("ROUTER_CONTINUE_MAX", "99");
+check("越界上界夹回 5", clampMax.ok === true && configNumber("ROUTER_CONTINUE_MAX", -1) === 5, String(configNumber("ROUTER_CONTINUE_MAX", -1)));
+check("上界夹取在返回里说出来", clampMax.message.includes("夹回"), clampMax.message);
+check("面板显示的是夹后的 5", item("ROUTER_CONTINUE_MAX")?.value === "5", String(item("ROUTER_CONTINUE_MAX")?.value));
+
+// 范围内的值原样收下，不夹也不说。
+const inRange = setConfigValue("ROUTER_CONTINUE_MAX", "3");
+check("范围内的值原样收下", inRange.ok === true && configNumber("ROUTER_CONTINUE_MAX", -1) === 3, String(configNumber("ROUTER_CONTINUE_MAX", -1)));
+check("范围内的值不说夹取", !inRange.message.includes("夹回"), inRange.message);
+
+// 0 是合法值：就是不续写。
+const zero = setConfigValue("ROUTER_CONTINUE_MAX", "0");
+check("0 是合法值，就是不续写", zero.ok === true && configNumber("ROUTER_CONTINUE_MAX", -1) === 0, String(configNumber("ROUTER_CONTINUE_MAX", -1)));
+
+configClear("ROUTER_CONTINUE_MAX");
+reloadConfig();
+check("清掉之后回到默认值 2", configNumber("ROUTER_CONTINUE_MAX", -1) === 2, String(configNumber("ROUTER_CONTINUE_MAX", -1)));
 
 /* ------------------------------------------------------------------ *
  * 结果
