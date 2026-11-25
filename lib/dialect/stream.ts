@@ -21,7 +21,6 @@ export async function* openaiStreamToAnthropic(
   chunks: AsyncIterable<Json>,
   model: string,
   onUsage?: (usage: Json) => void,
-  skipStart = false,
 ): AsyncGenerator<string> {
   const messageId = `msg_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
   let started = false;
@@ -47,7 +46,6 @@ export async function* openaiStreamToAnthropic(
   async function* start(usage?: Json): AsyncGenerator<string> {
     if (started) return;
     started = true;
-    if (skipStart) return;
     yield sseEvent("message_start", {
       type: "message_start",
       message: {
@@ -197,7 +195,6 @@ export async function* anthropicStreamToOpenAI(
   model: string,
   onUsage?: (usage: Json) => void,
   signal?: AbortSignal,
-  skipRole = false,
 ): AsyncGenerator<string> {
   const completionId = `chatcmpl-${randomUUID().replace(/-/g, "").slice(0, 24)}`;
   const created = Math.floor(Date.now() / 1000);

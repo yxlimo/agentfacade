@@ -13,7 +13,7 @@ import type Koa from "koa";
 import { AuthError } from "../credential.ts";
 import { anthropicStreamToOpenAI, openaiStreamToAnthropic } from "../dialect/stream.ts";
 import { anthropicToOpenAIResponse, openaiToAnthropicResponse } from "../dialect/response.ts";
-import { parseLooseJson, readOpenAIChunks, readOrAbort, readSseEvents, sseData, sseEvent, SSE_DONE } from "../sse-stream.ts";
+import { parseLooseJson, readOpenAIChunks, readOrAbort, readSseEvents, sseData, sseEvent, SSE_DONE, type SseEvent } from "../sse-stream.ts";
 import { businessCodeOfPayload, isBusinessErrorEnvelope, withBusinessCode } from "../upstream-status.ts";
 import { scrubForClient, scrubForLog } from "../log-scrub.ts";
 import { configFlag, configNumber, markHotSetting } from "../config.ts";
@@ -587,6 +587,38 @@ function continueBlockedReason(state: ContinueState, reopen: Reopen | undefined)
   if (state.toolInFlight) return "工具调用在途";
   return null;
 }
+/** 「再拿一条上游流」的结果：拿到下一条，或者不能续了（带上该收尾的错）。 */
+type ContinueOutcome =
+  | { kind: "stream"; stream: ReadableStream<Uint8Array> }
+  | { kind: "blocked"; error: unknown };
+
+/**
+ * 「再拿一条上游流」这件事：能续就给出下一条（各自过同一道安静闸），
+ * 不能续就给出该按哪个错收尾。
+ *
+ * 次数在这里加：加了才去问还能不能续，所以续写自己再失败时次数已经吃掉
+ * 一次，上限兜住，不会无限续。续写请求自己没成（没发出去、被上游拒了）
+ * 按那条错收尾，不再拿同一条请求重试。
+ */
+async function continueWith(
+  state: ContinueState,
+  reopen: Reopen | undefined,
+  error: unknown,
+  label: string,
+): Promise<ContinueOutcome> {
+  const why = continueBlockedReason(state, reopen);
+  // `!reopen` 在判据里已经覆盖，这里再写一次是给类型收窄：走到下面调用
+  // reopen 时它一定在。
+  if (why || !reopen) return { kind: "blocked", error };
+  state.attempts++;
+  log.warn(`[DELIVER] 流中途静默 ${idleSpan(idleMsOf(error))}，第 ${state.attempts} 次续写（已有 ${state.text.length} 字）`);
+  try {
+    const following = await reopen({ text: tailText(state.text), reasoning: tailText(state.reasoning) });
+    return { kind: "stream", stream: withStreamIdle(following, label) };
+  } catch (e) {
+    return { kind: "blocked", error: e };
+  }
+}
 
 /** OpenAI 方言的一帧里产出了什么（正文、推理、工具调用在途）。 */
 function trackOpenAIChunk(chunk: Json, state: ContinueState): void {
@@ -597,6 +629,14 @@ function trackOpenAIChunk(chunk: Json, state: ContinueState): void {
   const reasoning = typeof d.reasoning_content === "string" ? d.reasoning_content : d.reasoning;
   if (typeof reasoning === "string" && reasoning) state.reasoning += reasoning;
   if (Array.isArray(d.tool_calls) && d.tool_calls.length > 0) state.toolInFlight = true;
+}
+/** 一帧是不是「只带角色」的开场帧：续写的轮次不重发它（角色已经立过了）。 */
+function isRoleOnlyChunk(chunk: Json): boolean {
+  const delta = (chunk as { choices?: Array<{ delta?: Json }> })?.choices?.[0]?.delta;
+  if (!delta || typeof delta !== "object") return false;
+  const d = delta as Json;
+  if (d.role === undefined) return false;
+  return !d.content && !d.reasoning_content && !d.reasoning && !Array.isArray(d.tool_calls);
 }
 
 /** Anthropic 方言的一帧里产出了什么（正文、推理、工具调用在途）。 */
@@ -623,6 +663,10 @@ function trackAnthropicEventData(data: string, state: ContinueState): void {
 /** 「安静了多久」，写进句子给人看：一秒以内说毫秒，不然说秒。 */
 function idleSpan(idleMs: number): string {
   return idleMs < 1000 ? `${idleMs}ms` : `${Math.round(idleMs / 1000)}s`;
+}
+/** 出错时「静默了多久」：只有流安静那道闸给得出这个数，别的错没有。 */
+function idleMsOf(error: unknown): number {
+  return error instanceof StreamIdleError ? error.idleMs : 0;
 }
 
 /**
@@ -1313,6 +1357,104 @@ async function* watchFinish(
 }
 
 /**
+ * 把一条条上游流接成一个 OpenAI 帧的迭代：每条流出错就问「还能不能再来一条」。
+ *
+ * 续写把好几条流接成一条答复，转换器（openaiStreamToAnthropic）的内部状态
+ * ——开场帧、内容块编号、收尾帧——必须跨流留住。每条流换一个转换器会重发
+ * 开场帧、重发 content_block_start：块编号被顶掉，客户端按索引累积时前半截
+ * 正文就没了。所以转换器只建一个，喂给它的是这个「一条接一条」的迭代。
+ *
+ * 每一段各自过安静闸（在调用方套好的 withStreamIdle 里）：哪一段静默就抛
+ * 哪一段的错。不能续的时候把该收尾的错原样抛出去，由调用方按今天的方式收尾。
+ */
+async function* chainedOpenAIChunks(
+  first: ReadableStream<Uint8Array>,
+  next: (error: unknown) => Promise<ContinueOutcome>,
+  signal: AbortSignal,
+  state: ContinueState,
+): AsyncGenerator<Json> {
+  let current: ReadableStream<Uint8Array> | null = first;
+  while (current) {
+    try {
+      for await (const chunk of readOpenAIChunks(current, signal)) {
+        trackOpenAIChunk(chunk, state);
+        yield chunk;
+      }
+      current = null;
+    } catch (e) {
+      const outcome = await next(e);
+      if (outcome.kind === "blocked") {
+        throw outcome.error;
+      }
+      current = outcome.stream;
+    }
+  }
+}
+
+/**
+ * 把一条条上游流接成一条字节流：每条流出错就问「还能不能再来一条」。
+ *
+ * 续写把好几条流接成一条答复，转换器（anthropicStreamToOpenAI）的内部状态
+ * ——开场帧、收尾帧、同一个 completion id——必须跨流留住。每条流换一个转换器
+ * 会重发开场帧、重发 [DONE]，答复的 id 也会中途换掉。所以转换器只建一个，
+ * 喂给它的是这条「一条接一条」的字节流。
+ *
+ * 每一段各自过安静闸（在调用方套好的 withStreamIdle 里）：哪一段静默就抛
+ * 哪一段的错。不能续的时候以错误结束（不是正常 EOF），转换器才会把这条错
+ * 原样抛给外层收尾。
+ */
+function chainedUpstream(
+  first: ReadableStream<Uint8Array>,
+  next: (error: unknown) => Promise<ContinueOutcome>,
+  signal: AbortSignal,
+): ReadableStream<Uint8Array> {
+  let current: ReadableStream<Uint8Array> | null = first;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      for (;;) {
+        if (!reader) {
+          if (!current) {
+            controller.close();
+            return;
+          }
+          reader = current.getReader();
+          current = null;
+        }
+        try {
+          const { done, value } = await readOrAbort(reader, signal);
+          if (done) {
+            reader.releaseLock();
+            reader = null;
+            controller.close();
+            return;
+          }
+          controller.enqueue(value);
+          return;
+        } catch (e) {
+          const outcome = await next(e);
+          if (outcome.kind === "blocked") {
+            controller.error(outcome.error);
+            return;
+          }
+          // 换一段：回到循环开头，读下一条流
+          current = outcome.stream;
+          reader = null;
+        }
+      }
+    },
+    async cancel(reason) {
+      if (!reader) return;
+      try {
+        await reader.cancel(reason);
+      } catch {
+        /* 已经结束了 */
+      }
+    },
+  });
+}
+
+/**
  * A stream of OpenAI chunks.
  *
  * The frames are parsed and written out again rather than copied, because an
@@ -1333,6 +1475,7 @@ export async function deliverOpenAIStream(
   onFinish?: (finish: AnswerFinish) => void,
   onUsage?: (usage: any) => void,
   onFailure?: (error: unknown) => void,
+  reopen?: Reopen,
 ): Promise<void> {
   ctx.res.setHeader("x-request-id", rid("req_"));
   // 客户端走了的时候，这个信号让读上游的那个循环停下来。
@@ -1376,14 +1519,30 @@ export async function deliverOpenAIStream(
   // 看门狗断开连接时（客户端不读了）也要停上游：它还在吐字就是在计费。
   onClientGone(ctx, upstream, abort);
   if (dialect === "openai") {
-    await pipeOpenAIChunks(upstream, ctx, onFinish, onUsage, model, onFailure, abort);
+    await pipeOpenAIChunks(upstream, ctx, onFinish, onUsage, model, onFailure, abort, reopen);
     return;
   }
+  // 续写：一条答复一个转换器，多轮上游流在它下游串起来（见 chainedOpenAIChunks）
+  // ——每条流换一个转换器会重发开场帧、重发 content_block_start，块编号被顶掉。
+  const continueState: ContinueState = { text: "", reasoning: "", toolInFlight: false, attempts: 0 };
+  let current = upstream;
+  const nextStream = async (e: unknown): Promise<ContinueOutcome> => {
+    const outcome = await continueWith(continueState, reopen, e, `model=${model}`);
+    if (outcome.kind === "stream") {
+      current = outcome.stream;
+      // 新一段也要挂上「客户端走了就停」：看门狗认的是当前这一段。
+      onClientGone(ctx, current, abort);
+    }
+    return outcome;
+  };
   try {
-    for await (const chunk of openaiStreamToAnthropic(watchFinish(readOpenAIChunks(upstream, abort.signal), onFinish, onUsage), model)) {
+    for await (const chunk of openaiStreamToAnthropic(
+      watchFinish(chainedOpenAIChunks(current, nextStream, abort.signal, continueState), onFinish, onUsage),
+      model,
+    )) {
       if (!(await writeFrame(ctx, chunk))) {
         // 客户端走了：上游也别接着算（还在计费），这一条也不该记成成功。
-        await stopUpstream(upstream, abort);
+        await stopUpstream(current, abort);
         reportClientGone(ctx, onFailure);
         break;
       }
@@ -1769,32 +1928,86 @@ async function pipeOpenAIChunks(
   model?: string,
   onFailure?: (error: unknown) => void,
   abort?: AbortController,
+  reopen?: Reopen,
 ): Promise<void> {
+  // 续写把好几条流接成一条答复：片段计数跨轮累加，结束原因取最后一轮。
+  const continueState: ContinueState = { text: "", reasoning: "", toolInFlight: false, attempts: 0 };
+  const counts: AnswerSegments = { content: 0, thinking: 0, tool: 0 };
+  let finishReason: string | undefined;
+  const accFinish = (finish: AnswerFinish) => {
+    counts.content += finish.content;
+    counts.thinking += finish.thinking;
+    counts.tool += finish.tool;
+    finishReason = finish.reason;
+  };
+  let upstream = body;
   try {
-    for await (const chunk of watchFinish(readOpenAIChunks(body, abort?.signal), onFinish, onUsage)) {
-      if (model && chunk && typeof chunk === "object") chunk.model = model;
-      if (!(await writeFrame(ctx, sseData(chunk)))) {
-        // 客户端走了：上游也别接着算（还在计费），这一条也不该记成成功。
-        await stopUpstream(body, abort);
+    for (;;) {
+      let roundGone = false;
+      let firstOfRound = true;
+      try {
+        for await (const chunk of watchFinish(readOpenAIChunks(upstream, abort?.signal), accFinish, onUsage)) {
+          if (model && chunk && typeof chunk === "object") chunk.model = model;
+          // 续写的轮次不重发开场帧：角色那一份已经立过了。
+          if (continueState.attempts > 0 && firstOfRound && isRoleOnlyChunk(chunk)) {
+            firstOfRound = false;
+            continue;
+          }
+          firstOfRound = false;
+          if (!(await writeFrame(ctx, sseData(chunk)))) {
+            // 客户端走了：上游也别接着算（还在计费），这一条也不该记成成功。
+            await stopUpstream(upstream, abort);
+            reportClientGone(ctx, onFailure);
+            roundGone = true;
+            break;
+          }
+        }
+        if (roundGone) {
+          reportClientGone(ctx, onFailure);
+          await writeFrame(ctx, SSE_DONE);
+          return;
+        }
+        // 上游的流结束了，但客户端可能早就走了（上游安静的时候它断开的）：那
+        // 这一条不是成功 —— 客户端一个字都没拿到（2026-11-03，作者复查发现）。
         reportClientGone(ctx, onFailure);
-        break;
+        if (onFinish && (finishReason || counts.content + counts.thinking + counts.tool > 0)) {
+          onFinish({ reason: finishReason ?? "未给", ...counts });
+        }
+        // 收尾帧只在最后一轮写：还要继续的轮次里 [DONE] 先扣着。
+        await writeFrame(ctx, SSE_DONE);
+        return;
+      } catch (e) {
+        const outcome = await continueWith(continueState, reopen, e, `model=${model ?? ""}`);
+        if (outcome.kind === "blocked") {
+          log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(outcome.error)}`);
+          await writeFrame(ctx, sseData({ error: { type: "api_error", message: clientMessageOf(outcome.error) } }));
+          await writeFrame(ctx, SSE_DONE);
+          reportFailure(onFailure, outcome.error);
+          return;
+        }
+        upstream = outcome.stream;
+        // 回到开头
       }
     }
-    // 上游的流结束了，但客户端可能早就走了（上游安静的时候它断开的）：那
-    // 这一条不是成功 —— 客户端一个字都没拿到（2026-11-03，作者复查发现）。
-    reportClientGone(ctx, onFailure);
-    await writeFrame(ctx, SSE_DONE);
-  } catch (e) {
-    log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
-    await writeFrame(ctx, sseData({ error: { type: "api_error", message: clientMessageOf(e) } }));
-    await writeFrame(ctx, SSE_DONE);
-    reportFailure(onFailure, e);
   } finally {
     // The response has to end, or the client waits for a connection that never
     // closes.
     ctx.res.end();
   }
 }
+/**
+ * 这一帧是不是收尾帧（message_delta / message_stop）：还要继续的轮次里先
+ * 扣住不写，最后一轮才放行 —— 否则续上的那一段又发一份，客户端收到两份。
+ */
+function isAnthropicTerminalEvent(event: SseEvent): boolean {
+  if (event.event === "message_delta" || event.event === "message_stop") return true;
+  if (!event.event) {
+    const data = event.data;
+    return data.includes('"message_delta"') || data.includes('"message_stop"');
+  }
+  return false;
+}
+
 
 /**
  * 把上游的 Anthropic 流写给客户端，只改一处：message_start 里的模型名。
