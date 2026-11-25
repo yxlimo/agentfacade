@@ -51,6 +51,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "stream-idle-"));
 process.env.FACADE_DATA_DIR = tmp;
@@ -636,7 +637,8 @@ section("上游说了一帧就安静（Anthropic 入口）");
   check("那句话说清了是流中途安静下来的", /upstream sent nothing for 150ms mid-stream/.test(said), said);
   check("那句话带上了是哪个模型", said.includes("model=fake-model"), said);
   check("那句话里没有 terminated", !/terminated/i.test(text), said);
-  check("网关没有抛错", r.handlerError === null, r.handlerError ?? "");
+  check("记账回调拿到的就是那条静默超时", r.failure?.name === "TimeoutError" && String(r.failure?.message).includes("sent nothing for 150ms mid-stream"), `${r.failure?.name}: ${String(r.failure?.message)}`);
+  check("记账回调报错不影响客户端收到的字节", r.received.filter((f) => f.includes('"error"')).length === 1 && !/terminated/i.test(text), text.slice(0, 200));
   check("头只发了一次", r.flushes === 1, `${r.flushes} 次`);
   check("网关在中途上限之后很快就收工了", r.handlerMs < 5_000, `用了 ${r.handlerMs}ms`);
   check("上游那一侧被取消了", cancelled, "上游还挂着");
@@ -661,7 +663,8 @@ section("上游说了一帧就安静（OpenAI 入口）");
   check("客户端收到了一条 error 帧", said !== "", text.slice(0, 200));
   check("那句话说清了是流中途安静下来的", /upstream sent nothing for 150ms mid-stream/.test(said), said);
   check("那句话里没有 terminated", !/terminated/i.test(text), said);
-  check("网关没有抛错", r.handlerError === null, r.handlerError ?? "");
+  check("网关把那条静默超时抛出来了", r.handlerError !== null && r.thrown?.name === "TimeoutError" && String(r.thrown?.message).includes("sent nothing for 150ms mid-stream"), `${r.thrown?.name}: ${r.handlerError ?? ""}`);
+  check("抛错不影响客户端收到的字节", r.received.filter((f) => f.includes('"error"')).length === 1 && !/terminated/i.test(text), text.slice(0, 200));
   check("头只发了一次", r.flushes === 1, `${r.flushes} 次`);
   check("网关在中途上限之后很快就收工了", r.handlerMs < 5_000, `用了 ${r.handlerMs}ms`);
   check("上游那一侧被取消了", cancelled, "上游还挂着");
@@ -1465,6 +1468,120 @@ process.exit(0);
   check("控制组（首帧）：往外抛了（能换目标）", first.report?.threw === "TimeoutError", String(first.report?.threw));
   check("控制组（首帧）：上游被取消了", first.report?.cancelled === true, String(first.report?.cancelled));
 }
+
+section("流中途静默之后：用量表要记失败，不能记成 200 的成功");
+
+// 这一条走完整的路由与记账链：开放平台指向本机假上游，上游吐一帧就再也不说话。
+// 与前面几段直接调 deliver 不同，这里要看的是 callUpstream 写进 usage_event 的那一行。
+const idleUpstream = http.createServer((req, res) => {
+  if (req.url?.endsWith("/chat/completions")) {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.write(
+      `data: ${JSON.stringify({
+        id: "chatcmpl-idle",
+        object: "chat.completion.chunk",
+        choices: [{ index: 0, delta: { role: "assistant", content: "hello" } }],
+      })}\n\n`,
+    );
+    // 故意不 res.end()：剩余的字节由中途那个上限收尾。
+    return;
+  }
+  res.writeHead(404, { "content-type": "application/json" });
+  res.end("{}");
+});
+await new Promise<void>((resolve) => idleUpstream.listen(0, "127.0.0.1", resolve));
+const idlePort = (idleUpstream.address() as { port: number }).port;
+
+const { createOpenPlatform, syncPlatformModels } = await import("../lib/open-platforms.ts");
+const { addAccount } = await import("../lib/providers.ts");
+const { writeOpenPlatformKey } = await import("../lib/open-platform-credentials.ts");
+const { handle } = await import("../lib/router/handle.ts");
+const { closeStore } = await import("../lib/store.ts");
+
+const idleModel = "idle-open-model";
+const madePlatform = createOpenPlatform({
+  id: "idle-open",
+  label: "Idle Fake",
+  baseUrl: `http://127.0.0.1:${idlePort}/v1`,
+});
+check("假开放平台建好了", madePlatform.ok === true, madePlatform.message);
+syncPlatformModels("idle-open", [idleModel]);
+const madeAccount = addAccount({ platform: "idle-open" });
+check("假账号建好了", madeAccount.ok === true && typeof madeAccount.id === "string", madeAccount.message);
+if (madeAccount.ok && madeAccount.id) writeOpenPlatformKey(madeAccount.id, "sk-idle-fake"); // privacy:allow — 编造的样例
+
+let routeDone: () => void = () => {};
+const routeFinished = new Promise<void>((resolve) => {
+  routeDone = resolve;
+});
+const routeServer = http.createServer(async (_req, res) => {
+  const ctx = fakeCtx(res) as Parameters<typeof handle>[0];
+  ctx.request = {
+    body: {
+      model: idleModel,
+      stream: true,
+      messages: [{ role: "user", content: "hello" }],
+    },
+    headers: {},
+  } as Parameters<typeof handle>[0]["request"];
+  try {
+    await handle(ctx, "openai", "idle-open");
+  } finally {
+    routeDone();
+  }
+});
+await new Promise<void>((resolve) => routeServer.listen(0, "127.0.0.1", resolve));
+const routePort = (routeServer.address() as { port: number }).port;
+const clientDone = new Promise<void>((resolve) => {
+  const req = http.request({ port: routePort, host: "127.0.0.1", path: "/", method: "POST" }, (r) => {
+    r.resume();
+    r.on("end", resolve);
+    r.on("close", resolve);
+    r.on("error", resolve);
+  });
+  req.on("error", resolve);
+  req.end("{}");
+});
+await Promise.race([routeFinished, new Promise<void>((resolve) => setTimeout(resolve, 5_000))]);
+await Promise.race([clientDone, new Promise<void>((resolve) => setTimeout(resolve, 1_000))]);
+
+const usageDb = new DatabaseSync(path.join(tmp, "agentfacade.db"), { readOnly: true });
+type IdleUsageRow = {
+  ok: number;
+  status: number;
+  error: string;
+  upstream_id: string;
+  agent_model: string;
+};
+const usageRows = usageDb
+  .prepare(
+    "SELECT ok, status, error, upstream_id, agent_model FROM usage_event " +
+      "WHERE upstream_id = ? AND agent_model = ? ORDER BY id DESC",
+  )
+  .all("idle-open", idleModel) as IdleUsageRow[];
+const tableHead =
+  usageRows.length === 1
+    ? []
+    : (usageDb.prepare("SELECT * FROM usage_event ORDER BY id DESC LIMIT 5").all() as Record<string, unknown>[]);
+usageDb.close();
+check(
+  "用量表里恰好一条属于这次请求的记录",
+  usageRows.length === 1,
+  JSON.stringify({ matched: usageRows, tableHead }),
+);
+const usageRow = usageRows[0];
+check("这条没记成成功", usageRow?.ok === 0, String(usageRow?.ok));
+check("状态是 504（超时），不是 500", usageRow?.status === 504, String(usageRow?.status));
+check("原因说清了是流中途静默", String(usageRow?.error).includes("sent nothing"), String(usageRow?.error));
+check("原因不是选路停下来的壳", !String(usageRow?.error).includes("the selection stopped"), String(usageRow?.error));
+
+routeServer.closeAllConnections?.();
+routeServer.close();
+idleUpstream.closeAllConnections?.();
+idleUpstream.close();
+
+closeStore();
+fs.rmSync(tmp, { recursive: true, force: true });
 
 /* ------------------------------------------------------------------ */
 
