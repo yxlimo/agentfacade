@@ -13,7 +13,7 @@ import type Koa from "koa";
 import { AuthError } from "../credential.ts";
 import { anthropicStreamToOpenAI, openaiStreamToAnthropic } from "../dialect/stream.ts";
 import { anthropicToOpenAIResponse, openaiToAnthropicResponse } from "../dialect/response.ts";
-import { parseLooseJson, readOpenAIChunks, readOrAbort, readSseEvents, sseData, sseEvent, SSE_DONE, type SseEvent } from "../sse-stream.ts";
+import { parseLooseJson, readOpenAIChunks, readOrAbort, readSseEvents, sseData, sseEvent, SSE_DONE } from "../sse-stream.ts";
 import { businessCodeOfPayload, isBusinessErrorEnvelope, withBusinessCode } from "../upstream-status.ts";
 import { scrubForClient, scrubForLog } from "../log-scrub.ts";
 import { configFlag, configNumber, markHotSetting } from "../config.ts";
@@ -566,7 +566,7 @@ interface ContinueState {
  *
  * 没传就没有续写能力 —— 调用方（只有开放平台那条路径）决定谁能续。
  */
-type Reopen = (partial: { text: string; reasoning: string }) => Promise<ReadableStream<Uint8Array>>;
+export type Reopen = (partial: { text: string; reasoning: string }) => Promise<ReadableStream<Uint8Array>>;
 
 /** 已产出的文本超了就取尾部：尾部才是断点，前面的已经写出去了。 */
 function tailText(text: string): string {
@@ -639,26 +639,6 @@ function isRoleOnlyChunk(chunk: Json): boolean {
   return !d.content && !d.reasoning_content && !d.reasoning && !Array.isArray(d.tool_calls);
 }
 
-/** Anthropic 方言的一帧里产出了什么（正文、推理、工具调用在途）。 */
-function trackAnthropicEventData(data: string, state: ContinueState): void {
-  let json: Json;
-  try {
-    json = parseLooseJson(data);
-  } catch {
-    return;
-  }
-  if (!json || typeof json !== "object" || Array.isArray(json)) return;
-  const type = json.type;
-  if (type === "content_block_delta") {
-    const delta = json.delta;
-    if (!delta || typeof delta !== "object") return;
-    if (delta.type === "text_delta" && typeof delta.text === "string") state.text += delta.text;
-    else if (delta.type === "thinking_delta" && typeof delta.thinking === "string") state.reasoning += delta.thinking;
-    else if (delta.type === "input_json_delta") state.toolInFlight = true;
-  } else if (type === "content_block_start") {
-    if (json.content_block?.type === "tool_use") state.toolInFlight = true;
-  }
-}
 
 /** 「安静了多久」，写进句子给人看：一秒以内说毫秒，不然说秒。 */
 function idleSpan(idleMs: number): string {
@@ -1391,68 +1371,6 @@ async function* chainedOpenAIChunks(
   }
 }
 
-/**
- * 把一条条上游流接成一条字节流：每条流出错就问「还能不能再来一条」。
- *
- * 续写把好几条流接成一条答复，转换器（anthropicStreamToOpenAI）的内部状态
- * ——开场帧、收尾帧、同一个 completion id——必须跨流留住。每条流换一个转换器
- * 会重发开场帧、重发 [DONE]，答复的 id 也会中途换掉。所以转换器只建一个，
- * 喂给它的是这条「一条接一条」的字节流。
- *
- * 每一段各自过安静闸（在调用方套好的 withStreamIdle 里）：哪一段静默就抛
- * 哪一段的错。不能续的时候以错误结束（不是正常 EOF），转换器才会把这条错
- * 原样抛给外层收尾。
- */
-function chainedUpstream(
-  first: ReadableStream<Uint8Array>,
-  next: (error: unknown) => Promise<ContinueOutcome>,
-  signal: AbortSignal,
-): ReadableStream<Uint8Array> {
-  let current: ReadableStream<Uint8Array> | null = first;
-  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      for (;;) {
-        if (!reader) {
-          if (!current) {
-            controller.close();
-            return;
-          }
-          reader = current.getReader();
-          current = null;
-        }
-        try {
-          const { done, value } = await readOrAbort(reader, signal);
-          if (done) {
-            reader.releaseLock();
-            reader = null;
-            controller.close();
-            return;
-          }
-          controller.enqueue(value);
-          return;
-        } catch (e) {
-          const outcome = await next(e);
-          if (outcome.kind === "blocked") {
-            controller.error(outcome.error);
-            return;
-          }
-          // 换一段：回到循环开头，读下一条流
-          current = outcome.stream;
-          reader = null;
-        }
-      }
-    },
-    async cancel(reason) {
-      if (!reader) return;
-      try {
-        await reader.cancel(reason);
-      } catch {
-        /* 已经结束了 */
-      }
-    },
-  });
-}
 
 /**
  * A stream of OpenAI chunks.
@@ -1554,6 +1472,10 @@ export async function deliverOpenAIStream(
     log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
     await writeFrame(ctx, errorEvent(clientMessageOf(e)));
     reportFailure(onFailure, e);
+    ctx.res.end();
+    // 同 pipeOpenAIChunks：字节不变，错抛给调用方记账（头已发，换不了目标，
+    // 调用方按失败收尾）。
+    throw e;
   }
   ctx.res.end();
 }
@@ -1983,7 +1905,9 @@ async function pipeOpenAIChunks(
           await writeFrame(ctx, sseData({ error: { type: "api_error", message: clientMessageOf(outcome.error) } }));
           await writeFrame(ctx, SSE_DONE);
           reportFailure(onFailure, outcome.error);
-          return;
+          // 字节一个不变，错要抛给调用方：这条答复是失败的，不抛的话调用方
+          // 记成成功（用量表上那些 0 token 的「成功」就是这么来的）。
+          throw outcome.error;
         }
         upstream = outcome.stream;
         // 回到开头
@@ -1994,18 +1918,6 @@ async function pipeOpenAIChunks(
     // closes.
     ctx.res.end();
   }
-}
-/**
- * 这一帧是不是收尾帧（message_delta / message_stop）：还要继续的轮次里先
- * 扣住不写，最后一轮才放行 —— 否则续上的那一段又发一份，客户端收到两份。
- */
-function isAnthropicTerminalEvent(event: SseEvent): boolean {
-  if (event.event === "message_delta" || event.event === "message_stop") return true;
-  if (!event.event) {
-    const data = event.data;
-    return data.includes('"message_delta"') || data.includes('"message_stop"');
-  }
-  return false;
 }
 
 

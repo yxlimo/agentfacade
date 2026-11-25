@@ -9,7 +9,7 @@ import type Koa from "koa";
 import { randomUUID } from "node:crypto";
 import { AuthError } from "../../credential.ts";
 import { anthropicToOpenAI, openaiToAnthropic } from "../../dialect/request.ts";
-import { ClientGoneError, deliverAnthropicStream, deliverJson, deliverOpenAIStream, type Dialect } from "../deliver.ts";
+import { ClientGoneError, deliverAnthropicStream, deliverJson, deliverOpenAIStream, type Dialect, type Reopen } from "../deliver.ts";
 import { upstreamModel, type Route } from "../routes.ts";
 import { retryAfterMs } from "../../upstream-status.ts";
 import { runUnderClientGone } from "./client-gone.ts";
@@ -96,6 +96,10 @@ export async function toOpenAiPlatform(
 
   // 流式答复是在 underPolicy 返回之后才消费的：冷却由调用方在流结束时结算。
   const settle = settlement();
+  // 续写要的「重发」能力：地址与 key 都按账号取，只有当次选中的账号知道，所以
+  // 闭包建在下面策略回调里（每次尝试、降级换了账号都重建一个）；这里先占位，
+  // 回调里赋值，流式那条路把它传给 deliverOpenAIStream。
+  let reopen: Reopen | undefined;
   // 客户端走了就把上游停掉：上游还在算就是在计费，账号还占着。非流式那条路
   // 尤其要紧 —— 答复要等整个上游的答复读完才发出去，客户端正好在这中间走。
   await runUnderClientGone(out, async (guard) => {
@@ -107,6 +111,42 @@ export async function toOpenAiPlatform(
         // 另一条请求 —— 拿同一个 id 去问厂商会问出两件事。
         const requestId = randomUUID();
         if (ctx.logRoute) logAttempt(opts.log, account.id, requestId, route.model);
+        // 续写的「重发」：同一条请求、同一个账号、同一套归因头（request id 每次
+        // 新生成），body 深拷贝后在 messages 末尾追加断点上下文。
+        reopen = async (partial) => {
+          // 深拷贝：原 body 还要给主请求与后面的续写用，往 messages 里追加不能
+          // 把原数组改掉。
+          const followBody: Record<string, unknown> = { ...openaiBody };
+          const rest: unknown[] = Array.isArray(followBody.messages) ? [...followBody.messages] : [];
+          if (partial.text) {
+            rest.push({ role: "assistant", content: partial.text });
+          }
+          // 上游只吐了推理（reasoning_content）还没吐正文时，续写上下文里不放
+          // assistant 正文：推理是模型的内部思考，不是它说出去的话，塞进
+          // assistant.content 等于把内部思考当成已产出的正文 —— 这种场合只给
+          // user 那一句，让模型从头把答复写出来。
+          rest.push({ role: "user", content: "上一条回答被上游中断了，从断点继续写，不要重复已经写过的内容" });
+          followBody.messages = rest;
+
+          const followId = randomUUID();
+          let follow: Response;
+          try {
+            follow = await opts.chat(
+              followBody,
+              attributionHeaders(ctx.forwardedHeaders, followId, account.id),
+              account.id,
+              guard.signal,
+            );
+          } catch (e) {
+            throw guard.fail(e) ?? e;
+          }
+          if (!follow.ok || !follow.body) {
+            // 续写自己也失败：抛出去，deliver 按「不能续」收尾（不无限续）。
+            const text = await follow.text().catch(() => "");
+            throw upstreamStatusError(follow.status, text, opts.what, retryAfterMs(follow, text) ?? undefined);
+          }
+          return follow.body;
+        };
         let res: Response;
         try {
           res = await opts.chat(
@@ -168,6 +208,7 @@ export async function toOpenAiPlatform(
         ctx.onFinish,
         ctx.onUsage,
         (e) => settle.failure(e),
+        reopen,
       );
       settle.success();
     } catch (e) {
