@@ -671,15 +671,26 @@ async function callUpstream(
     // 平台级熔断也记一笔：成功就是「这个平台现在发得出去」。
     noteBreakerOutcome(route.platform, "ok");
   } catch (e) {
-    const err = e as AuthError;
+    // 答复已经写出去之后停下来的错，是 SelectionStop 包着的那个原因：壳本身
+    // 没有身份，它只说明「没法再换目标了」，记账要按原因来。
+    const stopped = e instanceof SelectionStop;
+    const reason = stopped ? e.reason : e;
+    const err = reason as AuthError;
     // 客户端走了：答复那一层给客户端的是 499，用量表也记 499，不要记成 500
     // —— 500 是「上游挂了」，而上游没坏，只是没人要了。
-    // 客户端走了记 499；上游自己给了状态码就用它的；都没有才是 500。
+    // 客户端走了记 499；上游自己给了状态码就用它的；都没有才是按分类定。
     let status = 500;
-    if (e instanceof ClientGoneError) {
+    if (reason instanceof ClientGoneError) {
       status = 499;
+    } else if (stopped && typeof e.status === "number") {
+      // SelectionStop 只把 AuthError 的状态码带出来：那是客户端该看到的那个。
+      status = e.status;
     } else if (typeof err?.status === "number") {
       status = err.status;
+    } else {
+      // 答复是发出去之后断的：500 说的是「网关自己出错」，而这里是上游没答完。
+      // 超时是 504，其余上游失败是 502。
+      status = classifyUpstreamError(reason).kind === "timeout" ? 504 : 502;
     }
     recordRequestUsage(
       body,
@@ -689,11 +700,12 @@ async function callUpstream(
       uctx,
       status,
       started,
-      err?.message ?? String(e),
+      err?.message ?? String(reason),
       kind?.label ?? route.platform,
     );
     // 失败分类（queued / rate-limit / …）就是判定要的那一格，不再自己判一遍。
-    const failureKind = classifyUpstreamError(e).kind;
+    // 分类的对象是原因：壳不是上游的任何一类失败。
+    const failureKind = classifyUpstreamError(reason).kind;
     noteUpstreamFailure(route.platform, failureKind);
     // 平台级熔断记的是同一格：可熔断的失败（排队、网络错、5xx）攒够次数就
     // 开闸，不该熔断的（请求本身的问题、账号的事）它自己会忽略。

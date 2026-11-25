@@ -9,6 +9,7 @@
 //   4. 权重相同时保持传入次序。
 
 import { select, SelectionStop } from "../lib/router/selection.ts";
+import { AuthError } from "../lib/credential.ts";
 
 let pass = 0;
 let fail = 0;
@@ -321,6 +322,35 @@ console.log("没有候选");
     caught = e;
   }
   check("报的是错", caught instanceof Error, String(caught));
+}
+
+console.log("");
+console.log("SelectionStop 的身份：status 与 message 都从原因来");
+
+{
+  // AuthError 是唯一把客户端该看的状态码放在自己身上的错误：SelectionStop
+  // 把它带出来，记账那一层才不用重新判。
+  const auth = new AuthError("upstream rejected", "hint", 502);
+  const stopped = new SelectionStop(auth);
+  check("message 是原因的错误原文", stopped.message === "upstream rejected", stopped.message);
+  check("status 取的是 AuthError 的", stopped.status === 502, String(stopped.status));
+  check("reason 原样带着", stopped.reason === auth, String(stopped.reason));
+  check("name 还是 SelectionStop", stopped.name === "SelectionStop", stopped.name);
+}
+
+{
+  // 不是 AuthError 的原因：没有状态码可带，message 仍是原因的原文。
+  const boom = new Error("the stream broke");
+  const stopped = new SelectionStop(boom);
+  check("普通错误的 message 是它的原文", stopped.message === "the stream broke", stopped.message);
+  check("普通错误不带 status", stopped.status === undefined, String(stopped.status));
+}
+
+{
+  // 原因不是 Error：String(reason) 就是它的原文。
+  const stopped = new SelectionStop("socket hang up");
+  check("非 Error 原因的 message 是 String(reason)", stopped.message === "socket hang up", stopped.message);
+  check("非 Error 原因不带 status", stopped.status === undefined, String(stopped.status));
 }
 
 console.log("");
