@@ -385,6 +385,12 @@ type Script =
   | { first: "silent" }
   /** 上游一个字不说就收工了：空答复。 */
   | { first: "empty" }
+  /** 只发信封（没有内容），然后闭嘴。 */
+  | { first: "envelope-stall" }
+  /** 发了内容，然后闭嘴。 */
+  | { first: "content-stall"; text: string }
+  /** 只发心跳，然后闭嘴。 */
+  | { first: "ping-stall" }
   /** 正常答复。 */
   | { first: "answer"; text: string };
 
@@ -399,8 +405,76 @@ function streamFor(script: Script): ReadableStream<Uint8Array> {
       return upstream([], { after: "stall" });
     case "empty":
       return upstream([]);
+    case "envelope-stall":
+      return upstream(
+        [
+          `data: ${JSON.stringify({
+            id: "c1",
+            object: "chat.completion.chunk",
+            model: "fake-model",
+            choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }],
+          })}\n\n`,
+        ],
+        { after: "stall" },
+      );
+    case "content-stall":
+      return upstream([openaiFrame(script.text)], { after: "stall" });
+    case "ping-stall":
+      return scriptedUpstream(
+        [
+          { waitMs: 0, text: ": ping\n\n" },
+          { waitMs: 0, text: 'event: ping\ndata: {"type":"ping"}\n\n' },
+        ],
+        "stall",
+      );
     case "answer":
       return upstream([openaiFrame(script.text), "data: [DONE]\n\n"]);
+  }
+}
+
+/** 按剧本造一个 Anthropic 方言的假上游流（给 anthropic 入口的路由测试用）。 */
+function anthropicStreamFor(script: Script): ReadableStream<Uint8Array> {
+  switch (script.first) {
+    case "error-frame":
+      return upstream([`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: script.words } })}\n\n`]);
+    case "raw":
+      return upstream([], { after: "raw" });
+    case "silent":
+      return upstream([], { after: "stall" });
+    case "empty":
+      return upstream([]);
+    case "envelope-stall":
+      return upstream([messageStart(), 'event: ping\ndata: {"type":"ping"}\n\n'], { after: "stall" });
+    case "content-stall":
+      return upstream(
+        [
+          messageStart(),
+          anthropicFrame("content_block_delta", {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text: script.text },
+          }),
+        ],
+        { after: "stall" },
+      );
+    case "ping-stall":
+      return scriptedUpstream(
+        [
+          { waitMs: 0, text: ": ping\n\n" },
+          { waitMs: 0, text: 'event: ping\ndata: {"type":"ping"}\n\n' },
+        ],
+        "stall",
+      );
+    case "answer":
+      return upstream([
+        messageStart(),
+        anthropicFrame("content_block_delta", {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: script.text },
+        }),
+        anthropicFrame("message_stop", { type: "message_stop" }),
+      ]);
   }
 }
 
@@ -419,7 +493,7 @@ interface RouterResult extends ServeResult {
  * 这正是 lib/router/handle.ts 做的事：头没发出去就换下一个目标；全都失败就
  * 用真实状态码答（`sendError`），头发出去过的话就没得换了。
  */
-async function serveAsRouter(scripts: Script[], entry: "stream" | "chunks" = "stream"): Promise<RouterResult> {
+async function serveAsRouter(scripts: Script[], entry: "stream" | "chunks" | "anthropic" = "stream"): Promise<RouterResult> {
   const started = Date.now();
   let flushes = 0;
   let attempts = 0;
@@ -444,6 +518,8 @@ async function serveAsRouter(scripts: Script[], entry: "stream" | "chunks" = "st
         try {
           if (entry === "chunks") {
             await deliverOpenAIChunks(ctx, chunksFor(script), "openai", "fake-model", undefined, () => {});
+          } else if (entry === "anthropic") {
+            await deliverAnthropicStream(ctx, anthropicStreamFor(script), "anthropic", "fake-model", 0, undefined, () => {});
           } else {
             await deliverOpenAIStream(ctx, streamFor(script), "openai", "fake-model", undefined, undefined, () => {});
           }
@@ -517,6 +593,18 @@ async function* chunksFor(script: Script): AsyncGenerator<any> {
       return;
     case "empty":
       return;
+    case "envelope-stall":
+      yield { id: "c1", object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" } }] };
+      await new Promise<void>(() => {});
+      return;
+    case "content-stall":
+      yield { id: "c1", object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: script.text } }] };
+      await new Promise<void>(() => {});
+      return;
+    case "ping-stall":
+      yield { id: "c1", object: "chat.completion.chunk", choices: [{ index: 0, delta: {} }] };
+      await new Promise<void>(() => {});
+      return;
     case "answer":
       yield { id: "c1", object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: script.text } }] };
       yield {
@@ -537,13 +625,13 @@ section("上游说了一帧就安静（Anthropic 入口）");
 {
   let cancelled = false;
   const r = await serve({
-    source: upstream([messageStart()], { after: "stall", onCancel: () => (cancelled = true) }),
+    source: upstream([anthropicFrame("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "hello" } })], { after: "stall", onCancel: () => (cancelled = true) }),
     entry: "anthropic",
     dialect: "anthropic",
   });
   const text = r.received.join("\n\n");
   const said = errorMessageOf(r.received);
-  check("客户端收到了第一帧", text.includes("message_start"), text.slice(0, 120));
+  check("客户端收到了内容帧", text.includes("hello"), text.slice(0, 120));
   check("客户端收到了一条 error 事件", text.includes("event: error"), text.slice(0, 200));
   check("那句话说清了是流中途安静下来的", /upstream sent nothing for 150ms mid-stream/.test(said), said);
   check("那句话带上了是哪个模型", said.includes("model=fake-model"), said);
@@ -591,7 +679,7 @@ section("上游说了一帧就安静（OpenAI 入口）");
 section("上游中途断了（Node 自己那句话）");
 
 for (const [entry, dialect, first] of [
-  ["anthropic", "anthropic", messageStart()],
+  ["anthropic", "anthropic", anthropicFrame("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "hello" } })],
   ["openai", "openai", openaiFrame("hello")],
 ] as const) {
   const r = await serve({
@@ -1051,6 +1139,124 @@ section("空答复：不是失败");
   check("[旧协议] 头写了", r.flushes === 1, `${r.flushes} 次`);
   check("[旧协议] 有收尾的 [DONE]", text.includes("[DONE]"), text.slice(0, 160));
   check("[旧协议] 没有 error 帧", errorMessageOf(r.received) === "", errorMessageOf(r.received));
+}
+
+/* ------------------------------------------------------------------ *
+ * 3f. 「第一块内容」这道闸：换目标的判据从第一块字节改成第一块内容
+ * ------------------------------------------------------------------ */
+
+// 以前头在收到第一块字节时就发了 —— Anthropic 的 message_start 几乎立刻就到，
+// 可它只是信封，客户端一个字内容都没收到，路由层已经没有换目标的机会。现在
+// 信封扣住，等第一块对用户可见的内容；内容之前上游失败或静默，原样抛出换目标。
+
+section("A. 首个目标只发信封就闭嘴：换目标");
+
+{
+  const r = await serveAsRouter(
+    [
+      { first: "envelope-stall" },
+      { first: "answer", text: "第二个目标的答复" },
+    ],
+    "anthropic",
+  );
+  const text = r.received.join("\n\n");
+  check("客户端拿到 200", r.status === 200, `HTTP ${r.status}`);
+  check("两个目标都试过了", r.attempts === 2, `${r.attempts} 次`);
+  check("客户端拿到的是第二个目标的答复", text.includes("第二个目标的答复"), text.slice(0, 200));
+  const starts = r.received.filter((frame) => frame.startsWith("event: message_start"));
+  check("客户端只收到一份 message_start", starts.length === 1, `${starts.length} 份`);
+  check("没有 error 事件", errorMessageOf(r.received) === "", errorMessageOf(r.received));
+  check("头只写了一次", r.flushes === 1, `${r.flushes} 次`);
+  check("第一个目标确实被读了（报的是中途超时）", r.errors[0] instanceof StreamIdleError, String(r.errors[0]?.name ?? r.errors[0]));
+}
+
+section("B. 首个目标发了内容再闭嘴：不换目标");
+
+{
+  const r = await serveAsRouter([{ first: "content-stall", text: "第一句话" }], "anthropic");
+  const text = r.received.join("\n\n");
+  check("客户端拿到了内容", text.includes("第一句话"), text.slice(0, 200));
+  check("客户端收到了一条 error 事件", text.includes("event: error"), text.slice(0, 200));
+  check("没有换目标（只试了一次）", r.attempts === 1, `${r.attempts} 次`);
+  check("头只写了一次", r.flushes === 1, `${r.flushes} 次`);
+}
+
+section("C. OpenAI：role-only 的 delta 不算内容");
+
+{
+  // role-only 再闭嘴 → 换目标
+  const r1 = await serveAsRouter([
+    { first: "envelope-stall" },
+    { first: "answer", text: "第二个目标的答复" },
+  ]);
+  const text1 = r1.received.join("\n\n");
+  check("[role-only] 换目标了", r1.attempts === 2, `${r1.attempts} 次`);
+  check("[role-only] 客户端拿到的是第二个目标的答复", text1.includes("第二个目标的答复"), text1.slice(0, 200));
+  check("[role-only] 没有 error 帧", errorMessageOf(r1.received) === "", errorMessageOf(r1.received));
+  check("[role-only] 头只写了一次", r1.flushes === 1, `${r1.flushes} 次`);
+
+  // 发了 content delta 再闭嘴 → 不换目标
+  const r2 = await serveAsRouter([{ first: "content-stall", text: "第一句话" }]);
+  const text2 = r2.received.join("\n\n");
+  check("[content] 没有换目标", r2.attempts === 1, `${r2.attempts} 次`);
+  check("[content] 客户端拿到了内容", text2.includes("第一句话"), text2.slice(0, 200));
+  check("[content] 客户端收到了 error 帧", errorMessageOf(r2.received) !== "", errorMessageOf(r2.received));
+}
+
+section("D. 扣住的信封在内容到来时逐字节写出去");
+
+{
+  const source = upstream([
+    anthropicFrame("message_start", {
+      type: "message_start",
+      message: {
+        id: "msg_upstream",
+        type: "message",
+        role: "assistant",
+        model: "upstream-model",
+        content: [],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: 5, output_tokens: 0 },
+      },
+    }),
+    'event: ping\ndata: {"type":"ping"}\n\n',
+    anthropicFrame("content_block_delta", {
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "text_delta", text: "正文内容" },
+    }),
+    anthropicFrame("message_stop", { type: "message_stop" }),
+  ]);
+  const r = await serve({ source, entry: "anthropic", dialect: "anthropic" });
+  const text = r.received.join("\n\n");
+  check("message_start 的 model 名改成了客户端问的那个", text.includes('"model":"fake-model"'), text.slice(0, 200));
+  check("上游的模型名没有漏出去", !text.includes("upstream-model"), text.slice(0, 200));
+  const startIdx = text.indexOf("message_start");
+  const pingIdx = text.indexOf('"type":"ping"');
+  const contentIdx = text.indexOf("正文内容");
+  check("message_start 在 ping 之前", startIdx >= 0 && pingIdx >= 0 && startIdx < pingIdx, `start=${startIdx} ping=${pingIdx}`);
+  check("ping 在内容之前", pingIdx >= 0 && contentIdx >= 0 && pingIdx < contentIdx, `ping=${pingIdx} content=${contentIdx}`);
+  check("内容在 message_stop 之前", contentIdx >= 0 && text.indexOf("message_stop") > contentIdx, `content=${contentIdx}`);
+  check("网关没有抛错", r.handlerError === null, r.handlerError ?? "");
+  check("没有 error 事件", errorMessageOf(r.received) === "", errorMessageOf(r.received));
+}
+
+section("E. 只有心跳一直发：不算内容，仍可换目标");
+
+{
+  const r = await serveAsRouter(
+    [
+      { first: "ping-stall" },
+      { first: "answer", text: "第二个目标的答复" },
+    ],
+    "anthropic",
+  );
+  const text = r.received.join("\n\n");
+  check("换目标了", r.attempts === 2, `${r.attempts} 次`);
+  check("客户端拿到的是第二个目标的答复", text.includes("第二个目标的答复"), text.slice(0, 200));
+  check("没有 error 事件", errorMessageOf(r.received) === "", errorMessageOf(r.received));
+  check("头只写了一次", r.flushes === 1, `${r.flushes} 次`);
 }
 
 /* ------------------------------------------------------------------ *

@@ -933,6 +933,195 @@ export function errorFromUpstreamPayload(detail: any): AuthError {
   );
 }
 
+/* ---------------- 「第一块内容」这道闸 ---------------- */
+
+/** 扣住的帧最多这么多字节，超过就无条件提交（按今天的自由流继续）。 */
+const CONTENT_GATE_MAX_BYTES = 256 * 1024;
+
+/** 扣住的帧最多这么多帧，超过就无条件提交。 */
+const CONTENT_GATE_MAX_FRAMES = 1_000;
+
+/** 一个值是不是「非空的内容」：字符串要非空，数组要非空。 */
+function isNonEmptyContent(value: unknown): boolean {
+  if (typeof value === "string") return value.length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  return false;
+}
+
+/** Anthropic 的一份 payload（已解析）是不是对用户可见的内容。 */
+function anthropicPayloadIsContent(json: Json): boolean {
+  if (!json || typeof json !== "object" || Array.isArray(json)) return false;
+  const type = json.type;
+  if (type === "content_block_delta") {
+    const delta = json.delta;
+    if (!delta || typeof delta !== "object") return false;
+    if (delta.type === "text_delta") return isNonEmptyContent(delta.text);
+    if (delta.type === "thinking_delta") return isNonEmptyContent(delta.thinking);
+    if (delta.type === "input_json_delta") return isNonEmptyContent(delta.partial_json);
+    return false;
+  }
+  if (type === "content_block_start") {
+    const block = json.content_block;
+    if (!block || typeof block !== "object") return false;
+    return block.type === "tool_use" && (Boolean(block.id) || Boolean(block.name));
+  }
+  return false;
+}
+
+/** OpenAI 的一份 payload（已解析）是不是对用户可见的内容。 */
+function openaiPayloadIsContent(json: Json): boolean {
+  if (!json || typeof json !== "object" || Array.isArray(json)) return false;
+  const choices = json.choices;
+  if (!Array.isArray(choices) || choices.length === 0) return false;
+  const delta = choices[0]?.delta;
+  if (!delta || typeof delta !== "object") return false;
+  return (
+    isNonEmptyContent(delta.content) ||
+    isNonEmptyContent(delta.reasoning_content) ||
+    isNonEmptyContent(delta.tool_calls)
+  );
+}
+
+/** 一帧原始 SSE 文本：事件名与数据 payload。 */
+interface RawSseFrame {
+  event?: string;
+  data: string;
+}
+
+/** 把一帧原始 SSE 文本拆成事件名与数据（与 readSseEvents 同一套解析）。 */
+function parseRawSseFrame(raw: string): RawSseFrame | undefined {
+  let event: string | undefined;
+  const dataLines: string[] = [];
+  for (const line of raw.split("\n")) {
+    const trimmed = line.replace(/\r$/, "");
+    if (trimmed === "") continue;
+    if (trimmed.startsWith(":")) continue;
+    if (trimmed.startsWith("event:")) {
+      event = trimmed.slice(6).trim();
+      continue;
+    }
+    if (trimmed.startsWith("data:")) {
+      dataLines.push(trimmed.slice(5).replace(/^ /, ""));
+      continue;
+    }
+    if (dataLines.length) dataLines.push(trimmed);
+  }
+  if (!dataLines.length) return undefined;
+  const data = dataLines.join("\n");
+  return event ? { event, data } : { data };
+}
+
+/** 把扣住的帧按原顺序写出去，然后接着读上游。 */
+function replayHeld(held: Uint8Array[], reader: ReadableStreamDefaultReader<Uint8Array>): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of held) controller.enqueue(chunk);
+    },
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) controller.close();
+      else controller.enqueue(value);
+    },
+    cancel(reason) {
+      reader.cancel(reason);
+    },
+  });
+}
+
+/**
+ * 把上游的帧扣在手里，直到出现第一块对用户可见的内容。
+ *
+ * 头一落地（flushHeaders），路由层就换不了目标了。旧判据是「收到第一块字节」——
+ * Anthropic 的 message_start 几乎立刻就到，可它只是信封，客户端一个字内容都没收到，
+ * 路由层已经没有换目标的机会（客户端拿到的是 200 里藏一句 error）。判据改成
+ * 「收到第一块对用户可见的内容」：信封扣住，内容一到就提交（把扣住的帧按原顺序
+ * 逐字节写出去）；在那之前上游失败或静默，原样抛出，路由层自然换下一个目标。
+ *
+ * 缓冲有上限：字节数或帧数超了就无条件提交，按今天的自由流继续 —— 慢流不该被
+ * 整条扣住。
+ */
+async function gateUntilContent(
+  body: ReadableStream<Uint8Array>,
+  dialect: UpstreamDialect,
+  signal?: AbortSignal,
+): Promise<ReadableStream<Uint8Array>> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  const held: Uint8Array[] = [];
+  let heldBytes = 0;
+  let frameCount = 0;
+  let buffer = "";
+
+  try {
+    for (;;) {
+      const { done, value } = await readOrAbort(reader, signal);
+      if (signal?.aborted) {
+        await cancelReader(reader);
+        throw new ClientGoneError();
+      }
+      if (done) break;
+      if (!value || value.length === 0) continue;
+      held.push(value);
+      heldBytes += value.length;
+      buffer += decoder.decode(value, { stream: true });
+
+      let idx: number;
+      while ((idx = buffer.indexOf("\n\n")) >= 0) {
+        const raw = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        const frame = parseRawSseFrame(raw);
+        if (!frame) continue;
+        frameCount++;
+        if (looksLikeErrorPayload(frame.data)) {
+          await cancelReader(reader);
+          throw errorFromUpstreamPayload(payloadIn(frame.data) ?? frame.data);
+        }
+        let json: Json;
+        try {
+          json = parseLooseJson(frame.data);
+        } catch {
+          continue;
+        }
+        const isContent = dialect === "anthropic" ? anthropicPayloadIsContent(json) : openaiPayloadIsContent(json);
+        if (isContent) {
+          return replayHeld(held, reader);
+        }
+      }
+      if (heldBytes > CONTENT_GATE_MAX_BYTES || frameCount > CONTENT_GATE_MAX_FRAMES) {
+        return replayHeld(held, reader);
+      }
+    }
+  } catch (e) {
+    await cancelReader(reader);
+    throw e;
+  }
+
+  return replayHeld(held, reader);
+}
+
+/**
+ * 把已经解析好的帧扣在手里，直到出现第一块对用户可见的内容。
+ *
+ * 与 gateUntilContent 同语义：内容一到就提交，之前上游失败或静默就原样抛出。
+ */
+async function gateChunksUntilContent(iterator: AsyncIterator<Json>): Promise<Json[]> {
+  const held: Json[] = [];
+  let heldBytes = 0;
+  let frameCount = 0;
+
+  for (;;) {
+    const next: IteratorResult<Json> = await iterator.next();
+    if (next.done) break;
+    held.push(next.value);
+    frameCount++;
+    heldBytes += JSON.stringify(next.value ?? null).length;
+    if (openaiPayloadIsContent(next.value)) return held;
+    if (heldBytes > CONTENT_GATE_MAX_BYTES || frameCount > CONTENT_GATE_MAX_FRAMES) return held;
+  }
+
+  return held;
+}
+
 /** The whole answer, for a client that did not ask for a stream. */
 export function deliverJson(
   ctx: Koa.Context,
@@ -1047,23 +1236,26 @@ export async function deliverOpenAIStream(
     // 等上游的**第一帧**也要算进「安静」，而且量的是**首帧那个上限**（比中途
     // 那个长：推理模型的第一个 token 常常要两分多钟）。
     upstream = await peekStream(withStreamIdle(body, `model=${model}`), abort.signal);
+    // 第一帧读到不等于答复开始：信封扣住，等第一块对用户可见的内容。内容之前
+    // 上游失败或静默，头还没发，原样抛出换目标。
+    upstream = await gateUntilContent(upstream, "openai", abort.signal);
   } catch (e) {
     if (e instanceof ClientGoneError) {
       reportClientGone(ctx, onFailure);
       ctx.res.end();
       return;
     }
-    // 第一帧都没读到：**头还没发出去**，所以往外抛 —— 路由层还能换一个账号
+    // 内容还没出现：**头还没发出去**，所以往外抛 —— 路由层还能换一个账号
     // 或目标，客户端最后拿到的是真实状态与上游原话。
     //
     // 以前这里把错吞成一条 error 帧（头在那之前就发了），换不了目标：生产上
     // fallback 的第三跳首帧就是 403，客户端拿到的是 200 里藏一句 error。
-    log.warn(`[DELIVER] 上游第一帧就失败了：${failureLine(e)}`);
+    log.warn(`[DELIVER] 上游在内容出现之前就失败了：${failureLine(e)}`);
     reportFailure(onFailure, e);
     // 响应从没接管过：它还是 Koa 的，调用方写的 sendError 才会落到 socket 上。
     throw e;
   }
-  // 第一帧读到了：现在才接管响应、发头。
+  // 第一块内容读到了：现在才接管响应、发头。
   takeOver(ctx);
   sseHead(ctx);
   // 看门狗断开连接时（客户端不读了）也要停上游：它还在吐字就是在计费。
@@ -1128,22 +1320,26 @@ export async function deliverAnthropicStream(
   // 一个计时走，源头才不会因为没人读而挂在那里（挂着就是在计费）。
   let upstream: ReadableStream<Uint8Array>;
   try {
-    // 第一帧读成功之前不写头：头一落地（flushHeaders），路由层就换不了目标，
+    // 第一块内容读到之前不写头：头一落地（flushHeaders），路由层就换不了目标，
     // 客户端拿到的是 200 里藏一句 error；而这里抛出去，它还能换下一个账号或
-    // 目标。peek 出来的流把第一块字节原样交回给下面（不丢、不重排）。
+    // 目标。peek 出来的流把第一块字节原样交回给下面（不丢、不重排），内容闸
+    // 再把信封扣住，等第一块对用户可见的内容。
     upstream = await peekStream(withStreamIdle(body, `model=${model}`), abort.signal);
+    // 信封扣住，等第一块对用户可见的内容：内容之前上游失败或静默，头还没发，
+    // 原样抛出换目标。
+    upstream = await gateUntilContent(upstream, "anthropic", abort.signal);
   } catch (e) {
     if (e instanceof ClientGoneError) {
       reportClientGone(ctx, onFailure);
       ctx.res.end();
       return;
     }
-    log.warn(`[DELIVER] 上游第一帧就失败了：${failureLine(e)}`);
+    log.warn(`[DELIVER] 上游在内容出现之前就失败了：${failureLine(e)}`);
     reportFailure(onFailure, e);
     // 响应从没接管过：它还是 Koa 的，调用方写的 sendError 才会落到 socket 上。
     throw e;
   }
-  // 第一帧读到了：现在才接管响应、发头。
+  // 第一块内容读到了：现在才接管响应、发头。
   takeOver(ctx);
   sseHead(ctx);
   if (dialect === "anthropic") {
@@ -1260,25 +1456,25 @@ export async function deliverOpenAIChunks(
   onFailure?: (error: unknown) => void,
 ): Promise<void> {
   ctx.res.setHeader("x-request-id", rid("req_"));
-  // 第一帧读成功之前不写头：头一落地（flushHeaders），路由层就换不了目标。
-  // 读不到第一帧就往外抛，那一层还能换下一个账号或目标。
+  // 第一块内容读到之前不写头：头一落地（flushHeaders），路由层就换不了目标。
+  // 读不到内容就往外抛，那一层还能换下一个账号或目标。
   //
   // 这里也计时：已经解析好的帧那个入口原先一点上限都没有，只靠 undici 兼底 ——
   // 另两个入口都有，三个入口该是一套东西（见 withIteratorIdle）。
   const iterator = withIteratorIdle(chunks, `model=${model}`)[Symbol.asyncIterator]();
-  let first: IteratorResult<any>;
+  let held: Json[];
   try {
-    first = await iterator.next();
+    held = await gateChunksUntilContent(iterator);
   } catch (e) {
-    log.warn(`[DELIVER] 上游第一帧就失败了：${failureLine(e)}`);
+    log.warn(`[DELIVER] 上游在内容出现之前就失败了：${failureLine(e)}`);
     reportFailure(onFailure, e);
     // 响应从没接管过：它还是 Koa 的，调用方写的 sendError 才会落到 socket 上。
     throw e;
   }
-  // 第一帧读到了（或者上游一字不说就收工了，那是空答复）：现在才接管响应、发头。
+  // 第一块内容读到了（或者上游一字不说就收工了，那是空答复）：现在才接管响应、发头。
   takeOver(ctx);
   sseHead(ctx);
-  const source = restoreFirst(first, iterator);
+  const source = restoreHeld(held, iterator);
   if (dialect === "openai") {
     try {
       for await (const chunk of source) {
@@ -1318,14 +1514,14 @@ export async function deliverOpenAIChunks(
 }
 
 /**
- * Put the frame that was already read back in front of the rest.
+ * Put the frames that were held back in front of the rest.
  *
- * 第一帧是在发头之前读的（那时还不知道该不该发一个 200），但它就是答复的第
- * 一帧：原样交给后面的循环，不能丢也不能重排。
+ * 扣住的帧是在发头之前读的（那时还不知道该不该发一个 200），但它们就是答复的
+ * 前几帧：原样交给后面的循环，不能丢也不能重排。
  */
-async function* restoreFirst<T>(first: IteratorResult<T>, rest: AsyncIterator<T>): AsyncGenerator<T> {
+async function* restoreHeld<T>(held: T[], rest: AsyncIterator<T>): AsyncGenerator<T> {
   try {
-    if (!first.done) yield first.value;
+    for (const item of held) yield item;
     for (;;) {
       const next: IteratorResult<T> = await rest.next();
       if (next.done) return;
