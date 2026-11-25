@@ -24,7 +24,6 @@ extend:
         - git show
         - git rev-list
         - git merge-base
-      writable: false
       deny:
         - git commit
         - git push

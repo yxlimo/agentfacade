@@ -34,7 +34,6 @@ extend:
         - node
         - python3
         - sh
-      writable: true
       deny:
         - git commit
         - git push

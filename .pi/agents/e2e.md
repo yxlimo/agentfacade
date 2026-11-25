@@ -39,7 +39,6 @@ extend:
         - mise run
         - node
         - pnpm
-      writable: true
       deny:
         - git commit
         - git push

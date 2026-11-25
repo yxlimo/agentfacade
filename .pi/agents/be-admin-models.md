@@ -44,7 +44,6 @@ extend:
         - git branch
         - mise run
         - node
-      writable: true
       deny:
         - git commit
         - git push

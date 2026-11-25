@@ -25,7 +25,6 @@ extend:
         - git rev-list
         - git merge-base
         - mise run privacy
-      writable: false
       deny:
         - git commit
         - git push

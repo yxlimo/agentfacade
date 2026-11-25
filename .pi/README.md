@@ -81,7 +81,7 @@ subagent(agent: "fe", model: "agentfacade/coder-d", task: "……")
 | --- | --- |
 | `permissions.scope` | 能读哪儿（`read`/`grep`/`find`/`ls`）。写 `["."]` = 整个仓库可读。 |
 | `permissions.write` | 能写哪儿（`write` 与锚点工具族都算写）。工具链产物目录（`web/.gen`、`web/.tanstack`、`web/dist`、`.e2e`）必须逐个列出来，否则构建与 e2e 在 `EACCES` 上停住。 |
-| `permissions.bash.allow` | 能跑哪些命令，按 token 前缀匹配（`mise run` 覆盖所有任务名，`git status` 覆盖 `git status --short`）。 |
+| `permissions.bash.allow` | 能跑哪些命令，按 token 前缀匹配（`mise run` 覆盖所有任务名，`git status` 覆盖 `git status --short`）。这个块只认 `allow` / `deny` / `network` 三个键——`writable` 与 `dependencyGate` 已经删了，bash 不再参与读写判定，写只看 `scope` / `write`；写错了是 unknown key，整条策略 fail-closed（孩子一上来读不了任何文件）。 |
 | `permissions.bash.deny` | 拒绝下限，`allow` 再宽也压不住它。九条写死搬一遍（`git commit`/`push`/`rebase`/`merge`/`reset`/`clean`/`checkout`/`restore`/`switch`、`rm -rf`），外加本项目的 `mise run deploy`、`mise run proto`、`podman`、`docker`、`systemctl`、`gh`。 |
 
 另外三条现在的规矩，都是从踩过的坑里来的：
