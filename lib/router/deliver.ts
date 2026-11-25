@@ -16,7 +16,7 @@ import { anthropicToOpenAIResponse, openaiToAnthropicResponse } from "../dialect
 import { parseLooseJson, readOpenAIChunks, readOrAbort, readSseEvents, sseData, sseEvent, SSE_DONE } from "../sse-stream.ts";
 import { businessCodeOfPayload, isBusinessErrorEnvelope, withBusinessCode } from "../upstream-status.ts";
 import { scrubForClient, scrubForLog } from "../log-scrub.ts";
-import { configNumber, markHotSetting } from "../config.ts";
+import { configFlag, configNumber, markHotSetting } from "../config.ts";
 import {
   STREAM_FIRST_FRAME_DEFAULT_MS,
   STREAM_IDLE_DEFAULT_MS,
@@ -504,6 +504,121 @@ export { STREAM_IDLE_DEFAULT_MS };
 // than the default
 markHotSetting("ROUTER_FIRST_FRAME_MS");
 markHotSetting("ROUTER_STREAM_IDLE_MS");
+markHotSetting("ROUTER_CONTINUE_ON_IDLE");
+markHotSetting("ROUTER_CONTINUE_MAX");
+
+/** 续写上下文里已产出的文本最多带多少（字节）。超了取尾部：尾部才是断点。 */
+const CONTINUE_TEXT_MAX = 32 * 1024;
+
+/** ROUTER_CONTINUE_MAX 的默认值与取值范围（0 等于关闭）。 */
+const CONTINUE_MAX_DEFAULT = 2;
+const CONTINUE_MAX_MIN = 0;
+const CONTINUE_MAX_MAX = 5;
+
+/**
+ * 续写开关：默认关。与两个上限同一套读法，直接在答复里读，不走参数。
+ *
+ * 默认关是钉住的：生产上「静默就写 error 事件」是既有行为，续写是新能力，
+ * 不打开就一个字节都不改。
+ */
+function continueOnIdleEnabled(): boolean {
+  return configFlag("ROUTER_CONTINUE_ON_IDLE", false);
+}
+
+/**
+ * 续写次数：默认 2，范围 0–5。越界夹回范围并 warn 一行（0 等于关闭）。
+ *
+ * NaN 没有可判的语义，显式回落默认并 warn —— 不能让它变成「次数无限」。
+ */
+function continueMax(): number {
+  const raw = configNumber("ROUTER_CONTINUE_MAX", CONTINUE_MAX_DEFAULT);
+  if (Number.isNaN(raw)) {
+    log.warn(`[DELIVER] 续写次数 ${raw} 不是有限数，已回落默认 ${CONTINUE_MAX_DEFAULT}`);
+    return CONTINUE_MAX_DEFAULT;
+  }
+  if (raw < CONTINUE_MAX_MIN || raw > CONTINUE_MAX_MAX) {
+    const clamped = Math.min(CONTINUE_MAX_MAX, Math.max(CONTINUE_MAX_MIN, raw));
+    log.warn(`[DELIVER] 续写次数 ${raw} 越界（${CONTINUE_MAX_MIN}-${CONTINUE_MAX_MAX}），已按 ${clamped} 生效`);
+    return clamped;
+  }
+  return raw;
+}
+
+/**
+ * 一次答复里已经产出的东西。
+ *
+ * 只记长度与「在不在途」，不记正文内容（与日志同一规矩）。续写要靠它判断
+ * 能不能接上：正文是断点，工具调用在途就拼不回来。
+ */
+interface ContinueState {
+  /** 已写出去的正文（按上游方言累加）。 */
+  text: string;
+  /** 已写出去的推理（按上游方言累加）。 */
+  reasoning: string;
+  /** 有没有进行中的工具调用：有就不续写（半截 JSON 拼不回来）。 */
+  toolInFlight: boolean;
+  /** 已经用掉几次续写。 */
+  attempts: number;
+}
+
+/**
+ * 续写要的「重发」能力：拿已产出的文本与推理，换一条新的上游流。
+ *
+ * 没传就没有续写能力 —— 调用方（只有开放平台那条路径）决定谁能续。
+ */
+type Reopen = (partial: { text: string; reasoning: string }) => Promise<ReadableStream<Uint8Array>>;
+
+/** 已产出的文本超了就取尾部：尾部才是断点，前面的已经写出去了。 */
+function tailText(text: string): string {
+  return text.length > CONTINUE_TEXT_MAX ? text.slice(text.length - CONTINUE_TEXT_MAX) : text;
+}
+
+/**
+ * 为什么不能续写；能续写就返回 null。
+ *
+ * 每一条都是「少一条就按今天的行为失败」的判据：没有重发能力、开关没开、
+ * 次数为 0、次数用完、工具调用在途。
+ */
+function continueBlockedReason(state: ContinueState, reopen: Reopen | undefined): string | null {
+  if (!reopen) return "没有续写能力";
+  if (!continueOnIdleEnabled()) return "续写开关没开";
+  if (continueMax() <= 0) return "续写次数为 0";
+  if (state.attempts >= continueMax()) return "次数用完";
+  if (state.toolInFlight) return "工具调用在途";
+  return null;
+}
+
+/** OpenAI 方言的一帧里产出了什么（正文、推理、工具调用在途）。 */
+function trackOpenAIChunk(chunk: Json, state: ContinueState): void {
+  const delta = (chunk as { choices?: Array<{ delta?: Json }> })?.choices?.[0]?.delta;
+  if (!delta || typeof delta !== "object") return;
+  const d = delta as Json;
+  if (typeof d.content === "string" && d.content) state.text += d.content;
+  const reasoning = typeof d.reasoning_content === "string" ? d.reasoning_content : d.reasoning;
+  if (typeof reasoning === "string" && reasoning) state.reasoning += reasoning;
+  if (Array.isArray(d.tool_calls) && d.tool_calls.length > 0) state.toolInFlight = true;
+}
+
+/** Anthropic 方言的一帧里产出了什么（正文、推理、工具调用在途）。 */
+function trackAnthropicEventData(data: string, state: ContinueState): void {
+  let json: Json;
+  try {
+    json = parseLooseJson(data);
+  } catch {
+    return;
+  }
+  if (!json || typeof json !== "object" || Array.isArray(json)) return;
+  const type = json.type;
+  if (type === "content_block_delta") {
+    const delta = json.delta;
+    if (!delta || typeof delta !== "object") return;
+    if (delta.type === "text_delta" && typeof delta.text === "string") state.text += delta.text;
+    else if (delta.type === "thinking_delta" && typeof delta.thinking === "string") state.reasoning += delta.thinking;
+    else if (delta.type === "input_json_delta") state.toolInFlight = true;
+  } else if (type === "content_block_start") {
+    if (json.content_block?.type === "tool_use") state.toolInFlight = true;
+  }
+}
 
 /** 「安静了多久」，写进句子给人看：一秒以内说毫秒，不然说秒。 */
 function idleSpan(idleMs: number): string {
