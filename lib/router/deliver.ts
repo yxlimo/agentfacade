@@ -1606,6 +1606,10 @@ export async function deliverAnthropicStream(
     log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
     await writeFrame(ctx, errorEvent(clientMessageOf(e)));
     reportFailure(onFailure, e);
+    ctx.res.end();
+    // Same contract as the OpenAI path: the bytes stay as they are, and the
+    // caller settles this answer as a failure instead of a zero-token success.
+    throw e;
   }
   ctx.res.end();
 }
@@ -2002,6 +2006,10 @@ async function writeAnthropicFrames(
     log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
     await writeFrame(ctx, errorEvent(clientMessageOf(e)));
     reportFailure(onFailure, e);
+    // The error event, the cooldown and the close are already handled; the
+    // error itself must still reach the caller, which settles this answer as
+    // a failure. Left here, a cut stream is recorded as a zero-token success.
+    throw e;
   } finally {
     if (pingTimer) clearInterval(pingTimer);
     ctx.res.end();
