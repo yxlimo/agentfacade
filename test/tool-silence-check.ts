@@ -1,20 +1,23 @@
-// test/tool-silence-check.ts — 工具开局静默：同一个上游原样重发
+// test/tool-silence-check.ts — 提交点之前的静默：同一个上游原样重发
 //
 //   node --experimental-strip-types test/tool-silence-check.ts
 //
 // 离线：假上游（OpenAI 方言的 SSE）+ 真网关（router-proxy 子进程），不连任何真平台。
 //
-// 上游开了工具调用的头，参数还没来就安静了 —— 上游没坏，卡住的是那一条连接。
-// 路由层因此原样重发同一条请求（同一个上游、同一个账号、同一份请求体），而不是
-// 换一个上游：换一个会把已经开始的工具调用换掉。
+// 两种形状，同一件事：等首字等到超时，或者上游开了工具调用的头、参数还没来就
+// 安静了。上游没坏 —— 是那一条连接卡住了（模型负载高），所以路由层原样重发同一条
+// 请求（同一个上游、同一个账号、同一份请求体），而不是换一个上游：换一个既要把
+// 同一段上下文重新算一遍，也会把已经开始的工具调用换掉。
 //
 // 用例：
-//   a 分类：ToolCallSilenceError → tool-silence（不可降级、值得立刻重发、调用方可重发）
+//   a 分类：两种静默都归一类 pre-commit-silence（不可降级、值得立刻重发、调用方可重发）
 //   b 同一个上游原样重发：上游收到第二条一模一样的请求，账号是同一个
 //   c 不写冷却（上游没坏，账号不该被下线）
 //   d 预算用完：504 + x-should-retry: true，只记一条用量（ok=0）
 //   e 绝不换上游：第二个目标一次都没被试
 //   f 重发成功：只记一条用量（ok=1）
+//   g 等首字超时走的是同一条路：上游一个字节都不发，网关向同一个上游再发一次
+//   h 等首字超时把预算用完：504 + x-should-retry: true
 
 import fs from "node:fs";
 import http from "node:http";
@@ -41,6 +44,8 @@ const PLATFORM_B = "tool-silence-b";
 const TOOL_OPENING_MS = 200;
 /** 这一轮的总时限（毫秒）：重发共用这一格。 */
 const RETRY_BUDGET_MS = 3000;
+/** 等首字等多久算超时（毫秒）：小到用例等得到，又远大于假上游正常答复的时间。 */
+const FIRST_FRAME_MS = 400;
 
 let pass = 0;
 let fail = 0;
@@ -78,6 +83,8 @@ interface Seen {
 const seen: Seen[] = [];
 /** 还要卡住几次（只卡住第一个平台）。 */
 let stallsLeft = 0;
+/** 还要「连上就一个字都不发」几次（等首字超时那一节用）。 */
+let silentLeft = 0;
 
 function sse(payload: unknown): string {
   return `data: ${JSON.stringify(payload)}\n\n`;
@@ -152,6 +159,12 @@ const upstream = http.createServer(async (req, res) => {
     model,
   });
   res.writeHead(200, { "content-type": "text/event-stream" });
+  if (platform === PLATFORM_A && silentLeft > 0) {
+    silentLeft -= 1;
+    // 头发出去了，正文一个字都不发：等首字那道闸来收。
+    res.flushHeaders();
+    return;
+  }
   if (platform === PLATFORM_A && stallsLeft > 0) {
     stallsLeft -= 1;
     // 只发了工具的名字，然后就不说话了：不 res.end()，等网关那道闸来收。
@@ -175,9 +188,11 @@ const gw: Gateway = await startGateway({
   env: {
     ROUTER_TOOL_OPENING_MS: String(TOOL_OPENING_MS),
     ROUTER_RETRY_BUDGET_MS: String(RETRY_BUDGET_MS),
-    // 别的闸要宽一点：这一节要考的只是工具开局那道闸。
+    // 别的闸要宽一点：这一节要考的只是「提交点之前的静默」。
     ROUTER_STREAM_IDLE_MS: "5000",
-    ROUTER_FIRST_FRAME_MS: "10000",
+    // 等首字那道闸要小到能在用例里等得到；假上游正常时几毫秒就答复，
+    // 400ms 给了 40 倍余量，不会因为它误判。
+    ROUTER_FIRST_FRAME_MS: String(FIRST_FRAME_MS),
   },
 });
 const token = fs.readFileSync(path.join(gw.dataDir, "admin-token"), "utf8").trim();
@@ -308,17 +323,31 @@ section("a 分类：工具开局静默是它自己的一类");
   const { classifyUpstreamError, CALLER_RESEND_BY_KIND, FAILURE_KINDS, isSameUpstreamResend } = await import(
     "../lib/router/provider-selection.ts"
   );
-  const { ToolCallSilenceError } = await import("../lib/router/deliver.ts");
+  const { ToolCallSilenceError, StreamIdleError } = await import("../lib/router/deliver.ts");
   const silence = new ToolCallSilenceError(200, "model=tool-silence-model");
   const failure = classifyUpstreamError(silence);
-  check("分类是 tool-silence", failure.kind === "tool-silence", failure.kind);
+  check("tool 静默的分类是 pre-commit-silence", failure.kind === "pre-commit-silence", failure.kind);
   check("不可降级（不换账号、不换上游）", failure.degradable === false, JSON.stringify(failure));
   check("值得立刻重发（同一个上游原样再来一次）", failure.retrySameAccountNow === true, JSON.stringify(failure));
   check("调用方可以重发整个请求", failure.callerShouldResend === true, JSON.stringify(failure));
   check("没有状态码（上游没回过状态）", failure.status === null, JSON.stringify(failure));
   check("重发的判据认它", isSameUpstreamResend(silence) === true);
   check("每个 kind 都有重发判决", FAILURE_KINDS.every((kind) => typeof CALLER_RESEND_BY_KIND[kind] === "boolean"));
-  check("tool-silence 的判决是 true", CALLER_RESEND_BY_KIND["tool-silence"] === true);
+  check("pre-commit-silence 的判决是 true", CALLER_RESEND_BY_KIND["pre-commit-silence"] === true);
+
+  // 等首字超时与它同一类：上游在负载上卡住，不是不可用。
+  const firstFrame = new StreamIdleError(200, "model=tool-silence-model", "first-frame");
+  const firstFailure = classifyUpstreamError(firstFrame);
+  check("等首字超时也归这一类", firstFailure.kind === "pre-commit-silence", firstFailure.kind);
+  check("等首字超时不可降级（不换上游）", firstFailure.degradable === false, JSON.stringify(firstFailure));
+  check("等首字超时值得立刻重发", firstFailure.retrySameAccountNow === true, JSON.stringify(firstFailure));
+  check("等首字超时被判成原样重发", isSameUpstreamResend(firstFrame) === true);
+
+  // 反证：中途静默（头已经发出去了）不属于这一类，它走 timeout 那条路。
+  const midStream = new StreamIdleError(200, "model=tool-silence-model", "mid-stream");
+  const midFailure = classifyUpstreamError(midStream);
+  check("反证：中途静默的分类是 timeout", midFailure.kind === "timeout", midFailure.kind);
+  check("反证：中途静默不原样重发", isSameUpstreamResend(midStream) === false);
 
   // 反证：别把「网络错」也带着改成原样重发。
   const connection = Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });
@@ -430,6 +459,80 @@ section("d 预算用完：可重试的超时（504 + x-should-retry）");
   check("那一条是失败（ok=0）", added[0]?.ok === 0, JSON.stringify(added));
   check("状态是 504", added[0]?.status === 504, JSON.stringify(added));
 }
+/* ------------------------------------------------------------------ *
+ * g 等首字超时：同一条路
+ * ------------------------------------------------------------------ */
+
+section("g 等首字超时：上游一个字节都不发，网关向同一个上游再发一次");
+{
+  seen.length = 0;
+  stallsLeft = 0;
+  silentLeft = 1;
+  const before = usageRows().length;
+  const answered = await chat();
+  const calls = seen.filter((one) => one.platform === PLATFORM_A);
+
+  check("客户端拿到的是成功答复", answered.status === 200, `HTTP ${answered.status} ${answered.text.slice(0, 200)}`);
+  check("上游被叫了两次（第一次静默、第二次答复）", calls.length === 2, String(calls.length));
+  check(
+    "两次是同一份请求体（原样重发）",
+    calls.length === 2 && calls[0].body === calls[1].body,
+    calls.map((one) => one.body.slice(0, 60)).join(" | "),
+  );
+  check(
+    "两次是同一个账号",
+    calls.length === 2 && calls[0].accountId === calls[1].accountId,
+    calls.map((one) => one.accountId).join(" | "),
+  );
+
+  section("绝不换上游：第二个目标一次都没被叫");
+  check(
+    "第二个目标没被叫过",
+    seen.every((one) => one.platform !== PLATFORM_B),
+    seen.map((one) => one.platform).join(" | "),
+  );
+
+  section("不写冷却（上游是慢，不是坏）");
+  check(
+    "账号没进冷却",
+    cooldownRows(accounts[PLATFORM_A]).length === 0,
+    JSON.stringify(cooldownRows(accounts[PLATFORM_A])),
+  );
+
+  section("记账：重发成功只记一条");
+  const rows = await waitForUsageRows(before);
+  const added = rows.slice(0, rows.length - before);
+  check("只多了一条用量", added.length === 1, `新增 ${added.length} 条：${JSON.stringify(added)}`);
+  check("那一条是成功（ok=1）", added[0]?.ok === 1, JSON.stringify(added));
+}
+
+/* ------------------------------------------------------------------ *
+ * h 等首字超时把预算用完
+ * ------------------------------------------------------------------ */
+
+section("h 等首字超时预算用完：504 + x-should-retry: true，仍然不换上游");
+{
+  seen.length = 0;
+  silentLeft = 99;
+  const answered = await chat();
+  const calls = seen.filter((one) => one.platform === PLATFORM_A);
+
+  check("客户端拿到的是 504", answered.status === 504, `HTTP ${answered.status} ${answered.text.slice(0, 200)}`);
+  check("答复说可以重发（x-should-retry: true）", answered.retry === "true", String(answered.retry));
+  check("上游被叫了不止一次（预算之内一直在重发）", calls.length >= 2, String(calls.length));
+  check(
+    "第二个目标还是没被叫过",
+    seen.every((one) => one.platform !== PLATFORM_B),
+    seen.map((one) => one.platform).join(" | "),
+  );
+  check(
+    "账号还是没进冷却",
+    cooldownRows(accounts[PLATFORM_A]).length === 0,
+    JSON.stringify(cooldownRows(accounts[PLATFORM_A])),
+  );
+  silentLeft = 0;
+}
+
 
 /* ------------------------------------------------------------------ *
  * 收尾

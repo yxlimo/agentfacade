@@ -461,7 +461,7 @@ const CLIENT_KIND_WORDS: Record<string, string> = {
   server: "上游出错",
   model: "这个账号用不了这个模型",
   request: "请求本身有问题",
-  "tool-silence": "上游没答完",
+  "pre-commit-silence": "上游没答完",
   unknown: "原因不明",
 };
 

@@ -179,7 +179,7 @@ export type UpstreamFailureKind =
   | "request"
   | "unreachable"
   | "connection"
-  | "tool-silence"
+  | "pre-commit-silence"
   | "unknown";
 
 /** The words in the union, so a verdict key missing at runtime can be caught */
@@ -196,7 +196,7 @@ export const FAILURE_KINDS = [
   "request",
   "unreachable",
   "connection",
-  "tool-silence",
+  "pre-commit-silence",
   "unknown",
 ] as const satisfies readonly UpstreamFailureKind[];
 
@@ -217,7 +217,7 @@ export const CALLER_RESEND_BY_KIND: Record<UpstreamFailureKind, boolean> = {
   connection: true,
   timeout: true,
   "rate-limit": true,
-  "tool-silence": true,
+  "pre-commit-silence": true,
   refused: false,
   credential: false,
   quota: false,
@@ -344,14 +344,15 @@ export function isDegradableUpstreamError(error: unknown): boolean {
 /**
  * Should this failure be resent to the same upstream, as-is?
  *
- * One place decides: the classification. The tool-call silence is the only failure
- * that gets this treatment — the upstream is healthy, that one connection is stuck,
- * so the same request goes out again on the same upstream (switching upstream would
- * replace the tool call that is already open)
+ * One place decides: the classification. A silence before the answer starts is the
+ * only failure that gets this treatment — the upstream is healthy, that one
+ * connection is stuck (a slow model, not a broken platform), so the same request
+ * goes out again on the same upstream. Switching upstream would pay for the same
+ * prompt twice and would replace a tool call that is already open.
  */
 export function isSameUpstreamResend(error: unknown): boolean {
   const failure = classifyUpstreamError(error);
-  return failure.kind === "tool-silence" && failure.retrySameAccountNow;
+  return failure.kind === "pre-commit-silence" && failure.retrySameAccountNow;
 }
 
 /**
@@ -388,18 +389,18 @@ export function classifyUpstreamError(error: unknown): UpstreamFailure {
   // never sent one. The 429 the client finally sees is the gateway's own
   // answer, not the upstream's.
   if (isQueued(error)) return classifiedFailure("queued", null, true, false);
-  // The upstream opened a tool call and then went quiet before the arguments came.
-  //
-  // The upstream is healthy there — what is stuck is that one connection. So it is
-  // not degradable (another upstream would replace the tool call that is already
-  // open) but it is worth retrying right now: the same request on the same upstream
-  // usually goes through. No status either: the upstream never sent one.
+  // 提交点之前就静默了：上游一个字节都没答出来 —— 要么等首字等到超时，
+  // 要么开了 tool_call、参数还没来就停了。
+  // 上游本身是健康的 —— 卡住的是那一条连接（模型负载高），不是账号或平台。
+  // 所以它不可降级（换一个上游既要把同一段上下文重新算一遍，也会把已经开始的
+  // 工具调用换掉），但值得立刻重发：同一条请求、同一个上游，通常这一次就过了。
+  // 也没有状态码：上游根本没回过状态。
   //
   // 外面看不到这个 degradable：重发那一层（resendSameUpstream）把预算用完的它换成
   // 504 的超时，那时这一轮的总时限也到了，不会再去换目标。所以「绝不换上游」在真实
   // 链路上是靠预算限住的，degradable 这一格是契约的一部分（别的调用点抛到外层时的
   // 判决），用例在分类那一节钉住它的值。
-  if (isToolCallSilence(error)) return classifiedFailure("tool-silence", null, false, true);
+  if (isPreCommitSilence(error)) return classifiedFailure("pre-commit-silence", null, false, true);
   // The platform's own code says more than the status does.
   const code = businessCodeOf(error);
   // 「这个免费模型被限流」：换账号没用（限的是模型），也不该把整个账号下线
@@ -522,15 +523,30 @@ function isQueued(error: unknown): boolean {
 }
 
 /**
- * The upstream opened a tool call and went quiet before the arguments arrived.
+/**
+ * Silence before the answer starts: the upstream has produced nothing a client
+ * could show yet.
  *
- * The name is the discriminator (see ToolCallSilenceError in
- * lib/router/deliver.ts): the delivery layer says which kind of silence this is,
- * the routing layer decides what to do with it
+ * Two shapes, one meaning. The first-frame timeout (StreamIdleError with phase
+ * "first-frame") means the upstream took too long to start answering; the
+ * tool-call silence means it opened a tool call and stopped before the
+ * arguments arrived. Both say "this model is slow right now", not "this
+ * account cannot serve" — the upstream is healthy, one connection is stuck.
+ *
+ * The names are the discriminators, the same way the rest of this file reads
+ * other layers' errors: the delivery layer says which silence this is, the
+ * routing layer decides what to do with it. Importing the classes here would
+ * be a cycle (deliver.ts imports this file), and the duck-typed check keeps
+ * the two layers decoupled.
  */
-function isToolCallSilence(error: unknown): boolean {
+function isPreCommitSilence(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
-  return String((error as { name?: unknown }).name ?? "") === "ToolCallSilenceError";
+  const { name, phase } = error as { name?: unknown; phase?: unknown };
+  const named = String(name ?? "");
+  if (named === "ToolCallSilenceError") return true;
+  // StreamIdleError is named "TimeoutError" (it reads like a timeout to
+  // everything above), and its phase says which of the two silences it is.
+  return named === "TimeoutError" && phase === "first-frame";
 }
 
 /**
