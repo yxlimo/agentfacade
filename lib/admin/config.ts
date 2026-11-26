@@ -21,8 +21,10 @@ import {
   markHotSetting,
   reloadConfig,
   type Setting,
+  type ConfigType,
 } from "../config.ts";
 import { parseBool, readEnvValue } from "../env.ts";
+import { ConfigKind, ConfigUnit } from "../gen/agentfacade/admin/v1/admin_pb.ts";
 import {
   STREAM_FIRST_FRAME_DEFAULT_MS,
   STREAM_IDLE_DEFAULT_MS,
@@ -30,6 +32,7 @@ import {
   clampStreamLimit,
   streamLimitWasCapped,
 } from "../router/stream-limits.ts";
+import { CONTINUE_MAX_MAX, CONTINUE_MAX_MIN } from "../router/deliver.ts";
 import { listConfig } from "../store.ts";
 import { pruneUsage } from "../usage.ts";
 
@@ -117,6 +120,12 @@ export interface ConfigItemView {
   secret: boolean;
   /** 敏感项现在有没有值。 */
   hasValue: boolean;
+  kind: ConfigKind;
+  unit: ConfigUnit;
+  hasMin: boolean;
+  minValue: bigint;
+  hasMax: boolean;
+  maxValue: bigint;
   /**
    * 面板写进数据库的那份值。
    *
@@ -133,20 +142,20 @@ export interface ConfigItemView {
  * 窗口、模拟客户端用的请求标识）改了也没有人读，露出来只会让人改出坏状态。
  */
 const DESCRIPTIONS: Record<string, string> = {
+  ROUTER_FIRST_FRAME_MS: `等首字最多多久（秒），上限 ${STREAM_LIMIT_MAX_MS / 1000}`,
+  ROUTER_STREAM_IDLE_MS: "连续多久没有新内容就算静默（秒）",
+  ROUTER_RETRY_BUDGET_MS: "一次请求的重试总时限（秒）",
+  ROUTER_CONTINUE_ON_IDLE: "判定为静默后替客户端把话说完",
+  ROUTER_CONTINUE_MAX: "一次答复最多续写几次，0 就不续",
+  ROUTER_IDLE_ERROR_RETRYABLE: "与自动续写二选一：让客户端重发",
+  HEALTH_CACHE_MS: "额度与状态快照多久刷新（秒）",
+  BENEFITS_INTERVAL_MS: "签到任务多久跑一次（秒）",
+  QODER_LEGACY_RETRY_MS: "Qoder 旧协议排队后隔多久重试（秒）",
   ADMIN_CORS_ORIGINS: "允许跨域访问管理接口的来源，逗号分隔。空表示不允许（面板和网关同源）",
   REQUIRE_API_KEY: "开启后，调用网关的 agent 必须带 API KEY；关闭则任何请求都放行",
   USAGE_RETENTION_DAYS: "用量记录保留多少天",
-  ROUTER_FIRST_FRAME_MS: `等首字最多多久（毫秒），上限 ${STREAM_LIMIT_MAX_MS}`,
-  ROUTER_STREAM_IDLE_MS: `停顿多久算断（毫秒），上限 ${STREAM_LIMIT_MAX_MS}`,
-  ROUTER_RETRY_BUDGET_MS: "一次请求的重试总时限（毫秒）。调小会让上游抽一下就直接报错",
-  ROUTER_CONTINUE_ON_IDLE: "流中途静默超时后自动续写，关闭时超时就断不续写",
-  ROUTER_CONTINUE_MAX: "每个请求最多续写几次，0 到 5，0 就是不续写",
-  ROUTER_IDLE_ERROR_RETRYABLE: "与自动续写二选一：报可重试超时，让客户端重发",
   PERIODIC_ENABLED: "后台定时任务总开关。关闭后不换令牌、不签到、不扫余额",
-  HEALTH_CACHE_MS: "额度与状态快照多久刷新一次（毫秒）",
   BENEFITS_DISABLED: "关闭每日签到与领奖。关闭后积分不会自动到账",
-  BENEFITS_INTERVAL_MS: "签到任务多久跑一次（毫秒）。调大后奖励到账变慢",
-  QODER_LEGACY_RETRY_MS: "Qoder 旧协议排队后隔多久重试（毫秒）",
   QODER_SKIP_QUEUE_WAIT: "开着时排队不等待，直接交给下一个目标。关着时先等一次再放弃",
   UPSTREAM_BREAKER_ENABLED: "开着时某个上游连续失败几次就暂时不往它发请求，到点放一个探测进去",
   SESSION_HEADER:
@@ -160,23 +169,42 @@ const DESCRIPTIONS: Record<string, string> = {
  * 「Qoder 中国区」这种。
  */
 const LABELS: Record<string, string> = {
+  ROUTER_FIRST_FRAME_MS: "等首字时限",
+  ROUTER_STREAM_IDLE_MS: "多久算静默",
+  ROUTER_RETRY_BUDGET_MS: "重试总时限",
+  ROUTER_CONTINUE_ON_IDLE: "静默后自动续写",
+  ROUTER_CONTINUE_MAX: "最多续写几次",
+  ROUTER_IDLE_ERROR_RETRYABLE: "静默时报可重试",
+  HEALTH_CACHE_MS: "快照刷新间隔",
+  BENEFITS_INTERVAL_MS: "签到间隔",
+  QODER_LEGACY_RETRY_MS: "排队重试间隔",
   ADMIN_CORS_ORIGINS: "允许的跨域来源",
   REQUIRE_API_KEY: "是否开启 API KEY 验证",
   USAGE_RETENTION_DAYS: "用量保留天数",
-  ROUTER_FIRST_FRAME_MS: "等首帧时限",
-  ROUTER_STREAM_IDLE_MS: "流空闲上限",
-  ROUTER_RETRY_BUDGET_MS: "重试总时限",
-  ROUTER_CONTINUE_ON_IDLE: "静默超时后自动续写",
-  ROUTER_CONTINUE_MAX: "最多续写次数",
-  ROUTER_IDLE_ERROR_RETRYABLE: "静默超时报可重试",
   PERIODIC_ENABLED: "后台定时任务",
-  HEALTH_CACHE_MS: "快照刷新间隔",
   BENEFITS_DISABLED: "关闭签到与领奖",
-  BENEFITS_INTERVAL_MS: "签到间隔",
-  QODER_LEGACY_RETRY_MS: "排队重试间隔",
   QODER_SKIP_QUEUE_WAIT: "排队时不等待",
   UPSTREAM_BREAKER_ENABLED: "上游级熔断",
   SESSION_HEADER: "自定义会话头",
+};
+
+// The panel renders a control from the declared unit, not from the key name:
+// inferring milliseconds from a suffix would silently change the scale on rename.
+const UNITS: Record<string, ConfigUnit> = {
+  ROUTER_FIRST_FRAME_MS: ConfigUnit.MILLISECONDS,
+  ROUTER_STREAM_IDLE_MS: ConfigUnit.MILLISECONDS,
+  ROUTER_RETRY_BUDGET_MS: ConfigUnit.MILLISECONDS,
+  HEALTH_CACHE_MS: ConfigUnit.MILLISECONDS,
+  BENEFITS_INTERVAL_MS: ConfigUnit.MILLISECONDS,
+  QODER_LEGACY_RETRY_MS: ConfigUnit.MILLISECONDS,
+};
+
+// The type comes from the setting itself so a boolean stays a dropdown even
+// when its key does not look like a switch.
+const KINDS: Record<ConfigType, ConfigKind> = {
+  string: ConfigKind.STRING,
+  number: ConfigKind.NUMBER,
+  boolean: ConfigKind.BOOLEAN,
 };
 
 /** 这两个键是流的两道闸，它们的取值受同一个上限约束。 */
@@ -184,22 +212,19 @@ function isStreamLimitKey(key: string): boolean {
   return key === "ROUTER_FIRST_FRAME_MS" || key === "ROUTER_STREAM_IDLE_MS";
 }
 
-/** ROUTER_CONTINUE_MAX 的合法范围：0 到 5，0 就是不续写。 */
-const ROUTER_CONTINUE_MAX_MIN = 0;
-const ROUTER_CONTINUE_MAX_MAX = 5;
 
-/** 把续写次数夹回 0 到 5。NaN 原样交还，由读它的那一层决定回退值。 */
+// NaN is left to the caller to fall back on; bounds come from deliver.ts so the two cannot drift.
 function clampContinueMax(value: number): number {
   if (Number.isNaN(value)) return value;
-  if (value < ROUTER_CONTINUE_MAX_MIN) return ROUTER_CONTINUE_MAX_MIN;
-  if (value > ROUTER_CONTINUE_MAX_MAX) return ROUTER_CONTINUE_MAX_MAX;
+  if (value < CONTINUE_MAX_MIN) return CONTINUE_MAX_MIN;
+  if (value > CONTINUE_MAX_MAX) return CONTINUE_MAX_MAX;
   return value;
 }
 
 /** 这个值是不是被夹回边界了。NaN 不算。 */
 function continueMaxWasCapped(value: number): boolean {
   if (Number.isNaN(value)) return false;
-  return value < ROUTER_CONTINUE_MAX_MIN || value > ROUTER_CONTINUE_MAX_MAX;
+  return value < CONTINUE_MAX_MIN || value > CONTINUE_MAX_MAX;
 }
 
 /** 这个键是不是续写次数那一项。 */
@@ -289,6 +314,7 @@ export function configItems(): ConfigItemView[] {
     // 生效的值：快照里就是模块读的时候定下的那份。
     const raw = String(setting.value);
     const source = setting.source;
+    const bounded = isContinueMaxKey(setting.key);
     const secret = isSecret(setting.key);
     // 敏感项只写不读：值不回给面板，掩码长得像值，容易被当成真值存回去。
     // 「有没有值」单独用 hasValue 说。
@@ -309,7 +335,7 @@ export function configItems(): ConfigItemView[] {
       const n = Number(raw);
       if (Number.isFinite(n) && continueMaxWasCapped(n)) {
         const capped = clampContinueMax(n);
-        log.warn(`[CONFIG] ${setting.key} 现在是 ${n}，不在 0 到 5 之间，已按 ${capped} 生效`);
+        log.warn(`[CONFIG] ${setting.key} 现在是 ${n}，不在 ${CONTINUE_MAX_MIN} 到 ${CONTINUE_MAX_MAX} 之间，已按 ${capped} 生效`);
         shown = String(capped);
       }
     }
@@ -323,6 +349,12 @@ export function configItems(): ConfigItemView[] {
       description,
       secret,
       hasValue,
+      kind: KINDS[setting.type],
+      unit: UNITS[setting.key] ?? ConfigUnit.UNSPECIFIED,
+      hasMin: bounded,
+      minValue: bounded ? BigInt(CONTINUE_MAX_MIN) : 0n,
+      hasMax: bounded,
+      maxValue: bounded ? BigInt(CONTINUE_MAX_MAX) : 0n,
       // 面板写进库的那份。环境变量在用的时候，它在等。
       overrideValue: secret ? "" : (override ?? ""),
     };
@@ -387,7 +419,7 @@ export function setConfigValue(key: string, value: string, clear = false): { ok:
     const n = Number(value);
     if (Number.isFinite(n) && continueMaxWasCapped(n)) {
       stored = String(clampContinueMax(n));
-      cappedNote = `范围 0 到 5，填的值已夹回边界（填 ${value}，存 ${stored}）`;
+      cappedNote = `范围 ${CONTINUE_MAX_MIN} 到 ${CONTINUE_MAX_MAX}，填的值已夹回边界（填 ${value}，存 ${stored}）`;
     }
   }
   configOverride(key, stored);

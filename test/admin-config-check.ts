@@ -34,14 +34,17 @@ for (const key of ["ROUTER_FIRST_FRAME_MS", "ROUTER_STREAM_IDLE_MS", "ROUTER_RET
 }
 
 const { configItems, setConfigValue } = await import("../lib/admin/config.ts");
-const { configClear, configNumber, configOverride, configPendingRestart, reloadConfig } = await import(
+const { configClear, configNumber, configOverride, configPendingRestart, configSnapshot, reloadConfig } = await import(
   "../lib/config.ts"
 );
+const { ConfigKind, ConfigUnit } = await import("../lib/gen/agentfacade/admin/v1/admin_pb.ts");
 const {
   STREAM_FIRST_FRAME_DEFAULT_MS,
   STREAM_IDLE_DEFAULT_MS,
   StreamIdleError,
   withStreamIdle,
+  CONTINUE_MAX_MAX,
+  CONTINUE_MAX_MIN,
 } = await import("../lib/router/deliver.ts");
 const { ATTEMPT_BUDGET_DEFAULT_MS } = await import("../lib/router/upstreams/policy.ts");
 
@@ -312,6 +315,110 @@ check("0 是合法值，就是不续写", zero.ok === true && configNumber("ROUT
 configClear("ROUTER_CONTINUE_MAX");
 reloadConfig();
 check("清掉之后回到默认值 2", configNumber("ROUTER_CONTINUE_MAX", -1) === 2, String(configNumber("ROUTER_CONTINUE_MAX", -1)));
+
+/* ------------------------------------------------------------------ *
+ * 七、控件类型、单位、边界与文案
+ * ------------------------------------------------------------------ */
+
+section("控件类型、单位与边界");
+
+const rows = configItems();
+const MILLISECOND_KEYS = new Set([
+  "ROUTER_FIRST_FRAME_MS",
+  "ROUTER_STREAM_IDLE_MS",
+  "ROUTER_RETRY_BUDGET_MS",
+  "HEALTH_CACHE_MS",
+  "BENEFITS_INTERVAL_MS",
+  "QODER_LEGACY_RETRY_MS",
+]);
+const KIND_BY_TYPE: Record<string, number> = {
+  string: ConfigKind.STRING,
+  number: ConfigKind.NUMBER,
+  boolean: ConfigKind.BOOLEAN,
+};
+const types = new Map(configSnapshot().map((setting) => [setting.key, setting.type]));
+
+for (const row of rows) {
+  const want = MILLISECOND_KEYS.has(row.key) ? ConfigUnit.MILLISECONDS : ConfigUnit.UNSPECIFIED;
+  check(`${row.key} 的单位按声明给出`, row.unit === want, `声明 ${want}，实到 ${row.unit}`);
+}
+check("声明为毫秒的一共六个键", MILLISECOND_KEYS.size === 6, String(MILLISECOND_KEYS.size));
+
+for (const row of rows) {
+  const type = types.get(row.key);
+  check(
+    `${row.key} 的控件类型与 Setting.type 一致`,
+    type !== undefined && row.kind === KIND_BY_TYPE[type],
+    `type=${String(type)}，kind=${row.kind}`,
+  );
+}
+const boolKeys = rows.filter((row) => types.get(row.key) === "boolean");
+check("布尔键是 BOOLEAN 控件", boolKeys.length > 0 && boolKeys.every((row) => row.kind === ConfigKind.BOOLEAN), JSON.stringify(boolKeys.map((row) => [row.key, row.kind])));
+
+const continueMax = rows.find((row) => row.key === "ROUTER_CONTINUE_MAX")!;
+check(
+  "ROUTER_CONTINUE_MAX 有下界且取自 deliver.ts",
+  continueMax.hasMin === true && continueMax.minValue === BigInt(CONTINUE_MAX_MIN),
+  `hasMin=${continueMax.hasMin}，min=${continueMax.minValue}`,
+);
+check(
+  "ROUTER_CONTINUE_MAX 有上界且取自 deliver.ts",
+  continueMax.hasMax === true && continueMax.maxValue === BigInt(CONTINUE_MAX_MAX),
+  `hasMax=${continueMax.hasMax}，max=${continueMax.maxValue}`,
+);
+for (const row of rows.filter((row) => row.key !== "ROUTER_CONTINUE_MAX")) {
+  check(
+    `${row.key} 没有上下界`,
+    row.hasMin === false && row.hasMax === false && row.minValue === 0n && row.maxValue === 0n,
+    `hasMin=${row.hasMin}，hasMax=${row.hasMax}`,
+  );
+}
+check(
+  "面板报的界与 deliver.ts 夹取用的界一致",
+  continueMax.minValue === BigInt(CONTINUE_MAX_MIN) && continueMax.maxValue === BigInt(CONTINUE_MAX_MAX),
+  `面板 ${continueMax.minValue}-${continueMax.maxValue}，路由 ${CONTINUE_MAX_MIN}-${CONTINUE_MAX_MAX}`,
+);
+check(
+  "夹取提示语也用同一对界",
+  clampMin.message.includes(String(CONTINUE_MAX_MIN)) && clampMax.message.includes(String(CONTINUE_MAX_MAX)),
+  `${clampMin.message} / ${clampMax.message}`,
+);
+
+const COPY: [string, string, string][] = [
+  ["ROUTER_FIRST_FRAME_MS", "等首字时限", "等首字最多多久（秒），上限 600"],
+  ["ROUTER_STREAM_IDLE_MS", "多久算静默", "连续多久没有新内容就算静默（秒）"],
+  ["ROUTER_RETRY_BUDGET_MS", "重试总时限", "一次请求的重试总时限（秒）"],
+  ["ROUTER_CONTINUE_ON_IDLE", "静默后自动续写", "判定为静默后替客户端把话说完"],
+  ["ROUTER_CONTINUE_MAX", "最多续写几次", "一次答复最多续写几次，0 就不续"],
+  ["ROUTER_IDLE_ERROR_RETRYABLE", "静默时报可重试", "与自动续写二选一：让客户端重发"],
+  ["HEALTH_CACHE_MS", "快照刷新间隔", "额度与状态快照多久刷新（秒）"],
+  ["BENEFITS_INTERVAL_MS", "签到间隔", "签到任务多久跑一次（秒）"],
+  ["QODER_LEGACY_RETRY_MS", "排队重试间隔", "Qoder 旧协议排队后隔多久重试（秒）"],
+];
+for (const [key, label, description] of COPY) {
+  const row = rows.find((item) => item.key === key);
+  check(
+    `${key} 的面板文案`,
+    row?.label === label && row?.description === description,
+    JSON.stringify({ label: row?.label, description: row?.description }),
+  );
+}
+check(
+  "「流空闲上限」这个名字不再出现",
+  rows.every((row) => !row.label.includes("流空闲上限") && !row.description.includes("流空闲上限")),
+  JSON.stringify(rows.filter((row) => row.label.includes("流空闲上限")).map((row) => row.key)),
+);
+check(
+  "说明里不再出现「毫秒」",
+  rows.every((row) => !row.description.includes("毫秒")),
+  JSON.stringify(rows.filter((row) => row.description.includes("毫秒")).map((row) => row.key)),
+);
+const positions = COPY.map(([key]) => rows.findIndex((row) => row.key === key));
+check(
+  "静默那一组的注册顺序没打乱",
+  positions.every((position, index) => position >= 0 && (index === 0 || position > positions[index - 1]!)),
+  JSON.stringify(positions),
+);
 
 /* ------------------------------------------------------------------ *
  * 结果
