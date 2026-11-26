@@ -504,6 +504,7 @@ export { STREAM_IDLE_DEFAULT_MS };
 // than the default
 markHotSetting("ROUTER_FIRST_FRAME_MS");
 markHotSetting("ROUTER_STREAM_IDLE_MS");
+markHotSetting("ROUTER_IDLE_ERROR_RETRYABLE");
 markHotSetting("ROUTER_CONTINUE_ON_IDLE");
 markHotSetting("ROUTER_CONTINUE_MAX");
 
@@ -523,6 +524,46 @@ const CONTINUE_MAX_MAX = 5;
  */
 function continueOnIdleEnabled(): boolean {
   return configFlag("ROUTER_CONTINUE_ON_IDLE", false);
+}
+
+/**
+ * Retryable idle errors are opt-in because they change bytes on the wire; with
+ * the flag off every client keeps seeing exactly what it sees today
+ */
+function idleErrorRetryableEnabled(): boolean {
+  return configFlag("ROUTER_IDLE_ERROR_RETRYABLE", false);
+}
+
+/**
+ * Only mid-stream silence is rewritten: a first-frame timeout happens before
+ * headers are out, so the caller can still switch targets instead
+ */
+function retryableIdleMessage(e: unknown): string | null {
+  if (!(e instanceof StreamIdleError) || e.phase !== "mid-stream") return null;
+  if (!idleErrorRetryableEnabled() || continueOnIdleEnabled()) return null;
+  const seconds = e.idleMs / 1000;
+  return `upstream timed out after ${seconds}s mid-stream: no data received for ${seconds}s`;
+}
+
+/** Every other failure keeps its existing error frame byte for byte */
+function openAIErrorFrame(e: unknown): string | null {
+  const message = retryableIdleMessage(e);
+  if (message === null) return null;
+  return sseData({ error: { type: "server_error", code: "upstream_idle_timeout", message } });
+}
+
+let warnedIdleModeConflict = false;
+
+/**
+ * The two switches are alternatives, not a hierarchy: when both are on the
+ * stream resumes and the retryable failure shape is never used. One warning
+ * is enough because this is a configuration mistake, not a per-request event
+ */
+function noteIdleModeConflict(): void {
+  if (warnedIdleModeConflict) return;
+  if (!idleErrorRetryableEnabled() || !continueOnIdleEnabled()) return;
+  warnedIdleModeConflict = true;
+  log.warn("[DELIVER] ROUTER_CONTINUE_ON_IDLE 与 ROUTER_IDLE_ERROR_RETRYABLE 都开着，按续写处理");
 }
 
 /**
@@ -1396,6 +1437,7 @@ export async function deliverOpenAIStream(
   reopen?: Reopen,
 ): Promise<void> {
   ctx.res.setHeader("x-request-id", rid("req_"));
+  noteIdleModeConflict();
   // 客户端走了的时候，这个信号让读上游的那个循环停下来。
   const abort = new AbortController();
   // **先**把「客户端走了」这件事听上，再去等上游的第一帧。
@@ -1505,6 +1547,7 @@ export async function deliverAnthropicStream(
   onFinish?: (finish: AnswerFinish) => void,
 ): Promise<void> {
   ctx.res.setHeader("x-request-id", rid("req_"));
+  noteIdleModeConflict();
   // 客户端走了的时候，这个信号让读上游的那个循环停下来。
   const abort = new AbortController();
   // **先**把「客户端走了」这件事听上，再去等上游的第一帧：第一帧可能要等
@@ -1604,7 +1647,7 @@ export async function deliverAnthropicStream(
     }
   } catch (e) {
     log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
-    await writeFrame(ctx, errorEvent(clientMessageOf(e)));
+    await writeFrame(ctx, dialect === "openai" ? (openAIErrorFrame(e) ?? errorEvent(clientMessageOf(e))) : errorEvent(clientMessageOf(e)));
     reportFailure(onFailure, e);
     ctx.res.end();
     // Same contract as the OpenAI path: the bytes stay as they are, and the
@@ -1656,6 +1699,7 @@ export async function deliverOpenAIChunks(
   onFailure?: (error: unknown) => void,
 ): Promise<void> {
   ctx.res.setHeader("x-request-id", rid("req_"));
+  noteIdleModeConflict();
   // 第一块内容读到之前不写头：头一落地（flushHeaders），路由层就换不了目标。
   // 读不到内容就往外抛，那一层还能换下一个账号或目标。
   //
@@ -1690,7 +1734,7 @@ export async function deliverOpenAIChunks(
       await writeFrame(ctx, SSE_DONE);
     } catch (e) {
       log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
-      await writeFrame(ctx, errorEvent(clientMessageOf(e)));
+      await writeFrame(ctx, openAIErrorFrame(e) ?? errorEvent(clientMessageOf(e)));
       reportFailure(onFailure, e);
     }
     ctx.res.end();
@@ -1797,7 +1841,7 @@ function isRawConnectionFailure(e: unknown): boolean {
  */
 export function clientMessageOf(e: unknown): string {
   // 上游安静了：那句人话本来就是我们自己写的。
-  if (e instanceof StreamIdleError) return e.message;
+  if (e instanceof StreamIdleError) return retryableIdleMessage(e) ?? e.message;
   if (isRawConnectionFailure(e)) return UPSTREAM_CLOSED_EARLY;
   // 抛出来的也可以就是个字符串（`throw "socket hang up"`）：那时没有 message，
   // 按以前那样直接落到回落值就把原文丢了 —— 而原文往往是唯一的线索。
@@ -1906,7 +1950,7 @@ async function pipeOpenAIChunks(
         const outcome = await continueWith(continueState, reopen, e, `model=${model ?? ""}`);
         if (outcome.kind === "blocked") {
           log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(outcome.error)}`);
-          await writeFrame(ctx, sseData({ error: { type: "api_error", message: clientMessageOf(outcome.error) } }));
+          await writeFrame(ctx, openAIErrorFrame(outcome.error) ?? sseData({ error: { type: "api_error", message: clientMessageOf(outcome.error) } }));
           await writeFrame(ctx, SSE_DONE);
           reportFailure(onFailure, outcome.error);
           // 字节一个不变，错要抛给调用方：这条答复是失败的，不抛的话调用方
