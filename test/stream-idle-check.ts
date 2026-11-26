@@ -393,7 +393,9 @@ type Script =
   /** 只发心跳，然后闭嘴。 */
   | { first: "ping-stall" }
   /** 正常答复。 */
-  | { first: "answer"; text: string };
+  | { first: "answer"; text: string }
+  /** 原样给出的上游帧，然后闭嘴：用来造工具调用的开局帧。 */
+  | { first: "raw-frames-stall"; frames: string[] };
 
 /** 按剧本内容造一个假上游的流。 */
 function streamFor(script: Script): ReadableStream<Uint8Array> {
@@ -428,6 +430,8 @@ function streamFor(script: Script): ReadableStream<Uint8Array> {
         ],
         "stall",
       );
+    case "raw-frames-stall":
+      return upstream(script.frames, { after: "stall" });
     case "answer":
       return upstream([openaiFrame(script.text), "data: [DONE]\n\n"]);
   }
@@ -466,6 +470,8 @@ function anthropicStreamFor(script: Script): ReadableStream<Uint8Array> {
         ],
         "stall",
       );
+    case "raw-frames-stall":
+      return upstream(script.frames, { after: "stall" });
     case "answer":
       return upstream([
         messageStart(),
@@ -605,6 +611,8 @@ async function* chunksFor(script: Script): AsyncGenerator<any> {
     case "ping-stall":
       yield { id: "c1", object: "chat.completion.chunk", choices: [{ index: 0, delta: {} }] };
       await new Promise<void>(() => {});
+      return;
+    case "raw-frames-stall":
       return;
     case "answer":
       yield { id: "c1", object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: script.text } }] };
@@ -1579,6 +1587,118 @@ routeServer.closeAllConnections?.();
 routeServer.close();
 idleUpstream.closeAllConnections?.();
 idleUpstream.close();
+
+section("F. 工具调用的开局帧不算内容");
+
+/** 一条 OpenAI 的 SSE 帧；帧里的 delta 由调用方给。 */
+function openaiSseFrame(delta: Record<string, unknown>, finish: string | null = null): string {
+  return (
+    "data: " +
+    JSON.stringify({
+      id: "c1",
+      object: "chat.completion.chunk",
+      model: "fake-model",
+      choices: [{ index: 0, delta, finish_reason: finish }],
+    }) +
+    "\n\n"
+  );
+}
+
+/** 一条 Anthropic 的 tool_use 开局块。 */
+function anthropicToolStart(input: Record<string, unknown>): string {
+  return anthropicFrame("content_block_start", {
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "tool_use", id: "toolu_1", name: "read", input },
+  });
+}
+
+/** 收帧时分隔符已经被切掉了，比较前也把它从期望帧上摘掉。 */
+const withoutSep = (frame: string) => frame.replace(/\n\n$/, "");
+const roleOnly = openaiSseFrame({ role: "assistant" });
+const toolOpening = (args: string) =>
+  openaiSseFrame({
+    role: "assistant",
+    tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "read", arguments: args } }],
+  });
+
+{
+  // a. OpenAI：开局帧之后长时间静默 —— 提交点没到，上层还能换目标
+  const r = await serveAsRouter([
+    { first: "raw-frames-stall", frames: [roleOnly + toolOpening("")] },
+    { first: "answer", text: "第二个目标的答复" },
+  ]);
+  const text = r.received.join("\n\n");
+  check("[a OpenAI 开局帧静默] 换目标了", r.attempts === 2, `${r.attempts} 次`);
+  check("[a OpenAI 开局帧静默] 客户端没拿到半个工具调用", !text.includes("call_1") && !text.includes("tool_calls"), text.slice(0, 200));
+  check("[a OpenAI 开局帧静默] 拿到第二个目标的答复", text.includes("第二个目标的答复"), text.slice(0, 200));
+  check("[a OpenAI 开局帧静默] 没有 error 帧", errorMessageOf(r.received) === "", errorMessageOf(r.received));
+  check(
+    "[a OpenAI 开局帧静默] 静默错误发生在提交点之前",
+    r.flushes === 1 && r.errors[0]?.name === "TimeoutError" && String(r.errors[0]?.message).includes("mid-stream"),
+    `${r.flushes} 次 flush; ${r.errors[0]?.name}: ${String(r.errors[0]?.message)}`,
+  );
+
+  // b. 对照组：参数立刻到达，帧照常流到客户端
+  const withArgs = toolOpening('{"path":"a.txt"}');
+  const r2 = await serve({
+    source: upstream([roleOnly, withArgs, "data: [DONE]\n\n"]),
+    entry: "openai",
+    dialect: "openai",
+  });
+  check("[b OpenAI 有参数] 立刻提交且没抛错", r2.flushes === 1 && r2.handlerError === null, `${r2.flushes} 次; ${r2.handlerError ?? ""}`);
+  check("[b OpenAI 有参数] 工具帧原样到客户端", r2.received.includes(withoutSep(withArgs)), r2.received.join("\n\n").slice(0, 300));
+  check("[b OpenAI 有参数] 工具帧在前 [DONE] 在后", r2.received.indexOf(withoutSep(withArgs)) >= 0 && r2.received.indexOf("data: [DONE]") === r2.received.length - 1, r2.received.join("\n\n").slice(0, 300));
+  check("[b OpenAI 有参数] 没有 error 帧", errorMessageOf(r2.received) === "", errorMessageOf(r2.received));
+
+  // c. Anthropic：tool_use 开局块的 input 是空对象 —— 同样不算内容
+  const r3 = await serveAsRouter(
+    [
+      { first: "raw-frames-stall", frames: [messageStart(), anthropicToolStart({})] },
+      { first: "answer", text: "第二个目标的答复" },
+    ],
+    "anthropic",
+  );
+  const text3 = r3.received.join("\n\n");
+  check("[c Anthropic 空 input 静默] 换目标了", r3.attempts === 2, `${r3.attempts} 次`);
+  check("[c Anthropic 空 input 静默] 客户端没拿到半个工具块", !text3.includes("toolu_1") && !text3.includes("tool_use"), text3.slice(0, 200));
+  check("[c Anthropic 空 input 静默] 拿到第二个目标的答复", text3.includes("第二个目标的答复"), text3.slice(0, 200));
+  check("[c Anthropic 空 input 静默] 没有 error 事件", errorMessageOf(r3.received) === "", errorMessageOf(r3.received));
+  check(
+    "[c Anthropic 空 input 静默] 静默错误发生在提交点之前",
+    r3.flushes === 1 && r3.errors[0]?.name === "TimeoutError" && String(r3.errors[0]?.message).includes("mid-stream"),
+    `${r3.flushes} 次; ${r3.errors[0]?.name}: ${String(r3.errors[0]?.message)}`,
+  );
+
+  // d. 对照组：input 带键，开局块本身就有内容
+  const toolStart = anthropicToolStart({ path: "a.txt" });
+  const stopBlock = anthropicFrame("content_block_stop", { type: "content_block_stop", index: 0 });
+  const msgStop = anthropicFrame("message_stop", { type: "message_stop" });
+  const r4 = await serve({
+    source: upstream([messageStart(), toolStart, stopBlock, msgStop]),
+    entry: "anthropic",
+    dialect: "anthropic",
+  });
+  check("[d Anthropic 有 input] 立刻提交且没抛错", r4.flushes === 1 && r4.handlerError === null, `${r4.flushes} 次; ${r4.handlerError ?? ""}`);
+  check("[d Anthropic 有 input] 工具块原样到客户端", r4.received.includes(withoutSep(toolStart)), r4.received.join("\n\n").slice(0, 300));
+  check(
+    "[d Anthropic 有 input] 顺序是工具块 → 块结束 → 消息结束",
+    r4.received.indexOf(withoutSep(toolStart)) < r4.received.indexOf(withoutSep(stopBlock)) && r4.received.indexOf(withoutSep(stopBlock)) < r4.received.indexOf(withoutSep(msgStop)),
+    r4.received.join("\n\n").slice(0, 300),
+  );
+  check("[d Anthropic 有 input] 没有 error 事件", errorMessageOf(r4.received) === "", errorMessageOf(r4.received));
+
+  // e. 只有工具调用、没有正文的答复：扣住的帧也要一帧不少地送出去
+  const argsFrame = openaiSseFrame({ tool_calls: [{ index: 0, function: { arguments: '{"path":"a.txt"}' } }] });
+  const finishFrame = openaiSseFrame({}, "tool_calls");
+  const done = "data: [DONE]\n\n";
+  const expectedFrames = [roleOnly, toolOpening(""), argsFrame, finishFrame, done];
+  const r5 = await serve({ source: upstream(expectedFrames), entry: "openai", dialect: "openai" });
+  check("[e 纯工具调用] 帧一帧不少且顺序一致", JSON.stringify(r5.received) === JSON.stringify(expectedFrames.map(withoutSep)), r5.received.join("\n\n").slice(0, 400));
+  check("[e 纯工具调用] 没有重复帧", new Set(r5.received).size === r5.received.length, r5.received.join("\n\n").slice(0, 400));
+  check("[e 纯工具调用] 没有 error 帧", errorMessageOf(r5.received) === "", errorMessageOf(r5.received));
+  check("[e 纯工具调用] 头只写一次并正常收工", r5.flushes === 1 && r5.handlerError === null, `${r5.flushes} 次; ${r5.handlerError ?? ""}`);
+}
 
 closeStore();
 fs.rmSync(tmp, { recursive: true, force: true });

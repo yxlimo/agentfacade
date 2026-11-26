@@ -1154,7 +1154,18 @@ function anthropicPayloadIsContent(json: Json): boolean {
   if (type === "content_block_start") {
     const block = json.content_block;
     if (!block || typeof block !== "object") return false;
-    return block.type === "tool_use" && (Boolean(block.id) || Boolean(block.name));
+    // A tool_use start with an empty input is only the opening frame: the
+    // arguments arrive later and the upstream may stay silent for minutes
+    // after it. Committing here flushes a half-built tool call to the client
+    // that can neither be continued nor taken back
+    const input: unknown = block.input;
+    return (
+      block.type === "tool_use" &&
+      input !== null &&
+      typeof input === "object" &&
+      !Array.isArray(input) &&
+      Object.keys(input).length > 0
+    );
   }
   return false;
 }
@@ -1166,11 +1177,18 @@ function openaiPayloadIsContent(json: Json): boolean {
   if (!Array.isArray(choices) || choices.length === 0) return false;
   const delta = choices[0]?.delta;
   if (!delta || typeof delta !== "object") return false;
-  return (
-    isNonEmptyContent(delta.content) ||
-    isNonEmptyContent(delta.reasoning_content) ||
-    isNonEmptyContent(delta.tool_calls)
-  );
+  if (isNonEmptyContent(delta.content)) return true;
+  if (isNonEmptyContent(delta.reasoning_content)) return true;
+  // A tool_calls frame with empty arguments is only the opening frame (id and
+  // name); the arguments arrive later and the upstream may stay silent for
+  // minutes after it. Committing here flushes a half-built tool call to the
+  // client that can neither be continued nor taken back
+  const calls: Json[] = Array.isArray(delta.tool_calls) ? delta.tool_calls : [];
+  for (const call of calls) {
+    const fn = call?.function;
+    if (typeof fn?.arguments === "string" && fn.arguments.length > 0) return true;
+  }
+  return false;
 }
 
 /** 一帧原始 SSE 文本：事件名与数据 payload。 */
