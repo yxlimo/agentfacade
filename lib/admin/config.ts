@@ -53,9 +53,9 @@ configNumber("USAGE_RETENTION_DAYS", 30);
 configFlag("REQUIRE_API_KEY", false);
 configString("ADMIN_CORS_ORIGINS", "");
 
-// 三个超时旋钮。它们是热的：deliver.ts 与 policy.ts 在每条请求开始时各读一次，
+// 四个超时旋钮。它们是热的：deliver.ts 与 policy.ts 在每条请求开始时各读一次，
 // 所以面板改完不用重启。这里显式问一次，是为了让一个还没发过任何请求的进程
-// （面板、config-cli）也知道这三个设置存在 —— 没问过的设置不在快照里。
+// （面板、config-cli）也知道这四个设置存在 —— 没问过的设置不在快照里。
 //
 // 默认值必须与路由里那份一致：lib/router/stream-limits.ts 的
 // STREAM_FIRST_FRAME_DEFAULT_MS 与 STREAM_IDLE_DEFAULT_MS、lib/router/upstreams/policy.ts 的
@@ -63,11 +63,18 @@ configString("ADMIN_CORS_ORIGINS", "");
 // 一旦飘了，改的是默认值本身；test/admin-config-check.ts 盯着这一致性。
 configNumber("ROUTER_FIRST_FRAME_MS", STREAM_FIRST_FRAME_DEFAULT_MS);
 configNumber("ROUTER_STREAM_IDLE_MS", STREAM_IDLE_DEFAULT_MS);
+// 工具开头到了、参数还没来的那段等待。默认 0：不开这个计时，沿用中途那个窗口
+// （今天的行为）。
+configNumber("ROUTER_TOOL_OPENING_MS", 0);
 configNumber("ROUTER_RETRY_BUDGET_MS", 180_000);
+
+// 这一项的热标记写在这里：读它的那个模块在 lib/router/** 里，不是这份登记处，
+// 而面板不能对一个每条请求读一次的设置说要重启。
+markHotSetting("ROUTER_TOOL_OPENING_MS");
 
 // 流中途静默超时后的自动续写：开关默认关，次数默认 2。deliver.ts 与
 // open-platform.ts 在每条请求开始时读这两个键，所以是热的 —— 标记由读它的
-// 那个模块写，与上面三个超时旋钮同一套做法。
+// 那个模块写。
 configFlag("ROUTER_CONTINUE_ON_IDLE", false);
 configNumber("ROUTER_CONTINUE_MAX", 2);
 
@@ -144,6 +151,7 @@ export interface ConfigItemView {
 const DESCRIPTIONS: Record<string, string> = {
   ROUTER_FIRST_FRAME_MS: `等首字最多多久（秒），上限 ${STREAM_LIMIT_MAX_MS / 1000}`,
   ROUTER_STREAM_IDLE_MS: "连续多久没有新内容就算静默（秒）",
+  ROUTER_TOOL_OPENING_MS: "工具开头到了、参数还没来，最多等多久（秒）；0 表示不计时",
   ROUTER_RETRY_BUDGET_MS: "一次请求的重试总时限（秒）",
   ROUTER_CONTINUE_ON_IDLE: "判定为静默后替客户端把话说完",
   ROUTER_CONTINUE_MAX: "一次答复最多续写几次，0 就不续",
@@ -171,6 +179,7 @@ const DESCRIPTIONS: Record<string, string> = {
 const LABELS: Record<string, string> = {
   ROUTER_FIRST_FRAME_MS: "等首字时限",
   ROUTER_STREAM_IDLE_MS: "多久算静默",
+  ROUTER_TOOL_OPENING_MS: "工具开局最多等多久",
   ROUTER_RETRY_BUDGET_MS: "重试总时限",
   ROUTER_CONTINUE_ON_IDLE: "静默后自动续写",
   ROUTER_CONTINUE_MAX: "最多续写几次",
@@ -193,6 +202,7 @@ const LABELS: Record<string, string> = {
 const UNITS: Record<string, ConfigUnit> = {
   ROUTER_FIRST_FRAME_MS: ConfigUnit.MILLISECONDS,
   ROUTER_STREAM_IDLE_MS: ConfigUnit.MILLISECONDS,
+  ROUTER_TOOL_OPENING_MS: ConfigUnit.MILLISECONDS,
   ROUTER_RETRY_BUDGET_MS: ConfigUnit.MILLISECONDS,
   HEALTH_CACHE_MS: ConfigUnit.MILLISECONDS,
   BENEFITS_INTERVAL_MS: ConfigUnit.MILLISECONDS,
@@ -207,9 +217,9 @@ const KINDS: Record<ConfigType, ConfigKind> = {
   boolean: ConfigKind.BOOLEAN,
 };
 
-/** 这两个键是流的两道闸，它们的取值受同一个上限约束。 */
+/** 这三个键是流的三道闸，它们的取值受同一个上限约束。 */
 function isStreamLimitKey(key: string): boolean {
-  return key === "ROUTER_FIRST_FRAME_MS" || key === "ROUTER_STREAM_IDLE_MS";
+  return key === "ROUTER_FIRST_FRAME_MS" || key === "ROUTER_STREAM_IDLE_MS" || key === "ROUTER_TOOL_OPENING_MS";
 }
 
 
@@ -235,7 +245,7 @@ function isContinueMaxKey(key: string): boolean {
 /**
  * The bounds the panel is told about for a key.
  *
- * The two stream gates have only an upper bound: 0 is a legal value (the gate
+ * The three stream gates have only an upper bound: 0 is a legal value (the gate
  * off), so a lower bound would reject the one number that means "no limit".
  * Both this table and the clamp in router/stream-limits.ts read the same
  * constant, so the panel's max and the value actually in force cannot drift.
@@ -263,7 +273,7 @@ const NOT_SECRET = new Set(["REQUIRE_API_KEY"]);
  * 请求标识。这些改了也没用（env 覆盖了照样按代码走），而且露出来只会让人
  * 改出坏状态 —— 所以不公布。
  *
- * 面板只看到这十三个：网关自己的、用量保留、三个超时旋钮、定时任务与额度快照、
+ * 面板只看到这十八个：网关自己的、用量保留、四个超时旋钮、定时任务与额度快照、
  * 签到、Qoder 的排队重试、上游级熔断的开关。
  *
  * 上游的开关**不在这里**：上游那一页有开关，在这儿再放一份是重复的，而且
@@ -275,9 +285,10 @@ const USER_FACING = new Set([
   "ADMIN_CORS_ORIGINS",
   // 用量记录留多久
   "USAGE_RETENTION_DAYS",
-  // 三个超时旋钮：等首帧、流中途的停顿、重试的总时限
+  // 四个超时旋钮：等首帧、流中途的停顿、工具开局、重试的总时限
   "ROUTER_FIRST_FRAME_MS",
   "ROUTER_STREAM_IDLE_MS",
+  "ROUTER_TOOL_OPENING_MS",
   "ROUTER_RETRY_BUDGET_MS",
   // 流中途静默超时后的自动续写
   "ROUTER_CONTINUE_ON_IDLE",

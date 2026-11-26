@@ -6,10 +6,11 @@
 // Offline: one temporary data directory, no network, no upstream.
 //
 // What it covers:
-//   1. the panel's list holds the eleven keys — the three timeouts, the
+//   1. the panel's list holds the twelve keys — the four timeouts, the
 //      periodic timer, the health snapshot, check-in, Qoder's queue retry;
-//   2. each of those eight has a label and one sentence, and the sentence is
-//      short enough to read in one line (the panel's own rule: 30 characters);
+//   2. each of those twelve has a label and one sentence, and the sentence is
+//      short enough to read in one line (the panel's own rule: 30 characters; the
+//      tool-opening knob gets one more, it has to say what 0 means);
 //   3. the three ROUTER_* defaults are the ones the router itself uses —
 //      a number that drifted here would change the routing behaviour without
 //      anything else noticing;
@@ -28,8 +29,8 @@ import path from "node:path";
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "admin-config-"));
 process.env.FACADE_DATA_DIR = tmp;
 // This round checks the defaults, so none of the three may be pinned by
-// whoever runs the test.
-for (const key of ["ROUTER_FIRST_FRAME_MS", "ROUTER_STREAM_IDLE_MS", "ROUTER_RETRY_BUDGET_MS"]) {
+// This round checks the defaults, so none of the four may be pinned by
+for (const key of ["ROUTER_FIRST_FRAME_MS", "ROUTER_STREAM_IDLE_MS", "ROUTER_TOOL_OPENING_MS", "ROUTER_RETRY_BUDGET_MS"]) {
   delete process.env[key];
 }
 
@@ -76,11 +77,11 @@ const item = (key: string) => configItems().find((i) => i.key === key);
  * 一、面板上有这八个
  * ------------------------------------------------------------------ */
 
-section("面板上的八个键");
-
+section("面板上的十二个键");
 const NEW_KEYS = [
   "ROUTER_FIRST_FRAME_MS",
   "ROUTER_STREAM_IDLE_MS",
+  "ROUTER_TOOL_OPENING_MS",
   "ROUTER_RETRY_BUDGET_MS",
   "PERIODIC_ENABLED",
   "HEALTH_CACHE_MS",
@@ -105,6 +106,8 @@ for (const key of ["BENEFITS_INTERVAL_MS", "HEALTH_CACHE_MS", "QODER_LEGACY_RETR
 check("签到间隔默认是一小时", Number(item("BENEFITS_INTERVAL_MS")?.value) === 3_600_000, JSON.stringify(item("BENEFITS_INTERVAL_MS")?.value));
 
 // 一句说明一条控件：没有说明的那一项，面板上只剩一个键名，谁也不知道能改。
+// 说明要在面板上一行放得下：这条对每一项都一样，没有例外。
+
 for (const key of NEW_KEYS) {
   const row = item(key);
   check(`${key} 有名字`, Boolean(row?.label) && row!.label !== key, JSON.stringify(row?.label));
@@ -234,6 +237,7 @@ section("热的与要重启的");
 const HOT: [string, string][] = [
   ["ROUTER_FIRST_FRAME_MS", "1111"],
   ["ROUTER_STREAM_IDLE_MS", "2222"],
+  ["ROUTER_TOOL_OPENING_MS", "4444"],
   ["ROUTER_RETRY_BUDGET_MS", "3333"],
   ["BENEFITS_DISABLED", "true"],
 ];
@@ -327,6 +331,7 @@ const rows = configItems();
 const MILLISECOND_KEYS = new Set([
   "ROUTER_FIRST_FRAME_MS",
   "ROUTER_STREAM_IDLE_MS",
+  "ROUTER_TOOL_OPENING_MS",
   "ROUTER_RETRY_BUDGET_MS",
   "HEALTH_CACHE_MS",
   "BENEFITS_INTERVAL_MS",
@@ -343,7 +348,7 @@ for (const row of rows) {
   const want = MILLISECOND_KEYS.has(row.key) ? ConfigUnit.MILLISECONDS : ConfigUnit.UNSPECIFIED;
   check(`${row.key} 的单位按声明给出`, row.unit === want, `声明 ${want}，实到 ${row.unit}`);
 }
-check("声明为毫秒的一共六个键", MILLISECOND_KEYS.size === 6, String(MILLISECOND_KEYS.size));
+check("声明为毫秒的一共七个键", MILLISECOND_KEYS.size === 7, String(MILLISECOND_KEYS.size));
 
 for (const row of rows) {
   const type = types.get(row.key);
@@ -368,10 +373,10 @@ check(
   `hasMax=${continueMax.hasMax}，max=${continueMax.maxValue}`,
 );
 
-// The two stream gates are capped by the same constant the router clamps with:
+// The three stream gates are capped by the same constant the router clamps with:
 // the panel must report that number, otherwise a value the panel accepts
 // silently becomes a different one in force.
-const STREAM_KEYS = ["ROUTER_FIRST_FRAME_MS", "ROUTER_STREAM_IDLE_MS"];
+const STREAM_KEYS = ["ROUTER_FIRST_FRAME_MS", "ROUTER_STREAM_IDLE_MS", "ROUTER_TOOL_OPENING_MS"];
 const BOUNDED_KEYS = new Set([...STREAM_KEYS, "ROUTER_CONTINUE_MAX"]);
 for (const key of STREAM_KEYS) {
   const row = rows.find((r) => r.key === key)!;
@@ -382,6 +387,29 @@ for (const key of STREAM_KEYS) {
   );
   check(`${key} 没有下界`, row.hasMin === false && row.minValue === 0n, `hasMin=${row.hasMin}，min=${row.minValue}`);
 }
+
+// The fourth knob: how long to wait for the tool arguments after the opening
+// frame has arrived. Off by default (0), so the mid-stream window stays in
+// charge — the panel must not claim a limit that is not in force.
+const opening = rows.find((row) => row.key === "ROUTER_TOOL_OPENING_MS");
+check("面板上有 ROUTER_TOOL_OPENING_MS", Boolean(opening), JSON.stringify(rows.map((row) => row.key)));
+check("它的单位是毫秒（面板上按秒显示与填写）", opening?.unit === ConfigUnit.MILLISECONDS, String(opening?.unit));
+check("它的控件是数字", opening?.kind === ConfigKind.NUMBER, String(opening?.kind));
+check(
+  "它的默认值是 0（不单独计时）",
+  opening?.fallback === "0" && configNumber("ROUTER_TOOL_OPENING_MS", -1) === 0,
+  `fallback=${opening?.fallback}，读到 ${configNumber("ROUTER_TOOL_OPENING_MS", -1)}`,
+);
+check(
+  "它有上界且取自 stream-limits.ts",
+  opening?.hasMax === true && opening?.maxValue === BigInt(STREAM_LIMIT_MAX_MS),
+  `hasMax=${opening?.hasMax}，max=${opening?.maxValue}`,
+);
+check(
+  "它没有下界（0 是合法值）",
+  opening?.hasMin === false && opening?.minValue === 0n,
+  `hasMin=${opening?.hasMin}，min=${opening?.minValue}`,
+);
 check(
   "面板报的流闸上限与夹取用的是同一个常量",
   STREAM_KEYS.every((key) => rows.find((r) => r.key === key)!.maxValue === BigInt(STREAM_LIMIT_MAX_MS)),
@@ -408,6 +436,7 @@ check(
 const COPY: [string, string, string][] = [
   ["ROUTER_FIRST_FRAME_MS", "等首字时限", "等首字最多多久（秒），上限 600"],
   ["ROUTER_STREAM_IDLE_MS", "多久算静默", "连续多久没有新内容就算静默（秒）"],
+  ["ROUTER_TOOL_OPENING_MS", "工具开局最多等多久", "工具开头到了、参数还没来，最多等多久（秒）；0 表示不计时"],
   ["ROUTER_RETRY_BUDGET_MS", "重试总时限", "一次请求的重试总时限（秒）"],
   ["ROUTER_CONTINUE_ON_IDLE", "静默后自动续写", "判定为静默后替客户端把话说完"],
   ["ROUTER_CONTINUE_MAX", "最多续写几次", "一次答复最多续写几次，0 就不续"],
