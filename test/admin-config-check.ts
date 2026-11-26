@@ -47,6 +47,7 @@ const {
   CONTINUE_MAX_MIN,
 } = await import("../lib/router/deliver.ts");
 const { ATTEMPT_BUDGET_DEFAULT_MS } = await import("../lib/router/upstreams/policy.ts");
+const { STREAM_LIMIT_MAX_MS } = await import("../lib/router/stream-limits.ts");
 
 let pass = 0;
 let fail = 0;
@@ -366,7 +367,27 @@ check(
   continueMax.hasMax === true && continueMax.maxValue === BigInt(CONTINUE_MAX_MAX),
   `hasMax=${continueMax.hasMax}，max=${continueMax.maxValue}`,
 );
-for (const row of rows.filter((row) => row.key !== "ROUTER_CONTINUE_MAX")) {
+
+// The two stream gates are capped by the same constant the router clamps with:
+// the panel must report that number, otherwise a value the panel accepts
+// silently becomes a different one in force.
+const STREAM_KEYS = ["ROUTER_FIRST_FRAME_MS", "ROUTER_STREAM_IDLE_MS"];
+const BOUNDED_KEYS = new Set([...STREAM_KEYS, "ROUTER_CONTINUE_MAX"]);
+for (const key of STREAM_KEYS) {
+  const row = rows.find((r) => r.key === key)!;
+  check(
+    `${key} 有上界且取自 stream-limits.ts`,
+    row.hasMax === true && row.maxValue === BigInt(STREAM_LIMIT_MAX_MS),
+    `hasMax=${row.hasMax}，max=${row.maxValue}`,
+  );
+  check(`${key} 没有下界`, row.hasMin === false && row.minValue === 0n, `hasMin=${row.hasMin}，min=${row.minValue}`);
+}
+check(
+  "面板报的流闸上限与夹取用的是同一个常量",
+  STREAM_KEYS.every((key) => rows.find((r) => r.key === key)!.maxValue === BigInt(STREAM_LIMIT_MAX_MS)),
+  String(STREAM_KEYS.map((key) => rows.find((r) => r.key === key)?.maxValue)),
+);
+for (const row of rows.filter((row) => !BOUNDED_KEYS.has(row.key))) {
   check(
     `${row.key} 没有上下界`,
     row.hasMin === false && row.hasMax === false && row.minValue === 0n && row.maxValue === 0n,

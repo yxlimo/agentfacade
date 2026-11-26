@@ -232,6 +232,24 @@ function isContinueMaxKey(key: string): boolean {
   return key === "ROUTER_CONTINUE_MAX";
 }
 
+/**
+ * The bounds the panel is told about for a key.
+ *
+ * The two stream gates have only an upper bound: 0 is a legal value (the gate
+ * off), so a lower bound would reject the one number that means "no limit".
+ * Both this table and the clamp in router/stream-limits.ts read the same
+ * constant, so the panel's max and the value actually in force cannot drift.
+ */
+function boundsFor(key: string): { hasMin: boolean; minValue: bigint; hasMax: boolean; maxValue: bigint } {
+  if (isContinueMaxKey(key)) {
+    return { hasMin: true, minValue: BigInt(CONTINUE_MAX_MIN), hasMax: true, maxValue: BigInt(CONTINUE_MAX_MAX) };
+  }
+  if (isStreamLimitKey(key)) {
+    return { hasMin: false, minValue: 0n, hasMax: true, maxValue: BigInt(STREAM_LIMIT_MAX_MS) };
+  }
+  return { hasMin: false, minValue: 0n, hasMax: false, maxValue: 0n };
+}
+
 /** 值的结尾像密钥的，就不给人看。 */
 const SECRET_SUFFIXES = ["_KEY", "_PASSWORD", "_SECRET", "_TOKEN"];
 
@@ -314,7 +332,7 @@ export function configItems(): ConfigItemView[] {
     // 生效的值：快照里就是模块读的时候定下的那份。
     const raw = String(setting.value);
     const source = setting.source;
-    const bounded = isContinueMaxKey(setting.key);
+    const bounds = boundsFor(setting.key);
     const secret = isSecret(setting.key);
     // 敏感项只写不读：值不回给面板，掩码长得像值，容易被当成真值存回去。
     // 「有没有值」单独用 hasValue 说。
@@ -351,10 +369,10 @@ export function configItems(): ConfigItemView[] {
       hasValue,
       kind: KINDS[setting.type],
       unit: UNITS[setting.key] ?? ConfigUnit.UNSPECIFIED,
-      hasMin: bounded,
-      minValue: bounded ? BigInt(CONTINUE_MAX_MIN) : 0n,
-      hasMax: bounded,
-      maxValue: bounded ? BigInt(CONTINUE_MAX_MAX) : 0n,
+      hasMin: bounds.hasMin,
+      minValue: bounds.minValue,
+      hasMax: bounds.hasMax,
+      maxValue: bounds.maxValue,
       // 面板写进库的那份。环境变量在用的时候，它在等。
       overrideValue: secret ? "" : (override ?? ""),
     };
