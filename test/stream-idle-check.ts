@@ -1278,6 +1278,124 @@ section("E. 只有心跳一直发：不算内容，仍可换目标");
 }
 
 /* ------------------------------------------------------------------ *
+ * E2. 中途只有心跳：上游一直在发 ping，答复不往前走
+ * ------------------------------------------------------------------ */
+
+// 这条是「44 分钟、0 token」那个现象的最小复现：上游每分钟吐一条 `event: ping`
+// （Anthropic 方言的心跳，不是 SSE 注释行），正文一个字不出。心跳说的是「连接还
+// 在」，不是「答复在往前走」，所以它不许把中途那个窗口往后推。
+section("E2. 中途只有心跳：到窗口就报静默，不许被 ping 续命");
+
+{
+  const enc = new TextEncoder();
+  const content = `data: {"choices":[{"delta":{"content":"ok"}}]}\n\n`;
+  const ping = `event: ping\ndata: {"type":"ping"}\n\n`;
+  let cancelled = false;
+  let sentContent = false;
+  const source = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (!sentContent) {
+        sentContent = true;
+        controller.enqueue(enc.encode(content));
+        return;
+      }
+      // 从那以后只有心跳：每 30ms 一条，永远不停。
+      await new Promise<void>((resolve) => setTimeout(resolve, 30));
+      controller.enqueue(enc.encode(ping));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+
+  const gated = withStreamIdle(source, "model=ping-storm", { firstFrameMs: 5000, idleMs: 150 }, "openai");
+  const started = Date.now();
+  let error: unknown = null;
+  let bytes = 0;
+  const reader = gated.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.length;
+    }
+  } catch (e) {
+    error = e;
+  }
+  const span = Date.now() - started;
+
+  check("没有正常结束（静默到点）", error !== null, "流自己结束了");
+  check(
+    "报的是中途静默",
+    error instanceof StreamIdleError && error.phase === "mid-stream",
+    String((error as Error | null)?.message ?? error),
+  );
+  check("很快就到点（不是被心跳一直续命）", span < 2000, `${span}ms`);
+  check("上游被取消了", cancelled);
+  // 心跳帧不是内容：既然静默被判定为「没在往前走」，那它一次也不该被当成进度。
+  // 具体字节数取决于到点那一刻已经流过几条 ping，所以只钉「没有刷出一大堆」。
+  check("只流过正文和几条心跳就被砍了", bytes > 0 && bytes < 600, `${bytes} 字节`);
+}
+
+{
+  // 对照组：同样慢，但每一块都是真内容（thinking），就不该被砍。
+  const enc = new TextEncoder();
+  const thinking = (text: string): string =>
+    `data: {"choices":[{"delta":{"reasoning_content":"${text}"}}]}\n\n`;
+  let n = 0;
+  const source = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (n >= 6) {
+        controller.close();
+        return;
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 40));
+      controller.enqueue(enc.encode(thinking(`想法${n++}`)));
+    },
+  });
+  const gated = withStreamIdle(source, "model=thinking-drip", { firstFrameMs: 5000, idleMs: 150 }, "openai");
+  let error: unknown = null;
+  let chunks = 0;
+  const reader = gated.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) chunks++;
+    }
+  } catch (e) {
+    error = e;
+  }
+  check("[对照组] 思考一直在滴就不算静默", error === null, String((error as Error | null)?.message ?? ""));
+  check("[对照组] 六块都到了", chunks === 6, `${chunks} 块`);
+}
+
+{
+  // 对照组：role-only 与空 delta 也不算往前走（它们是「我在」，不是内容）。
+  const enc = new TextEncoder();
+  const roleOnly = `data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n`;
+  const emptyDelta = `data: {"choices":[{"delta":{}}]}\n\n`;
+  let n = 0;
+  const source = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 30));
+      controller.enqueue(enc.encode(n++ % 2 === 0 ? roleOnly : emptyDelta));
+    },
+  });
+  const gated = withStreamIdle(source, "model=role-only", { firstFrameMs: 5000, idleMs: 150 }, "openai");
+  let error: unknown = null;
+  const reader = gated.getReader();
+  try {
+    for (;;) {
+      const { done } = await reader.read();
+      if (done) break;
+    }
+  } catch (e) {
+    error = e;
+  }
+  check("role-only 与空 delta 也算静默", error instanceof StreamIdleError && error.phase === "mid-stream", String(error));
+}
+/* ------------------------------------------------------------------ *
  * 4. clientMessageOf 的判别力
  * ------------------------------------------------------------------ */
 

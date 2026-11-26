@@ -678,6 +678,7 @@ async function continueWith(
   reopen: Reopen | undefined,
   error: unknown,
   label: string,
+  dialect: UpstreamDialect,
 ): Promise<ContinueOutcome> {
   const why = continueBlockedReason(state, reopen);
   // `!reopen` 在判据里已经覆盖，这里再写一次是给类型收窄：走到下面调用
@@ -695,7 +696,7 @@ async function continueWith(
   log.warn(`[DELIVER] 流中途静默 ${idleSpan(idleMsOf(error))}，第 ${state.attempts} 次续写（已有 ${state.text.length} 字）`);
   try {
     const following = await reopen({ text: tailText(state.text), reasoning: tailText(state.reasoning) });
-    return { kind: "stream", stream: withStreamIdle(following, label) };
+    return { kind: "stream", stream: withStreamIdle(following, label, {}, dialect) };
   } catch (e) {
     return { kind: "blocked", error: e };
   }
@@ -852,6 +853,38 @@ function isHeartbeatOnly(bytes: Uint8Array): boolean {
 }
 
 /**
+ * 这一块字节里有没有「真的产出」：正文、思考、收全的工具参数。
+ *
+ * 心跳、空 delta、role-only 的块都没有 —— 它们说明连接还在，不说明答复在往前走。
+ * 判据复用提交点那一套（`ToolCallTracker.observe`），所以「什么算内容」只有一份。
+ *
+ * 半帧（一条 SSE 还没拼全、JSON 解析不出来）保守地算有进度：宁可多等一秒，
+ * 也不要因为拆包把一条正常的流砍掉。
+ */
+function chunkIsProgress(bytes: Uint8Array, tracker: ToolCallTracker | null): boolean {
+  if (!tracker) return bytes.length > 0;
+  if (bytes.length === 0) return false;
+  const text = new TextDecoder().decode(bytes);
+  for (const raw of text.split(/\r?\n\r?\n/)) {
+    const data = raw
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5))
+      .join("\n")
+      .trim();
+    if (!data || data === SSE_DONE) continue;
+    let json: Json;
+    try {
+      json = parseLooseJson(data);
+    } catch {
+      return true;
+    }
+    if (tracker.observe(json)) return true;
+  }
+  return false;
+}
+
+/**
 /**
  * Which silence this is: waiting for the first frame, or the stream going quiet
  * mid-answer.
@@ -993,6 +1026,7 @@ export function withStreamIdle(
   body: ReadableStream<Uint8Array>,
   label: string,
   limits: { firstFrameMs?: number; idleMs?: number } = {},
+  dialect?: UpstreamDialect,
 ): ReadableStream<Uint8Array> {
   const { firstFrameMs, idleMs } = idleGates(limits);
   if (!(firstFrameMs > 0) && !(idleMs > 0)) return body;
@@ -1004,11 +1038,25 @@ export function withStreamIdle(
   const firstDeadline = firstFrameMs > 0 ? Date.now() + firstFrameMs : 0;
   // 见到过真正的帧没有：见过之后才换成中途那个滑动的窗口。
   let sawFrame = false;
+  // 中途阶段已经**累计**等了多久的安静（只算真的在等上游的时间，消费方停读不算）。
+  // 心跳、空 delta、role-only 的块都往这里加 —— 它们只证明连接还在，不证明答复在
+  // 往前走。有产出的那块一到就清零。
+  let silentMs = 0;
+  // 只含心跳/空 delta/role-only 的块数：诊断用，日志里记一行，免得下次又只能猜。
+  let quietOnlyChunks = 0;
+  const tracker = dialect ? new ToolCallTracker(dialect) : null;
   let timer: NodeJS.Timeout | null = null;
   const clearTimer = () => {
     if (!timer) return;
     clearTimeout(timer);
     timer = null;
+  };
+  /** 一条流结束时记一行：心跳很多而内容很少，就是「上游在发 ping、人没在答」。 */
+  const logQuietOnly = (): void => {
+    if (quietOnlyChunks === 0) return;
+    log.info(
+      `[DELIVER] ${label}：只有心跳/空帧的块 ${quietOnlyChunks} 个（它们不算上游在往前走）`,
+    );
   };
 
   /** 等下一帧，或者等安静到上限。 */
@@ -1018,7 +1066,9 @@ export function withStreamIdle(
       const phase: StreamPhase = sawFrame ? "mid-stream" : "first-frame";
       // 首帧阶段量的是「从现在到那道死线还剩多久」，中途才是「上一帧之后静了多久」。
       const limit = phase === "first-frame" ? firstFrameMs : idleMs;
-      const waitMs = phase === "first-frame" ? firstDeadline - Date.now() : idleMs;
+      // 中途阶段只扣「已经等掉的安静」：消费方停读的时间不算，心跳也不清零。
+      const waitMs = phase === "first-frame" ? firstDeadline - Date.now() : idleMs - silentMs;
+      const startedAt = Date.now();
       const quiet = (): void => {
         // 上游那一侧停手：安静到这个地步，挂着只是白占连接与账号。
         void reader.cancel("the upstream went quiet").catch(() => {
@@ -1050,7 +1100,23 @@ export function withStreamIdle(
           clearTimer();
           // 心跳与零长度的块不算「见到了第一帧」：它们说的是「还活着」，不是
           // 「开始说话了」。
-          if (!result.done && !isHeartbeatOnly(result.value)) sawFrame = true;
+          if (!result.done) {
+            const waited = Date.now() - startedAt;
+            if (isHeartbeatOnly(result.value)) {
+              // 心跳只证明连接还在：它能把阶段切成中途，但不让安静清零。
+              quietOnlyChunks++;
+              silentMs += waited;
+            } else if (!sawFrame) {
+              sawFrame = true;
+              // 阶段刚换过来：中途那个窗口从这一刻起算，之前等的不算。
+              silentMs = 0;
+            } else if (chunkIsProgress(result.value, tracker)) {
+              silentMs = 0;
+            } else {
+              // role-only、空 delta：上游说了句「我在」，同样不是往前走。
+              silentMs += waited;
+            }
+          }
           resolve(result);
         },
         (error) => {
@@ -1074,6 +1140,7 @@ export function withStreamIdle(
           return;
         }
         if (result.done) {
+          logQuietOnly();
           controller.close();
           return;
         }
@@ -2093,7 +2160,7 @@ export async function deliverOpenAIStream(
   try {
     // 等上游的**第一帧**也要算进「安静」，而且量的是**首帧那个上限**（比中途
     // 那个长：推理模型的第一个 token 常常要两分多钟）。
-    upstream = await peekStream(withStreamIdle(body, `model=${model}`), abort.signal);
+    upstream = await peekStream(withStreamIdle(body, `model=${model}`, {}, "openai"), abort.signal);
     // 第一帧读到不等于答复开始：信封扣住，等第一块对用户可见的内容。内容之前
     // 上游失败或静默，头还没发，原样抛出换目标。
     upstream = await gateUntilContent(upstream, "openai", `model=${model}`, abort.signal);
@@ -2137,7 +2204,7 @@ export async function deliverOpenAIStream(
   };
   let current = upstream;
   const nextStream = async (e: unknown): Promise<ContinueOutcome> => {
-    const outcome = await continueWith(continueState, reopen, e, `model=${model}`);
+    const outcome = await continueWith(continueState, reopen, e, `model=${model}`, "openai");
     if (outcome.kind === "stream") {
       current = outcome.stream;
       // 新一段也要挂上「客户端走了就停」：看门狗认的是当前这一段。
@@ -2215,7 +2282,7 @@ export async function deliverAnthropicStream(
     // 客户端拿到的是 200 里藏一句 error；而这里抛出去，它还能换下一个账号或
     // 目标。peek 出来的流把第一块字节原样交回给下面（不丢、不重排），内容闸
     // 再把信封扣住，等第一块对用户可见的内容。
-    upstream = await peekStream(withStreamIdle(body, `model=${model}`), abort.signal);
+    upstream = await peekStream(withStreamIdle(body, `model=${model}`, {}, "anthropic"), abort.signal);
     // 信封扣住，等第一块对用户可见的内容：内容之前上游失败或静默，头还没发，
     // 原样抛出换目标。
     upstream = await gateUntilContent(upstream, "anthropic", `model=${model}`, abort.signal);
@@ -2620,7 +2687,7 @@ async function pipeOpenAIChunks(
         await writeFrame(ctx, SSE_DONE);
         return;
       } catch (e) {
-        const outcome = await continueWith(continueState, reopen, e, `model=${model ?? ""}`);
+        const outcome = await continueWith(continueState, reopen, e, `model=${model ?? ""}`, "anthropic");
         if (outcome.kind === "blocked") {
           log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(outcome.error)}`);
           await writeFrame(ctx, openAIErrorFrame(outcome.error) ?? sseData({ error: { type: "api_error", message: clientMessageOf(outcome.error) } }));
