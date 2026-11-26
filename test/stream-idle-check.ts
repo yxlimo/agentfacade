@@ -75,7 +75,8 @@ const {
   STREAM_FIRST_FRAME_DEFAULT_MS,
 } = await import("../lib/router/deliver.ts");
 const { AuthError } = await import("../lib/credential.ts");
-
+// 面板那条路：写进库 + 重新读一遍。工具开局那个上限是热设置，靠它改。
+const { configOverride, reloadConfig } = await import("../lib/config.ts");
 /** 上游没把话说完就断了：客户端看到的那一句。 */
 const CLOSED_EARLY = "upstream closed the connection before the answer finished";
 
@@ -1700,6 +1701,141 @@ const toolOpening = (args: string) =>
   check("[e 纯工具调用] 头只写一次并正常收工", r5.flushes === 1 && r5.handlerError === null, `${r5.flushes} 次; ${r5.handlerError ?? ""}`);
 }
 
+
+/* ------------------------------------------------------------------ *
+ * G. 工具开局之后等参数的那个上限（ROUTER_TOOL_OPENING_MS）
+ * ------------------------------------------------------------------ */
+
+// 工具开了个头、参数还没来的时候，上游可能一声不吭几百秒。中途那个窗口是给
+// 「正文说到一半停住」的，对这种情况太宽容。工具开局帧按判据**不算内容**，所以
+// 它一定被扣在内容闸里 —— 那里才是计时的地方：到点时提交点还没到，路由层还能换
+// 目标，客户端一个字节都没拿到。
+//
+// 键默认 0 = 关着，也就是今天的行为（沿用中途那个窗口）。开着的时候，工具开局帧
+// 之后最多再等这么久。
+
+/** 面板那条路：写进库 + 重新读一遍（热设置，下一条请求就是新的值）。 */
+function setToolOpeningMs(value: number): void {
+  configOverride("ROUTER_TOOL_OPENING_MS", String(value));
+  reloadConfig();
+}
+
+section("G. 工具开局之后等参数的上限");
+
+// a. 键开着：开局帧之后静默 → 提交点之前失败，说得出是「工具开局」
+{
+  setToolOpeningMs(60);
+  const r = await serveAsRouter([
+    { first: "raw-frames-stall", frames: [roleOnly + toolOpening("")] },
+    { first: "answer", text: "第二个目标的答复" },
+  ]);
+  const text = r.received.join("\n\n");
+  const first = r.errors[0];
+  check("[a 工具开局超时] 换目标了", r.attempts === 2, `${r.attempts} 次`);
+  check("[a 工具开局超时] 客户端没拿到半个工具调用", !text.includes("call_1") && !text.includes("tool_calls"), text.slice(0, 200));
+  check("[a 工具开局超时] 拿到第二个目标的答复", text.includes("第二个目标的答复"), text.slice(0, 200));
+  check("[a 工具开局超时] 没有 error 帧", errorMessageOf(r.received) === "", errorMessageOf(r.received));
+  check("[a 工具开局超时] 报的是超时", first?.name === "TimeoutError", String(first?.name));
+  check("[a 工具开局超时] phase 是 tool-opening", first?.phase === "tool-opening", String(first?.phase));
+  check("[a 工具开局超时] 那句话说得清是工具开局", /after the tool opening frame/.test(String(first?.message)), String(first?.message));
+  check("[a 工具开局超时] 用的是这个键的毫秒数", first?.idleMs === 60, String(first?.idleMs));
+  check("[a 工具开局超时] 头只写了一次（第二个目标的）", r.flushes === 1, `${r.flushes} 次`);
+  // 上游那一侧要收掉：它还挂着就是在计费。
+  let cancelled = false;
+  const r1 = await serve({
+    source: upstream([roleOnly + toolOpening("")], { after: "stall", onCancel: () => (cancelled = true) }),
+    entry: "openai",
+    dialect: "openai",
+  });
+  check("[a 工具开局超时] 上游那一侧被取消了", cancelled, "上游还挂着");
+  check("[a 工具开局超时] 客户端一个字节都没拿到", r1.received.length === 0 && r1.flushes === 0, `${r1.received.length} 帧 / ${r1.flushes} 次 flush`);
+}
+
+// b. 键 = 0：沿用今天的行为（还是中途那个窗口、那句错）
+{
+  setToolOpeningMs(0);
+  const r = await serveAsRouter([
+    { first: "raw-frames-stall", frames: [roleOnly + toolOpening("")] },
+    { first: "answer", text: "第二个目标的答复" },
+  ]);
+  const first = r.errors[0];
+  check("[b 键关着] 换目标了", r.attempts === 2, `${r.attempts} 次`);
+  check("[b 键关着] 报的是中途静默", first?.phase === "mid-stream", String(first?.phase));
+  check("[b 键关着] 用的是中途那个上限", first?.idleMs === IDLE_MS, String(first?.idleMs));
+  check("[b 键关着] 那句话里没有工具开局", !/tool opening/.test(String(first?.message)), String(first?.message));
+}
+
+// c. 参数及时到达：不误杀，帧照常流到客户端
+{
+  setToolOpeningMs(60);
+  const withArgs = toolOpening('{"path":"a.txt"}');
+  const r = await serve({
+    source: upstream([roleOnly + toolOpening(""), withArgs + "data: [DONE]\n\n"]),
+    entry: "openai",
+    dialect: "openai",
+  });
+  const text = r.received.join("\n\n");
+  check("[c 参数及时到] 网关没有抛错", r.handlerError === null, r.handlerError ?? "");
+  check("[c 参数及时到] 头只写了一次", r.flushes === 1, `${r.flushes} 次`);
+  check("[c 参数及时到] 开局帧与参数帧都到了客户端", text.includes("call_1") && text.includes("path"), text.slice(0, 300));
+  check("[c 参数及时到] 没有 error 帧", errorMessageOf(r.received) === "", errorMessageOf(r.received));
+}
+
+// d. 正文先到（已提交），之后再来工具开局帧 + 静默：这个旋钮不管它
+{
+  setToolOpeningMs(60);
+  const r = await serve({
+    source: upstream([roleOnly + openaiFrame("hi"), toolOpening("")], { after: "stall" }),
+    entry: "openai",
+    dialect: "openai",
+  });
+  const text = r.received.join("\n\n");
+  check("[d 提交点之后] 客户端拿到了正文", text.includes("hi"), text.slice(0, 200));
+  check("[d 提交点之后] 开局帧也到了客户端（提交点已经过去）", text.includes("call_1"), text.slice(0, 300));
+  check("[d 提交点之后] 报的是中途静默，不是工具开局", r.failure?.phase === "mid-stream", String(r.failure?.phase));
+  check("[d 提交点之后] 用的是中途那个上限", r.failure?.idleMs === IDLE_MS, String(r.failure?.idleMs));
+  check("[d 提交点之后] 客户端收到的是中途那句", /mid-stream/.test(errorMessageOf(r.received)), errorMessageOf(r.received));
+}
+
+// e. 毫秒数取得对：闸真的按配置等，不是写死
+{
+  setToolOpeningMs(40);
+  const quick = await serveAsRouter([
+    { first: "raw-frames-stall", frames: [roleOnly + toolOpening("")] },
+    { first: "answer", text: "第二个目标的答复" },
+  ]);
+  setToolOpeningMs(90);
+  const slow = await serveAsRouter([
+    { first: "raw-frames-stall", frames: [roleOnly + toolOpening("")] },
+    { first: "answer", text: "第二个目标的答复" },
+  ]);
+  check("[e 毫秒数] 短的那个按 40ms 报", quick.errors[0]?.idleMs === 40, String(quick.errors[0]?.idleMs));
+  check("[e 毫秒数] 长的那个按 90ms 报", slow.errors[0]?.idleMs === 90, String(slow.errors[0]?.idleMs));
+  check(
+    "[e 毫秒数] 两个都是工具开局那一次",
+    quick.errors[0]?.phase === "tool-opening" && slow.errors[0]?.phase === "tool-opening",
+    `${quick.errors[0]?.phase} / ${slow.errors[0]?.phase}`,
+  );
+  check("[e 毫秒数] 真的等了（短的至少 40ms）", quick.handlerMs >= 40, `${quick.handlerMs}ms`);
+  check("[e 毫秒数] 长的等得更久（至少多 30ms）", slow.handlerMs - quick.handlerMs >= 30, `${quick.handlerMs}ms → ${slow.handlerMs}ms`);
+  setToolOpeningMs(0);
+}
+
+// f. 「可重试的静默超时」那个开关开着时，工具开局超时也不改写成中途静默那句：
+// 改写只给中途静默用（那时头已经发出去了，客户端只能拿到一条 error 帧）。工具
+// 开局超时发生在提交点之前，客户端拿到的是真实状态与那句话本身。
+{
+  setToolOpeningMs(60);
+  configOverride("ROUTER_IDLE_ERROR_RETRYABLE", "true");
+  reloadConfig();
+  const r = await serveAsRouter([{ first: "raw-frames-stall", frames: [roleOnly + toolOpening("")] }]);
+  const body = r.received.join("\n\n") || r.text;
+  check("[f 可重试开关] 客户端拿到的是那句工具开局", /after the tool opening frame/.test(body), body.slice(0, 300));
+  check("[f 可重试开关] 没有被改写成中途静默那句", !/upstream timed out after/.test(body), body.slice(0, 300));
+  configOverride("ROUTER_IDLE_ERROR_RETRYABLE", "false");
+  reloadConfig();
+  setToolOpeningMs(0);
+}
 closeStore();
 fs.rmSync(tmp, { recursive: true, force: true });
 

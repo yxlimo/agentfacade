@@ -508,6 +508,9 @@ markHotSetting("ROUTER_STREAM_IDLE_MS");
 markHotSetting("ROUTER_IDLE_ERROR_RETRYABLE");
 markHotSetting("ROUTER_CONTINUE_ON_IDLE");
 markHotSetting("ROUTER_CONTINUE_MAX");
+// 工具开局那个上限也是热的：它在内容闸里每条请求读一次，面板改完下一条请求
+// 就是新的值（与 ROUTER_CONTINUE_MAX 同一套读法）。
+markHotSetting("ROUTER_TOOL_OPENING_MS");
 
 /** 续写上下文里已产出的文本最多带多少（字节）。超了取尾部：尾部才是断点。 */
 const CONTINUE_TEXT_MAX = 32 * 1024;
@@ -543,6 +546,13 @@ function idleErrorRetryableEnabled(): boolean {
 /**
  * Only mid-stream silence is rewritten: a first-frame timeout happens before
  * headers are out, so the caller can still switch targets instead
+ *
+ * The tool-opening timeout is in the same boat as the first-frame one: it fires
+ * inside the content gate, before the commit point, so it is thrown out and the
+ * routing layer switches targets — it never becomes an error frame. Rewriting it
+ * as a retryable mid-stream timeout would be wrong twice over: the client never
+ * sees that frame (nothing was sent yet), and the sentence would claim a
+ * mid-stream silence that did not happen.
  */
 function retryableIdleMessage(e: unknown): string | null {
   if (!(e instanceof StreamIdleError) || e.phase !== "mid-stream") return null;
@@ -766,8 +776,31 @@ function isHeartbeatOnly(bytes: Uint8Array): boolean {
   });
 }
 
-/** 这次安静是等第一帧，还是流中途。两个上限不同，句子也要说清是哪一种。 */
-export type StreamPhase = "first-frame" | "mid-stream";
+/**
+ * 这次安静是等第一帧、流中途，还是工具开局之后没等到参数。
+ *
+ * 三种该做的事不一样，句子也得说清是哪一种：首帧超时与工具开局超时都发生在提交
+ * 点之前（头还没发，路由层还能换目标），中途超时发生在头已发出去之后（只能给
+ * 客户端写一条 error 帧）。
+ */
+export type StreamPhase = "first-frame" | "mid-stream" | "tool-opening";
+
+/**
+ * 这一次的安静该怎么说：三种超时三句话。
+ *
+ * 分开写是因为这三件事该做的事不一样：等第一帧等不到、工具开了头等不到参数，都是
+ * 提交点之前的失败（路由层还能换目标）；流中途停住是头已发出去之后的失败（只能给
+ * 客户端写一条 error 帧）。日志与客户端文案都要能分辨是哪一种。
+ */
+function idleSentence(idleMs: number, label: string, phase: StreamPhase): string {
+  if (phase === "first-frame") {
+    return `upstream sent nothing for ${idleSpan(idleMs)} waiting for the first frame (${label})`;
+  }
+  if (phase === "tool-opening") {
+    return `upstream sent nothing for ${idleSpan(idleMs)} after the tool opening frame (${label})`;
+  }
+  return `upstream sent nothing for ${idleSpan(idleMs)} mid-stream (${label})`;
+}
 
 /**
  * 上游不说话了。
@@ -776,7 +809,8 @@ export type StreamPhase = "first-frame" | "mid-stream";
  * timeout 而不是 unknown，策略也照「上游太慢」处理（换一个账号也许答得出来）。
  *
  * `message` 是人话：它是客户端唯一能看到的那一句，所以要说清是等第一帧等到
- * 了上限，还是流开到一半停住了 —— 那两件事该做的事不一样。
+ * 了上限，还是流开到一半停住了，还是工具开了个头就没了参数 —— 那三件事该做
+ * 的事不一样。
  */
 export class StreamIdleError extends Error {
   readonly idleMs: number;
@@ -784,11 +818,7 @@ export class StreamIdleError extends Error {
   readonly phase: StreamPhase;
 
   constructor(idleMs: number, label: string, phase: StreamPhase) {
-    super(
-      phase === "first-frame"
-        ? `upstream sent nothing for ${idleSpan(idleMs)} waiting for the first frame (${label})`
-        : `upstream sent nothing for ${idleSpan(idleMs)} mid-stream (${label})`,
-    );
+    super(idleSentence(idleMs, label, phase));
     this.name = "TimeoutError";
     this.idleMs = idleMs;
     this.label = label;
@@ -1191,6 +1221,100 @@ function openaiPayloadIsContent(json: Json): boolean {
   return false;
 }
 
+/**
+ * 一帧是不是「工具调用的开局帧」：工具的名字来了，参数还没来。
+ *
+ * 判据与「这块内容算不算数」是同一套反过来：OpenAI 那边是 tool_calls 里某条 call
+ * 的 function.arguments 为空；Anthropic 那边是 content_block_start 的 tool_use 且
+ * input 是空对象。两边都说明上游已经把工具调用开了个头 —— 而上游可以在这个开局
+ * 帧之后一声不吭几百秒。
+ */
+function isToolOpeningFrame(json: Json, dialect: UpstreamDialect): boolean {
+  if (dialect === "anthropic") return isAnthropicToolOpening(json);
+  return isOpenAIToolOpening(json);
+}
+
+/** Anthropic 的 tool_use 开局块：input 是空对象（或者压根没有 input）。 */
+function isAnthropicToolOpening(json: Json): boolean {
+  if (!json || typeof json !== "object" || Array.isArray(json)) return false;
+  if (json.type !== "content_block_start") return false;
+  const block = json.content_block;
+  if (!block || typeof block !== "object" || Array.isArray(block)) return false;
+  if (block.type !== "tool_use") return false;
+  const input: unknown = block.input;
+  // 空对象（或者没有 input）是开局帧：参数还在后面。带键的 input 是内容。
+  if (input === null || input === undefined) return true;
+  if (typeof input !== "object" || Array.isArray(input)) return false;
+  return Object.keys(input).length === 0;
+}
+
+/** OpenAI 的 tool_calls 开局帧：某条 call 的 function.arguments 是空的。 */
+function isOpenAIToolOpening(json: Json): boolean {
+  if (!json || typeof json !== "object" || Array.isArray(json)) return false;
+  const choices = json.choices;
+  if (!Array.isArray(choices) || choices.length === 0) return false;
+  const delta = choices[0]?.delta;
+  if (!delta || typeof delta !== "object") return false;
+  const calls: Json[] = Array.isArray(delta.tool_calls) ? delta.tool_calls : [];
+  if (calls.length === 0) return false;
+  // 参数到了就不是开局帧了：那帧算内容（见 openaiPayloadIsContent）。
+  for (const call of calls) {
+    const args = call?.function?.arguments;
+    if (typeof args === "string" && args.length > 0) return false;
+  }
+  return true;
+}
+
+/**
+ * 工具开局之后最多再等多久（毫秒）。
+ *
+ * 0 = 关着：沿用中途那个窗口，也就是今天的行为。读一次是一条请求的量 —— 热设置，
+ * 面板改完下一条请求就用新的值（与 ROUTER_CONTINUE_MAX 同一套读法）。
+ */
+function toolOpeningMs(): number {
+  const raw = configNumber("ROUTER_TOOL_OPENING_MS", 0);
+  const ms = clampStreamLimit(raw);
+  if (streamLimitWasCapped(raw)) {
+    log.warn(`[DELIVER] 工具开局上限 ${raw} 超过上限，已按 ${ms} 生效`);
+  }
+  return ms > 0 ? ms : 0;
+}
+
+/**
+ * 工具开局之后那道闸：几时开始计时、还剩多久、到点了是什么错。
+ *
+ * 只有内容闸用得上：工具开局帧按判据**不算内容**，所以它一定被扣在闸里 —— 从它
+ * 到达那一刻起，上游可能一声不吭。这道闸量的就是「开局之后等参数等了多久」。
+ */
+interface ToolOpeningGate {
+  /** 这个上限（毫秒）。0 = 关着：沿用中途那个窗口，也就是今天的行为。 */
+  ms: number;
+  /** 没在计时的时候是 null；计时之后是「还剩几毫秒」（负数表示已经到点）。 */
+  remainingMs(): number | null;
+  /** 看一帧：它是不是工具开局帧？是的话从这一刻起开始计时。 */
+  observe(json: Json): void;
+  /** 到点了：这个错（与「上游安静」同一类，但说得清是哪一种）。 */
+  timeoutError(): StreamIdleError;
+}
+
+function toolOpeningGate(dialect: UpstreamDialect, label: string): ToolOpeningGate {
+  const ms = toolOpeningMs();
+  let deadline: number | null = null;
+  return {
+    ms,
+    remainingMs: () => (deadline === null ? null : deadline - Date.now()),
+    observe(json) {
+      // 关着的时候什么也不看：今天的行为一个字都不改。
+      if (!(ms > 0)) return;
+      // 只认第一帧：后来的开局帧不许把死线往后推，否则一串开局帧能把超时一直拖下去。
+      if (deadline !== null) return;
+      if (!isToolOpeningFrame(json, dialect)) return;
+      deadline = Date.now() + ms;
+    },
+    timeoutError: () => new StreamIdleError(ms, label, "tool-opening"),
+  };
+}
+
 /** 一帧原始 SSE 文本：事件名与数据 payload。 */
 interface RawSseFrame {
   event?: string;
@@ -1248,10 +1372,16 @@ function replayHeld(held: Uint8Array[], reader: ReadableStreamDefaultReader<Uint
  *
  * 缓冲有上限：字节数或帧数超了就无条件提交，按今天的自由流继续 —— 慢流不该被
  * 整条扣住。
+ *
+ * 工具开局帧（工具的名字来了、参数还没来）按判据不算内容，所以它一定被扣在这里 ——
+ * 从它到达那一刻起，上游可能一声不吭。ROUTER_TOOL_OPENING_MS 量的是「开局之后等
+ * 参数等了多久」：键开着且大于 0 时，到点就在这里失败（提交点之前，路由层还能换
+ * 目标）；键是 0 时沿用中途那个窗口，也就是今天的行为。
  */
 async function gateUntilContent(
   body: ReadableStream<Uint8Array>,
   dialect: UpstreamDialect,
+  label: string,
   signal?: AbortSignal,
 ): Promise<ReadableStream<Uint8Array>> {
   const reader = body.getReader();
@@ -1260,10 +1390,20 @@ async function gateUntilContent(
   let heldBytes = 0;
   let frameCount = 0;
   let buffer = "";
+  // 工具开局之后那道闸（键关着的时候它什么也不做）。
+  const opening = toolOpeningGate(dialect, label);
 
   try {
     for (;;) {
-      const { done, value } = await readOrAbort(reader, signal);
+      // 工具开局之后的上限：这一读最多等那么久。没在计时的时候就是一直等。
+      const waitMs = opening.remainingMs();
+      if (waitMs !== null && waitMs <= 0) {
+        // 死线已经过去了：不等下一帧，直接算超时（上游那一侧在 catch 里收掉）。
+        await cancelReader(reader);
+        throw opening.timeoutError();
+      }
+      const read = readOrAbort(reader, signal);
+      const { done, value } = waitMs === null ? await read : await within(read, waitMs, () => opening.timeoutError());
       if (signal?.aborted) {
         await cancelReader(reader);
         throw new ClientGoneError();
@@ -1291,6 +1431,8 @@ async function gateUntilContent(
         } catch {
           continue;
         }
+        // 工具开局帧：从这一刻起开始计时（上限关着的时候什么也不发生）。
+        opening.observe(json);
         const isContent = dialect === "anthropic" ? anthropicPayloadIsContent(json) : openaiPayloadIsContent(json);
         if (isContent) {
           return replayHeld(held, reader);
@@ -1312,20 +1454,39 @@ async function gateUntilContent(
  * 把已经解析好的帧扣在手里，直到出现第一块对用户可见的内容。
  *
  * 与 gateUntilContent 同语义：内容一到就提交，之前上游失败或静默就原样抛出。
+ * 工具开局之后的上限也在这里（见 gateUntilContent 那段注释）：键开着且大于 0
+ * 时，开局帧之后等不到参数就在这里失败 —— 提交点之前，路由层还能换目标。
  */
-async function gateChunksUntilContent(iterator: AsyncIterator<Json>): Promise<Json[]> {
+async function gateChunksUntilContent(iterator: AsyncIterator<Json>, label: string): Promise<Json[]> {
   const held: Json[] = [];
   let heldBytes = 0;
   let frameCount = 0;
-
-  for (;;) {
-    const next: IteratorResult<Json> = await iterator.next();
-    if (next.done) break;
-    held.push(next.value);
-    frameCount++;
-    heldBytes += JSON.stringify(next.value ?? null).length;
-    if (openaiPayloadIsContent(next.value)) return held;
-    if (heldBytes > CONTENT_GATE_MAX_BYTES || frameCount > CONTENT_GATE_MAX_FRAMES) return held;
+  // 工具开局之后那道闸（键关着的时候它什么也不做）。
+  const opening = toolOpeningGate("openai", label);
+  try {
+    for (;;) {
+      // 工具开局之后的上限：这一读最多等那么久。没在计时的时候就是一直等。
+      const waitMs = opening.remainingMs();
+      if (waitMs !== null && waitMs <= 0) throw opening.timeoutError();
+      const next: IteratorResult<Json> =
+        waitMs === null
+          ? await iterator.next()
+          : await within(Promise.resolve(iterator.next()), waitMs, () => opening.timeoutError());
+      if (next.done) break;
+      held.push(next.value);
+      frameCount++;
+      heldBytes += JSON.stringify(next.value ?? null).length;
+      // 工具开局帧：从这一刻起开始计时（上限关着的时候什么也不发生）。
+      opening.observe(next.value);
+      if (openaiPayloadIsContent(next.value)) return held;
+      if (heldBytes > CONTENT_GATE_MAX_BYTES || frameCount > CONTENT_GATE_MAX_FRAMES) return held;
+    }
+  } catch (e) {
+    // 出错（含工具开局超时）：上游那一侧的迭代器收掉，别把它挂在那儿。
+    void Promise.resolve(iterator.return?.(undefined)).catch(() => {
+      /* 已经结束了 */
+    });
+    throw e;
   }
 
   return held;
@@ -1485,7 +1646,7 @@ export async function deliverOpenAIStream(
     upstream = await peekStream(withStreamIdle(body, `model=${model}`), abort.signal);
     // 第一帧读到不等于答复开始：信封扣住，等第一块对用户可见的内容。内容之前
     // 上游失败或静默，头还没发，原样抛出换目标。
-    upstream = await gateUntilContent(upstream, "openai", abort.signal);
+    upstream = await gateUntilContent(upstream, "openai", `model=${model}`, abort.signal);
   } catch (e) {
     if (e instanceof ClientGoneError) {
       reportClientGone(ctx, onFailure);
@@ -1595,7 +1756,7 @@ export async function deliverAnthropicStream(
     upstream = await peekStream(withStreamIdle(body, `model=${model}`), abort.signal);
     // 信封扣住，等第一块对用户可见的内容：内容之前上游失败或静默，头还没发，
     // 原样抛出换目标。
-    upstream = await gateUntilContent(upstream, "anthropic", abort.signal);
+    upstream = await gateUntilContent(upstream, "anthropic", `model=${model}`, abort.signal);
   } catch (e) {
     if (e instanceof ClientGoneError) {
       reportClientGone(ctx, onFailure);
@@ -1737,7 +1898,7 @@ export async function deliverOpenAIChunks(
   const iterator = withIteratorIdle(chunks, `model=${model}`)[Symbol.asyncIterator]();
   let held: Json[];
   try {
-    held = await gateChunksUntilContent(iterator);
+    held = await gateChunksUntilContent(iterator, `model=${model}`);
   } catch (e) {
     log.warn(`[DELIVER] 上游在内容出现之前就失败了：${failureLine(e)}`);
     reportFailure(onFailure, e);
