@@ -149,7 +149,7 @@ export interface ConfigItemView {
  * 窗口、模拟客户端用的请求标识）改了也没有人读，露出来只会让人改出坏状态。
  */
 const DESCRIPTIONS: Record<string, string> = {
-  ROUTER_FIRST_FRAME_MS: "等不到第一个字就换一个上游重试（秒）；这是等首字的上限",
+  ROUTER_FIRST_FRAME_MS: "等不到第一个字就把同一请求重发给同一个上游（秒）；这是等首字的上限",
   ROUTER_STREAM_IDLE_MS: "正文或 thinking 停这么久就算静默（秒）；之后见下面三项",
   ROUTER_TOOL_OPENING_MS: "tool_call 发一半停这么久就算静默（秒）；0 = 跟「多久算静默」一致。静默后把同一请求重发给同一上游，不换上游",
   ROUTER_RETRY_BUDGET_MS: "一次请求的重试总时限（秒）",

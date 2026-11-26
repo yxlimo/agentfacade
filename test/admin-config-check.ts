@@ -109,6 +109,8 @@ check("签到间隔默认是一小时", Number(item("BENEFITS_INTERVAL_MS")?.val
 // 说明要在面板上一行放得下：默认 30 字。只有下面这张表里的键另给额度，并且每条都要
 // 写明为什么 30 字不够 —— 表是「例外名单」，不是「统一放宽」。
 const DESCRIPTION_LIMIT: Record<string, number> = {
+  // 要说清是重发同一个上游、不是换人，30 字装不下
+  ROUTER_FIRST_FRAME_MS: 60,
   // 要点到正文、thinking、tool_call 三件事，还要留出「之后见下面三项」的指引
   ROUTER_STREAM_IDLE_MS: 60,
   // 除了「多久算静默」，还得说清 0 是什么含义、超时之后是重发给同一个上游
@@ -448,7 +450,7 @@ check(
 );
 
 const COPY: [string, string, string][] = [
-  ["ROUTER_FIRST_FRAME_MS", "等首字时限", "等不到第一个字就换一个上游重试（秒）；这是等首字的上限"],
+  ["ROUTER_FIRST_FRAME_MS", "等首字时限", "等不到第一个字就把同一请求重发给同一个上游（秒）；这是等首字的上限"],
   ["ROUTER_STREAM_IDLE_MS", "多久算静默", "正文或 thinking 停这么久就算静默（秒）；之后见下面三项"],
   ["ROUTER_TOOL_OPENING_MS", "tool_call 静默多久", "tool_call 发一半停这么久就算静默（秒）；0 = 跟「多久算静默」一致。静默后把同一请求重发给同一上游，不换上游"],
   ["ROUTER_RETRY_BUDGET_MS", "重试总时限", "一次请求的重试总时限（秒）"],
