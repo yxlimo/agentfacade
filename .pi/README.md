@@ -72,7 +72,7 @@ skillPath: ../../.agents/skills
 权限写在 `.pi/agents/<role>.md` 的 `extend:` 块里，扩展是 `pi-subagents-extend`（`npm:pi-subagents-extend`，在 `~/.pi/agent/settings.json` 的 `packages` 里，后台子代理按环境自动加载）。派单只写 `agent` + `model` + `task`：
 
 ```text
-subagent(agent: "fe", model: "agentfacade/coder-d", task: "……")
+subagent(agent: "fe", model: "agentfacade/coder-subagent", task: "……")
 ```
 
 `extend` 块里四个字段决定这孩子能干什么：

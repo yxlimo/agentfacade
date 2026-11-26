@@ -7,7 +7,7 @@
 子代理能读什么、能写什么、能跑什么，写在各角色自己的 `.pi/agents/<role>.md` 的 `extend:` 块里。派单只给三样：
 
 ```text
-subagent(agent: "be-core-routing", model: "agentfacade/coder-d", task: "……")
+subagent(agent: "be-core-routing", model: "agentfacade/coder-subagent", task: "……")
 ```
 
 ```text
@@ -15,6 +15,10 @@ agent   角色名，与 .pi/agents/<role>.md 的 name 一致
 model   agentfacade/<模型>，模型名不带前缀猜；写错会在起跑前报「Unknown model」
 task    目标 + 硬约束 + 验收命令；不要逐条列文件行号，范围已经在 md 里
 ```
+
+**派单一律用 `agentfacade/coder-subagent`。** 它发布在 5 个账号上（权重 5/4/3/2/1），策略是 `balance`：按会话键做加权一致性哈希，同一个会话固定落在同一个上游（保住上游缓存），不同会话按权重分摊。派单是它唯一的日常用法 —— 单子越多，分摊越接近权重；一个会话一个上游，不会中途换人。
+
+不要把模型写回某个具体账号（`coder-d` 之类）：那是单账号的模型，分摊就没了。审核岗也一样，它们的区别在角色授权，不在模型。
 
 `worktree` 默认由 md 给（实现岗 `true`、审核岗 `false`）；显式写会覆盖 md，所以只有确实要在主检出里跑时才写 `worktree: false`。其它 options 只在任务真的有特殊需要时才加：`timeoutMs`（长任务）、`name`（工作树分支名，别让 harness 从任务正文里猜）。
 
