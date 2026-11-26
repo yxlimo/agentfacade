@@ -512,10 +512,15 @@ markHotSetting("ROUTER_CONTINUE_MAX");
 /** 续写上下文里已产出的文本最多带多少（字节）。超了取尾部：尾部才是断点。 */
 const CONTINUE_TEXT_MAX = 32 * 1024;
 
-/** ROUTER_CONTINUE_MAX 的默认值与取值范围（0 等于关闭）。 */
-const CONTINUE_MAX_DEFAULT = 2;
-const CONTINUE_MAX_MIN = 0;
-const CONTINUE_MAX_MAX = 5;
+/**
+ * ROUTER_CONTINUE_MAX 的默认值与取值范围（0 等于关闭）。
+ *
+ * 范围要导出：面板的输入框边界、setConfigValue 的提示语、这里的夹取，三处读同一份。
+ * 各写一份字面量的话，总有一天面板写着 0–5 而实际夹到 0–3。
+ */
+export const CONTINUE_MAX_DEFAULT = 2;
+export const CONTINUE_MAX_MIN = 0;
+export const CONTINUE_MAX_MAX = 5;
 
 /**
  * 续写开关：默认关。与两个上限同一套读法，直接在答复里读，不走参数。
