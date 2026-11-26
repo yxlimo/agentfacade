@@ -656,7 +656,12 @@ async function continueWith(
   const why = continueBlockedReason(state, reopen);
   // `!reopen` 在判据里已经覆盖，这里再写一次是给类型收窄：走到下面调用
   // reopen 时它一定在。
-  if (why || !reopen) return { kind: "blocked", error };
+  if (why || !reopen) {
+    // 不续写的时候一定要留一句为什么：从外面只看得见「客户端收到 error 事件」，
+    // 到底是开关没开、没重发能力、次数用完还是工具调用在途，只有这里知道。
+    log.warn(`[DELIVER] 静默后不续写：${why ?? "没有重发能力"}（已产出 ${state.text.length} 字，已续 ${state.attempts} 次）`);
+    return { kind: "blocked", error };
+  }
   state.attempts++;
   log.warn(`[DELIVER] 流中途静默 ${idleSpan(idleMsOf(error))}，第 ${state.attempts} 次续写（已有 ${state.text.length} 字）`);
   try {
