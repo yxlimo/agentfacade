@@ -330,4 +330,41 @@ describe('配置页按契约渲染控件', () => {
       screen.getByText('服务端存的是 yes，保存会改成你选的')
     ).toBeInTheDocument()
   })
+
+  /**
+   * 机器的字面量不摆到界面上。
+   *
+   * 键名（ROUTER_FIRST_FRAME_MS）是给机器看的：只留在 title 里，悬停能看见。
+   * 契约的枚举名（CONFIG_UNIT_MILLISECONDS、CONFIG_KIND_NUMBER）根本不出现 ——
+   * 值列说的是「180 秒」，不是毫秒数，也不是枚举名。
+   */
+  it('行里没有键名，也没有契约的枚举名', async () => {
+    const user = userEvent.setup({ delay: null })
+    const client = mockAdminClient({
+      ListConfig: () =>
+        create(ListConfigResponseSchema, { items: [millisecondItem()] }),
+    })
+
+    renderWithClient({ client, children: <ConfigPage /> })
+    await user.click(await screen.findByRole('tab', { name: /网关/ }))
+    await screen.findByText('首帧时限')
+
+    // 页面上没有键名。
+    expect(screen.queryByText(/ROUTER_[A-Z_]+/)).not.toBeInTheDocument()
+
+    const row = screen
+      .getAllByRole('row')
+      .find((candidate) => candidate.textContent?.includes('首帧时限'))
+    if (!row) throw new Error('界面上没有「首帧时限」这一行')
+
+    // 键名不丢：悬停在名字上能看见（与「未知来源」「未知分组」同一套做法）。
+    expect(within(row).getByText('首帧时限')).toHaveAttribute(
+      'title',
+      'ROUTER_FIRST_FRAME_MS'
+    )
+    // 值列说的是秒：不是毫秒数，也不是契约的枚举名。
+    expect(within(row).getByText('180 秒')).toBeInTheDocument()
+    expect(row.textContent).not.toMatch(/ROUTER_[A-Z_]+/)
+    expect(row.textContent).not.toMatch(/CONFIG_(UNIT|KIND)_[A-Z_]+/)
+  })
 })

@@ -117,14 +117,14 @@ function hasValue(item: ConfigItem): boolean {
 /**
  * 这一项叫什么。
  *
- * 契约里给了 label（自然语言的名字）。没有 label 就用 description 的第一句，
- * 实在没有才退回键名 —— 键名是给机器看的，不当主要显示。
+ * 契约里给了 label（自然语言的名字）。没有 label 就用 description 的第一句。
+ * 连名字都没有的（服务端既没给名字也没给说明）返回空 —— 键名是给机器看的，
+ * 不摆到界面上，只留在 title 里。
  */
 function itemTitle(item: ConfigItem): string {
   if (item.label.trim()) return item.label.trim()
   const firstSentence = item.description.split(/[。\n]/)[0]?.trim()
-  if (firstSentence) return firstSentence
-  return item.key
+  return firstSentence ?? ''
 }
 
 /**
@@ -139,11 +139,6 @@ function itemDescription(item: ConfigItem): string {
   if (item.label.trim()) return description
   const first = description.split(/[。\n]/)[0]?.trim() ?? ''
   return description.slice(first.length).replace(/^[。\s]+/, '').trim()
-}
-
-/** 标题用的是键名的时候，就不用再在下面重复一遍了。 */
-function showKey(item: ConfigItem): boolean {
-  return itemTitle(item) !== item.key
 }
 
 /**
@@ -328,15 +323,10 @@ export function ConfigPage() {
                         <TableRow key={item.key}>
                           <TableCell>
                             <div className='grid gap-0.5'>
-                              {/* 主要显示是给人看的名字，键名放次要位置。 */}
-                              <span className='font-medium'>
-                                {itemTitle(item)}
+                              {/* 显示的是给人看的名字；键名只留在 title 里，悬停能看见。 */}
+                              <span className='font-medium' title={item.key}>
+                                {itemTitle(item) || t('configPage.unknown')}
                               </span>
-                              {showKey(item) ? (
-                                <span className='font-mono text-xs text-muted-foreground'>
-                                  {item.key}
-                                </span>
-                              ) : null}
                               {itemDescription(item) ? (
                                 <span className='text-xs text-muted-foreground'>
                                   {itemDescription(item)}
@@ -413,7 +403,7 @@ export function ConfigPage() {
                                 onClick={() => {
                                   setEditing({
                                     key: item.key,
-                                    title: itemTitle(item),
+                                    title: itemTitle(item) || t('configPage.unknown'),
                                     description: item.description,
                                     secret: item.secret,
                                     kind: item.kind,
@@ -465,14 +455,12 @@ export function ConfigPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle className='flex items-center gap-2'>
+            {/* 键名只留在 title 里：弹窗说的也是人话。 */}
+            <DialogTitle className='flex items-center gap-2' title={editing?.key}>
               {editing?.secret ? <KeyRound className='size-4' /> : null}
               {editing?.title ?? t('configPage.editTitle')}
             </DialogTitle>
-            <DialogDescription>
-              <span className='font-mono text-xs'>{editing?.key}</span>
-              {editing?.description ? ` —— ${editing.description}` : ''}
-            </DialogDescription>
+            <DialogDescription>{editing?.description ?? ''}</DialogDescription>
           </DialogHeader>
           {editing ? (
             <ConfigValueField

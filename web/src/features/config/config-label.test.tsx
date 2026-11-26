@@ -16,7 +16,7 @@ import { renderWithClient } from '@/test/render'
  * 没有 label 就退回 description 的第一句。
  */
 describe('配置页的名字', () => {
-  it('主要显示是 label，键名放在次要位置', async () => {
+  it('主要显示是 label，键名不进可见文字（只在 title 里）', async () => {
     const client = mockAdminClient({
       ListConfig: () =>
         create(ListConfigResponseSchema, {
@@ -37,10 +37,12 @@ describe('配置页的名字', () => {
     renderWithClient({ client, children: <ConfigPage /> })
 
     await screen.findByText('是否开启 API KEY 验证')
-    // 键名还在，但在次要位置（更小更灰的那一行）。
-    expect(screen.getByText('REQUIRE_API_KEY')).toBeInTheDocument()
-    expect(screen.getByText('REQUIRE_API_KEY').className).toContain(
-      'text-muted-foreground'
+    // 键名不摆到界面上：那是给机器看的，用户不该看见。
+    expect(screen.queryByText(/REQUIRE_API_KEY/)).not.toBeInTheDocument()
+    // 键名不丢：悬停在名字上能看见（与「未知来源」「未知分组」同一套做法）。
+    expect(screen.getByText('是否开启 API KEY 验证')).toHaveAttribute(
+      'title',
+      'REQUIRE_API_KEY'
     )
   })
 
@@ -72,7 +74,7 @@ describe('配置页的名字', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('label 和 description 都没有时才退回键名', async () => {
+  it('label 和 description 都没有时说「未知」，键名只在 title 里', async () => {
     const client = mockAdminClient({
       ListConfig: () =>
         create(ListConfigResponseSchema, {
@@ -90,7 +92,9 @@ describe('配置页的名字', () => {
     })
 
     renderWithClient({ client, children: <ConfigPage /> })
-
-    await screen.findByText('MYSTERY_KEY')
+    // 没有名字就说「未知」：键名不摆到界面上，只留在 title 里。
+    const name = await screen.findByText('未知')
+    expect(name).toHaveAttribute('title', 'MYSTERY_KEY')
+    expect(screen.queryByText('MYSTERY_KEY')).not.toBeInTheDocument()
   })
 })

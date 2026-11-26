@@ -32,6 +32,7 @@ describe('配置页的敏感项', () => {
           items: [
             create(ConfigItemSchema, {
               key: 'REQUIRE_API_KEY',
+              label: '是否开启 API KEY 验证',
               value: '***',
               source: 'database',
               fallback: 'false',
@@ -51,7 +52,7 @@ describe('配置页的敏感项', () => {
 
     // 配置页默认停在「常规」，切到「网关」那一组。
     await user.click(await screen.findByRole('tab', { name: /网关/ }))
-    await screen.findByText('REQUIRE_API_KEY')
+    await screen.findByText('是否开启 API KEY 验证')
 
     // 界面上不说掩码，只说有没有值。
     expect(screen.getByText('已设置')).toBeInTheDocument()
@@ -82,6 +83,7 @@ describe('配置页的敏感项', () => {
           items: [
             create(ConfigItemSchema, {
               key: 'REQUIRE_API_KEY',
+              label: '是否开启 API KEY 验证',
               value: '***',
               source: 'database',
               fallback: 'false',
@@ -101,7 +103,7 @@ describe('配置页的敏感项', () => {
 
     // 配置页默认停在「常规」，切到「网关」那一组。
     await user.click(await screen.findByRole('tab', { name: /网关/ }))
-    await screen.findByText('REQUIRE_API_KEY')
+    await screen.findByText('是否开启 API KEY 验证')
     await user.click(screen.getByRole('button', { name: '改' }))
 
     const input = screen.getByLabelText('新值') as HTMLInputElement
@@ -123,6 +125,7 @@ describe('配置页的敏感项', () => {
           items: [
             create(ConfigItemSchema, {
               key: 'REQUIRE_API_KEY',
+              label: '是否开启 API KEY 验证',
               value: '',
               source: 'environment',
               fallback: 'false',
@@ -142,7 +145,7 @@ describe('配置页的敏感项', () => {
 
     // 配置页默认停在「常规」，切到「网关」那一组。
     await user.click(await screen.findByRole('tab', { name: /网关/ }))
-    await screen.findByText('REQUIRE_API_KEY')
+    await screen.findByText('是否开启 API KEY 验证')
     await user.click(screen.getByRole('button', { name: '改' }))
     await user.type(screen.getByLabelText('新值'), 'sk-new-value')
     await user.click(screen.getByRole('button', { name: '保存' }))
@@ -161,6 +164,7 @@ describe('配置页的敏感项', () => {
           items: [
             create(ConfigItemSchema, {
               key: 'A_OVERRIDDEN',
+              label: '被覆盖的项',
               value: 'true',
               source: 'database',
               fallback: 'false',
@@ -168,6 +172,7 @@ describe('配置页的敏感项', () => {
             }),
             create(ConfigItemSchema, {
               key: 'B_PLAIN',
+              label: '普通项',
               value: '30000',
               source: 'environment',
               fallback: '30000',
@@ -180,7 +185,7 @@ describe('配置页的敏感项', () => {
     renderWithClient({ client, children: <ConfigPage /> })
 
     await user.click(await screen.findByRole('tab', { name: /网关/ }))
-    await screen.findByText('A_OVERRIDDEN')
+    await screen.findByText('被覆盖的项')
     expect(screen.getByText('默认值 false')).toBeInTheDocument()
     // 值和默认值一样的时候不用再重复一遍。
     expect(screen.queryByText('默认值 30000')).not.toBeInTheDocument()

@@ -128,6 +128,11 @@ test('热设置：改「多久算静默」立刻生效，弹窗不说要重启�
   await screen.getByRole('link', { name: '配置' }).click();
   await screen.getByRole('tab', { name: /网关/ }).click();
 
+  // 键名是给机器看的：界面上不出现 ROUTER_ 开头的键（键名只留在 title 里，
+  // 鼠标悬停能看见）。
+  const bodyText = await browser.evaluate<string>('document.body.innerText');
+  expect(bodyText).not.toMatch(/ROUTER_[A-Z_]+/);
+
   // 项名是后端给的 label（lib/admin/config.ts 的 LABELS），面板不自己写死文案。
   const row = screen.getByRole('row').filter({ hasText: '多久算静默' });
   await expect(row).toBeVisible();
@@ -139,7 +144,9 @@ test('热设置：改「多久算静默」立刻生效，弹窗不说要重启�
   await row.getByRole('button', { name: '改' }).click();
   const dialog = screen.getByRole('dialog');
   await expect(dialog).toBeVisible();
-  // 弹窗初值是秒（契约里是 180000 毫秒）。
+  // 弹窗里也不摆键名：说的是人话，键名只留在 title 里。
+  const dialogText = await browser.evaluate<string>('document.body.innerText');
+  expect(dialogText).not.toMatch(/ROUTER_[A-Z_]+/);
   await expect(dialog.getByLabel('新值')).toHaveValue('180');
   await expect(dialog.getByLabel('新值')).toBeVisible();
   // 面板上填的是秒：5 秒（600000 毫秒的上限换算过来是 600 秒，不会越界）。
