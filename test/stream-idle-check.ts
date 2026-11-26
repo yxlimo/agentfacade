@@ -298,6 +298,8 @@ async function serve(opts: {
   iterable?: AsyncIterable<any>;
   entry: "openai" | "anthropic" | "chunks";
   dialect: "openai" | "anthropic";
+  /** 客户端每收到一帧就叫它（看帧是什么时候到的）。 */
+  onFrame?: (frame: string, at: number) => void;
 }): Promise<ServeResult> {
   const started = Date.now();
   let handlerError: string | null = null;
@@ -352,7 +354,9 @@ async function serve(opts: {
           text += c.toString();
           let i: number;
           while ((i = text.indexOf("\n\n")) >= 0) {
-            received.push(text.slice(0, i));
+            const frame = text.slice(0, i);
+            received.push(frame);
+            opts.onFrame?.(frame, Date.now());
             text = text.slice(i + 2);
           }
         });
@@ -1858,7 +1862,7 @@ section("G. 工具开局之后等参数的上限");
   });
   const text = r.received.join("\n\n");
   check("[d 提交点之后] 客户端拿到了正文", text.includes("hi"), text.slice(0, 200));
-  check("[d 提交点之后] 开局帧也到了客户端（提交点已经过去）", text.includes("call_1"), text.slice(0, 300));
+  check("[d 提交点之后] 客户端没拿到那个开局帧（工具帧扣到参数收全为止）", !text.includes("call_1"), text.slice(0, 300));
   check("[d 提交点之后] 报的是提交之后的工具静默（可重试的超时）", r.failure?.name === "TimeoutError" && /a tool call was still being written/.test(String(r.failure?.message)), `${r.failure?.name}: ${String(r.failure?.message)}`);
   check("[d 提交点之后] 不是 ToolCallSilenceError（那是提交点之前那一类）", r.failure?.name !== "ToolCallSilenceError", String(r.failure?.name));
   check("[d 提交点之后] 用的是工具那个上限", r.failure?.idleMs === 60, String(r.failure?.idleMs));
@@ -2091,8 +2095,136 @@ const argFrames = argPieces.map((piece) => openaiSseFrame({ tool_calls: [{ index
   check("[g 日志] 那行里有「已发给客户端 N 字节」", /已发给客户端 \d+ 字节/.test(line), line.slice(0, 300));
   check("[g 日志] 那个字节数不是 0（正文已经到客户端了）", /已发给客户端 [1-9]\d* 字节/.test(line), line.slice(0, 300));
   check("[g 日志] 那行里有帧序", /帧序 [^）]+/.test(line), line.slice(0, 300));
-  check("[g 日志] 帧序里有正文与工具名", /帧序 正文\/工具名/.test(line), line.slice(0, 300));
+  check("[g 日志] 帧序里没有工具名（那个工具帧被扣住，没到客户端）", /帧序 正文，/.test(line) && !line.includes("工具名"), line.slice(0, 300));
   check("[g 日志] 参数累积那一格在", /参数累积 \d+ 字节/.test(line), line.slice(0, 300));
+}
+
+/* ------------------------------------------------------------------ *
+ * I. 工具帧一律扣住：不管提交点在哪儿
+ * ------------------------------------------------------------------ */
+
+// 口径只有一条：工具帧（开局帧或参数碎片）一律扣住，直到参数收全。半个 tool_call
+// 客户端本来就不显示 —— 扣住不亏。提交点之前由内容闸扣（客户端零字节），提交点之后
+// 由那道守卫扣（客户端拿到思考/正文，但一个工具帧都没有）。
+section("I. 工具帧一律扣住");
+
+// a. 提交之后才开始的工具调用：参数收全之前，客户端一个工具帧都拿不到
+{
+  setToolOpeningMs(60);
+  const thinking = openaiSseFrame({ reasoning_content: "在想" });
+  const frames = [thinking, toolOpening(""), ...argFrames];
+  const arrivals: { frame: string; at: number }[] = [];
+  const started = Date.now();
+  const r = await serve({
+    source: upstream(frames, { gapMs: 20 }),
+    entry: "openai",
+    dialect: "openai",
+    onFrame: (frame, at) => arrivals.push({ frame, at }),
+  });
+  const text = r.received.join("\n\n");
+  check("[a 扣住] 网关没有抛错", r.handlerError === null, r.handlerError ?? "");
+  check("[a 扣住] 客户端拿到了完整的工具调用", text.includes("call_1") && text.includes("a.txt"), text.slice(0, 300));
+  check("[a 扣住] 帧数与上游一致（另加一个 [DONE]）", r.received.length === frames.length + 1, `${r.received.length} 帧`);
+  check("[a 扣住] 没有 error 帧", errorMessageOf(r.received) === "", errorMessageOf(r.received));
+  const openingAt = arrivals.find((a) => a.frame.includes("call_1"))?.at ?? -1;
+  // 参数是最后一片才收全的（上游每 20ms 一片）：开局帧不可能比那早到。
+  check("[a 扣住] 开局帧没有早于参数收全到客户端", openingAt - started >= 60, `开局帧在第 ${openingAt - started}ms 到达`);
+  const thinkingAt = arrivals.find((a) => a.frame.includes("在想"))?.at ?? -1;
+  check("[a 扣住] 思考帧先到了（提交点已经过去）", thinkingAt >= 0 && thinkingAt < openingAt, `思考 ${thinkingAt - started}ms / 开局 ${openingAt - started}ms`);
+}
+
+// b. 参数发一半就静默：按 tool 窗口快速失败，客户端零个工具帧
+{
+  setToolOpeningMs(60);
+  const thinking = openaiSseFrame({ reasoning_content: "在想" });
+  const r = await serve({
+    source: upstream([thinking, toolOpening(""), argFrames[0]], { after: "stall" }),
+    entry: "openai",
+    dialect: "openai",
+  });
+  const text = r.received.join("\n\n");
+  check("[b 半途静默] 客户端拿到了思考", text.includes("在想"), text.slice(0, 200));
+  check("[b 半途静默] 客户端一个工具帧都没拿到", !text.includes("call_1") && !text.includes("tool_calls"), text.slice(0, 300));
+  check(
+    "[b 半途静默] 报的是提交之后的工具静默（可重试）",
+    r.failure?.name === "TimeoutError" && /a tool call was still being written/.test(String(r.failure?.message)),
+    `${r.failure?.name}: ${String(r.failure?.message)}`,
+  );
+  check("[b 半途静默] 用的是工具那个窗口", r.failure?.idleMs === 60, String(r.failure?.idleMs));
+  check("[b 半途静默] 客户端那句话是可重试的形状", /timed out/.test(errorMessageOf(r.received)), errorMessageOf(r.received));
+}
+
+// c. 客户端拿到的字节序列与上游逐字节一致
+{
+  setToolOpeningMs(60);
+  const frames = [roleOnly, toolOpening(""), ...argFrames];
+  const r = await serve({ source: upstream(frames), entry: "openai", dialect: "openai" });
+  const expected = [...frames.map(withoutSep), "data: [DONE]"];
+  check("[c 逐字节] 帧数与上游一致", r.received.length === expected.length, `${r.received.length} / ${expected.length}`);
+  check("[c 逐字节] 每一帧的字节与上游一致（顺序也一致）", JSON.stringify(r.received) === JSON.stringify(expected), r.received.join("\n\n").slice(0, 400));
+}
+
+// d. 累积超过上限：立刻写出，不卡住（此后静默归中途那个窗口）
+{
+  setToolOpeningMs(60);
+  const thinking = openaiSseFrame({ reasoning_content: "在想" });
+  // 参数是一段没写完的 JSON：它永远不会「收全」，只能靠上限把它放出去。
+  const huge = openaiSseFrame({ tool_calls: [{ index: 0, function: { arguments: `"${"a".repeat(300 * 1024)}` } }] });
+  const r = await serve({
+    source: upstream([thinking, toolOpening(""), huge], { after: "stall" }),
+    entry: "openai",
+    dialect: "openai",
+  });
+  const text = r.received.join("\n\n");
+  check("[d 超上限] 扣住的帧立刻写出来了", text.includes("call_1") && text.length > 300 * 1024, `${text.length} 字节`);
+  check(
+    "[d 超上限] 此后的静默归中途那个窗口",
+    r.failure?.idleMs === IDLE_MS && !/tool call was still being written/.test(String(r.failure?.message)),
+    `${r.failure?.idleMs}: ${String(r.failure?.message)}`,
+  );
+}
+
+// e. 上游正常结束但参数没收全：扣住的帧照样写出（不吞）
+{
+  setToolOpeningMs(60);
+  const thinking = openaiSseFrame({ reasoning_content: "在想" });
+  const r = await serve({
+    source: upstream([thinking, toolOpening(""), argFrames[0]]),
+    entry: "openai",
+    dialect: "openai",
+  });
+  const text = r.received.join("\n\n");
+  check("[e 正常结束] 扣住的帧照样到了客户端", text.includes("call_1") && text.includes("path"), text.slice(0, 300));
+  check("[e 正常结束] 没有 error 帧", errorMessageOf(r.received) === "", errorMessageOf(r.received));
+  check("[e 正常结束] 网关没有抛错", r.handlerError === null, r.handlerError ?? "");
+}
+
+// f. 对照组：没有工具调用的流，逐帧即时到达（正常流量不许被扣住）
+{
+  setToolOpeningMs(60);
+  const frames = Array.from({ length: 8 }, (_, i) => openaiSseFrame({ content: `w${i}` }));
+  const arrivals: { frame: string; at: number }[] = [];
+  const r = await serve({
+    source: upstream(frames, { gapMs: 20 }),
+    entry: "openai",
+    dialect: "openai",
+    onFrame: (frame, at) => arrivals.push({ frame, at }),
+  });
+  const span = arrivals.length > 1 ? arrivals[arrivals.length - 1].at - arrivals[0].at : 0;
+  check("[f 对照组] 每一帧都到了", r.received.length === frames.length + 1, `${r.received.length} 帧`);
+  check("[f 对照组] 帧是逐帧到的（不是攒到最后一起到）", span >= 80, `跨度 ${span}ms`);
+  check("[f 对照组] 没有 error 帧", errorMessageOf(r.received) === "", errorMessageOf(r.received));
+}
+
+// g. 日志：扣了多少帧/多少字节，写出时一行
+{
+  setToolOpeningMs(60);
+  const captured = captureLog({ methods: ["info"] });
+  await serve({ source: upstream([roleOnly, toolOpening(""), ...argFrames]), entry: "openai", dialect: "openai" });
+  captured.restore();
+  const line = captured.all.find((entry) => entry.includes("工具帧扣住")) ?? "";
+  check("[g 日志] 有一行说扣住了多少帧多少字节", /工具帧扣住 \d+ 帧 \d+ 字节/.test(line), captured.all.join("\n").slice(0, 300));
+  check("[g 日志] 帧数与字节数不是 0", /工具帧扣住 [1-9]\d* 帧 [1-9]\d* 字节/.test(line), line.slice(0, 300));
 }
 
 setToolOpeningMs(0);

@@ -1359,7 +1359,10 @@ class ToolCallTracker {
   private readonly dialect: UpstreamDialect;
   /** 最近一帧带的是不是工具（开局帧或参数碎片）。 */
   private toolFrameSeen = false;
-
+  /** 最近一帧把某个工具调用的参数收全了。 */
+  private toolArgsCompleted = false;
+  /** 不再看工具帧了（参数超了上限：此后不再扣，也不再按工具窗口计时）。 */
+  private stopped = false;
   constructor(dialect: UpstreamDialect) {
     this.dialect = dialect;
   }
@@ -1369,12 +1372,20 @@ class ToolCallTracker {
    */
   observe(json: Json): boolean {
     this.toolFrameSeen = false;
+    this.toolArgsCompleted = false;
+    // 不再看工具帧的时候，这一帧什么也不参与判定。
+    if (this.stopped) return false;
     return this.dialect === "anthropic" ? this.observeAnthropic(json) : this.observeOpenAI(json);
   }
 
   /** 最近一帧带的是不是工具（开局帧或参数碎片）。 */
   get toolFrame(): boolean {
     return this.toolFrameSeen;
+  }
+
+  /** 最近一帧把工具调用的参数收全了。 */
+  get toolArgsComplete(): boolean {
+    return this.toolArgsCompleted;
   }
 
   /** 有工具调用的参数没收全吗？ */
@@ -1395,6 +1406,16 @@ class ToolCallTracker {
    */
   forceComplete(): void {
     this.pending.clear();
+  }
+
+  /**
+   * 不再看工具帧：参数超了上限，此后不再扣住，也不再按工具窗口计时 ——
+   * 静默归中途那个窗口。
+   */
+  stopTrackingTools(): void {
+    this.stopped = true;
+    this.pending.clear();
+    this.toolFrameSeen = false;
   }
 
   private observeOpenAI(json: Json): boolean {
@@ -1421,6 +1442,7 @@ class ToolCallTracker {
         this.pending.delete(key);
         // 参数收全了：这一帧就是内容，提交点落在这一帧。
         content = true;
+        this.toolArgsCompleted = true;
       } else {
         this.pending.add(key);
       }
@@ -1441,6 +1463,7 @@ class ToolCallTracker {
       const { key, merged } = this.ledger.push(this.blockIndex(json), fragment);
       if (isCompleteJsonArgs(merged)) {
         this.pending.delete(key);
+        this.toolArgsCompleted = true;
         return true;
       }
       this.pending.add(key);
@@ -1452,6 +1475,7 @@ class ToolCallTracker {
       const input = block.input;
       // 带键的 input 本身就是内容（上游一次把参数给全了）。
       if (input !== null && typeof input === "object" && !Array.isArray(input) && Object.keys(input).length > 0) {
+        this.toolArgsCompleted = true;
         return true;
       }
       // 空 input 是开局帧：参数还在后面。
@@ -1578,62 +1602,185 @@ function replayHeld(held: Uint8Array[], reader: ReadableStreamDefaultReader<Uint
 
 
 /**
- * 提交之后：工具调用还在写，上游却安静了 —— 按工具那个窗口快速失败。
+ * 工具帧是原子的：扣住，直到参数收全。
  *
- * 提交点已经过去，续写不可能（半截 JSON 拼不回来），所以这一次的失败只能是超时，
- * 而且要快：等满中途那个窗口（生产上 300s）用户什么都拿不到。窗口用
- * ROUTER_TOOL_OPENING_MS：开着的时候按它算（生产上 60s），关着的时候沿用中途那个
- * 窗口 —— 今天的行为一个字都不改。
+ * 一个 tool_call 的参数是分片送来的。半个 tool_call 客户端既不显示也补不上 ——
+ * 所以从工具帧（开局帧或参数碎片）到达那一刻起，**从这一帧开始的所有帧**都扣在
+ * 手里，连非工具帧一起扣：扣住期间若正文帧先发出去，写出顺序就与上游顺序不同了。
+ * 参数能 JSON.parse 通过了，再按原顺序一次性写出。
  *
- * 锚点是**最后一个工具帧**：参数在慢慢流动（每 20ms 一片）不算静默，慢流不该被砍。
+ * 写出的时机有三个：
+ *   · 参数收全；
+ *   · 累积超过 CONTENT_GATE_MAX_BYTES：立刻写出去，此后不再扣这一轮（静默归中途
+ *     那个窗口）；
+ *   · 上游正常结束（finish_reason / message_stop / 流结束）：参数没收全也原样写出，
+ *     不吞帧。
+ *
+ * 扣住期间上游安静了：走工具那个窗口（ROUTER_TOOL_OPENING_MS），到点失败 ——
+ * 客户端这时一个工具帧都没拿到（它拿到的是思考/正文与那句可重试的超时）。
  */
+
+/**
+ * 一帧的末尾在字节流里的位置（不含那一帧）；没有完整的一帧就是 -1。
+ *
+ * 按字节找而不是按字符找：帧的字节要原样交给客户端（拆开再拼起来必须一模
+ * 一样），而一个多字节字符绝不会把分隔切在中间。分隔认 "\n\n" 与 "\r\n\r\n"
+ * 两种（有的上游用 CRLF）。
+ */
+function findFrameEnd(bytes: Uint8Array, from: number): number {
+  for (let i = from; i < bytes.length; i++) {
+    if (bytes[i] !== 0x0a) continue;
+    if (i + 1 < bytes.length && bytes[i + 1] === 0x0a) return i + 2;
+    if (i + 2 < bytes.length && bytes[i + 1] === 0x0d && bytes[i + 2] === 0x0a) return i + 3;
+  }
+  return -1;
+}
+
+/** 两段字节接起来。 */
+function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
+  if (a.length === 0) return b;
+  const out = new Uint8Array(a.length + b.length);
+  out.set(a, 0);
+  out.set(b, a.length);
+  return out;
+}
+
+/**
+ * 一帧的 JSON：解析不了就是 undefined（那一帧照原样转发，只是不参与工具判定）。
+ */
+function frameJson(frame: Uint8Array): Json | undefined {
+  const parsed = parseRawSseFrame(new TextDecoder().decode(frame));
+  if (!parsed) return undefined;
+  try {
+    return parseLooseJson(parsed.data);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 这一帧是不是「工具调用到此为止」：上游说完了。
+ *
+ * OpenAI 那边是 finish_reason，Anthropic 那边是块结束或消息结束。参数没收全也到
+ * 这里为止了 —— 扣着的帧原样写出去，不吞帧。
+ */
+function isToolCallEndFrame(json: Json, dialect: UpstreamDialect): boolean {
+  if (dialect === "anthropic") {
+    const type = jsonAt(json, "type");
+    return type === "content_block_stop" || type === "message_stop";
+  }
+  const choices = jsonAt(json, "choices");
+  if (!Array.isArray(choices)) return false;
+  const finish = jsonObjectOf(choices[0])?.finish_reason;
+  return finish !== undefined && finish !== null;
+}
+
 function withToolSilenceGuard(
   body: ReadableStream<Uint8Array>,
   dialect: UpstreamDialect,
   label: string,
 ): ReadableStream<Uint8Array> {
   const windowMs = toolOpeningMs();
-  // 键关着的时候沿用中途那道闸：这里什么都不做。
-  if (!(windowMs > 0)) return body;
   const reader = body.getReader();
   const tracker = new ToolCallTracker(dialect);
-  const decoder = new TextDecoder();
-  let buffer = "";
+  // 扣住的帧：从工具帧那一帧起，往后的每一帧都在这里，按上游顺序排着。
+  const held: Uint8Array[] = [];
+  let heldBytes = 0;
+  let heldFrames = 0;
+  let holding = false;
+  // 上游的字节按帧拆：帧的字节原样保留，扣住与写出是同一批字节。
+  let parseBuf: Uint8Array = new Uint8Array(0);
+  let scanPos = 0;
   let lastToolAt = 0;
+
+  /** 把扣住的帧按原顺序写出去。 */
+  const flushHeld = (controller: ReadableStreamDefaultController<Uint8Array>): void => {
+    if (!heldFrames) return;
+    log.info(`[DELIVER] 工具帧扣住 ${heldFrames} 帧 ${heldBytes} 字节，写出（${label}）`);
+    for (const frame of held) controller.enqueue(frame);
+    held.length = 0;
+    heldBytes = 0;
+    heldFrames = 0;
+    holding = false;
+  };
+
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
-        const deadline = tracker.inFlight ? lastToolAt + windowMs : null;
-        const read = reader.read();
-        const { done, value } =
-          deadline === null
-            ? await read
-            : await within(read, Math.max(0, deadline - Date.now()), () => new ToolCallInFlightTimeoutError(windowMs, label));
-        if (done) {
-          controller.close();
-          return;
-        }
-        if (value && value.length > 0) {
-          buffer += decoder.decode(value, { stream: true });
-          let idx: number;
-          while ((idx = buffer.indexOf("\n\n")) >= 0) {
-            const raw = buffer.slice(0, idx);
-            buffer = buffer.slice(idx + 2);
-            const frame = parseRawSseFrame(raw);
-            if (!frame) continue;
-            let json: Json;
-            try {
-              json = parseLooseJson(frame.data);
-            } catch {
-              continue;
-            }
-            tracker.observe(json);
-            if (tracker.toolFrame) lastToolAt = Date.now();
-            // 参数累积超了上限：不再等它收全（此后静默归中途那个窗口）。
-            if (tracker.argBytes > CONTENT_GATE_MAX_BYTES) tracker.forceComplete();
+        for (;;) {
+          // 工具在途时那道闸：到点是提交之后的工具静默（可重试）。
+          // 键关着的时候不算这一道 —— 静默归上游那道中途窗口（今天的行为）。
+          const deadline = windowMs > 0 && tracker.inFlight ? lastToolAt + windowMs : null;
+          const read = reader.read();
+          const { done, value } =
+            deadline === null
+              ? await read
+              : await within(read, Math.max(0, deadline - Date.now()), () => new ToolCallInFlightTimeoutError(windowMs, label));
+          if (done) {
+            // 上游正常结束：扣住的帧原样写出去（不吞帧）。
+            flushHeld(controller);
+            // 没收尾的半帧也出去：它已经在上游那里了，吞掉就是丢字节。
+            const rest = parseBuf.slice(scanPos);
+            if (rest.length > 0) controller.enqueue(rest);
+            controller.close();
+            return;
           }
+          if (!value || value.length === 0) continue;
+
+          parseBuf = concatBytes(parseBuf, value);
+          let flushed = false;
+          for (;;) {
+            const end = findFrameEnd(parseBuf, scanPos);
+            if (end < 0) break;
+            const frame = parseBuf.slice(scanPos, end);
+            scanPos = end;
+
+            const json = frameJson(frame);
+            let toolFrame = false;
+            if (json !== undefined) {
+              tracker.observe(json);
+              toolFrame = tracker.toolFrame;
+              // 锚点是**最后一个工具帧**：参数在慢慢流动（每 20ms 一片）不算静默。
+              if (toolFrame) lastToolAt = Date.now();
+            }
+            if (!holding && toolFrame) holding = true;
+            if (holding) {
+              held.push(frame);
+              heldBytes += frame.length;
+              heldFrames++;
+            } else {
+              controller.enqueue(frame);
+            }
+            if (!holding) continue;
+            // 参数收全了：按原顺序一次性写出。
+            if (tracker.toolArgsComplete) {
+              flushHeld(controller);
+              flushed = true;
+              break;
+            }
+            // 上游说完了：参数没收全也写出去（不吞帧）。
+            if (json !== undefined && isToolCallEndFrame(json, dialect)) {
+              flushHeld(controller);
+              flushed = true;
+              break;
+            }
+            // 扣得太久了：立刻写出去，此后不再扣这一轮（静默归中途那个窗口）。
+            if (heldBytes > CONTENT_GATE_MAX_BYTES || tracker.argBytes > CONTENT_GATE_MAX_BYTES) {
+              tracker.stopTrackingTools();
+              flushHeld(controller);
+              flushed = true;
+              break;
+            }
+          }
+          // 已经拆过的字节不留着：它们要么给出去了，要么在扣着的那些帧里。
+          if (scanPos > 0) {
+            parseBuf = parseBuf.slice(scanPos);
+            scanPos = 0;
+          }
+          if (flushed) return;
+          if (!holding) return;
+          // 还在扣：接着读上游，直到参数收全。
         }
-        if (value) controller.enqueue(value);
       } catch (e) {
         // 上游那一侧要收掉：它还挂着就是在计费。
         await cancelReader(reader);
