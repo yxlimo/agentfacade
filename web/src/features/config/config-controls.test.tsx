@@ -150,6 +150,8 @@ describe('配置页按契约渲染控件', () => {
     const trigger = screen.getByLabelText('新值')
     // 当前值是 true：触发器上写「开启」，不是让人手打 true。
     expect(trigger).toHaveTextContent('开启')
+    // 干净的布尔值不补脏值那句提示。
+    expect(screen.queryByText(/服务端存的是/)).not.toBeInTheDocument()
 
     await user.click(trigger)
     await user.click(await screen.findByRole('option', { name: '关闭' }))
@@ -246,5 +248,86 @@ describe('配置页按契约渲染控件', () => {
     await user.click(screen.getByRole('button', { name: '保存' }))
     expect(await screen.findByText('这一项要填整数')).toBeInTheDocument()
     expect(sent).toEqual([])
+  })
+  /**
+   * 来源的闭集之外：上游（或别的版本）写进了一个面板不认识的来源。
+   *
+   * 说「未知」而不是把 vendor-x 这种机器字面量摆到界面上；原始名放 title，
+   * 排查时悬停能看见 —— 组键的规矩一样。
+   */
+  it('来源不在闭集里时说「未知」，原始来源只在 title 里', async () => {
+    const client = mockAdminClient({
+      ListConfig: () =>
+        create(ListConfigResponseSchema, {
+          items: [
+            create(ConfigItemSchema, {
+              key: 'ADMIN_CORS_ORIGINS',
+              label: '允许的跨域来源',
+              value: 'https://example.com',
+              fallback: '',
+              source: 'vendor-x',
+              group: 'general',
+              kind: ConfigKind.STRING,
+            }),
+          ],
+        }),
+    })
+
+    renderWithClient({ client, children: <ConfigPage /> })
+    await screen.findByText('允许的跨域来源')
+
+    const badge = screen.getByText('未知')
+    // 来源名不丢：只在 title 里。
+    expect(badge).toHaveAttribute('title', 'vendor-x')
+    // 界面上没有机器字面量。
+    expect(screen.queryByText(/vendor-x/)).not.toBeInTheDocument()
+  })
+
+  /**
+   * 库里的布尔值既不是 true 也不是 false（有人手工改过库，或者旧版本写进去的）。
+   *
+   * 面板不猜它是开还是关：值列与触发器都照原文说，弹窗里再点明一句
+   * 保存会把它改成用户选的那个。
+   */
+  it('布尔的脏值原样显示，弹窗里说明保存会改成选的那个', async () => {
+    const user = userEvent.setup({ delay: null })
+    const client = mockAdminClient({
+      ListConfig: () =>
+        create(ListConfigResponseSchema, {
+          items: [
+            create(ConfigItemSchema, {
+              key: 'REQUIRE_API_KEY',
+              label: '是否开启 API KEY 验证',
+              value: 'yes',
+              fallback: 'false',
+              source: 'database',
+              group: 'gateway',
+              kind: ConfigKind.BOOLEAN,
+            }),
+          ],
+        }),
+    })
+
+    renderWithClient({ client, children: <ConfigPage /> })
+    await user.click(await screen.findByRole('tab', { name: /网关/ }))
+
+    const row = screen
+      .getAllByRole('row')
+      .find((candidate) => candidate.textContent?.includes('是否开启 API KEY 验证'))
+    if (!row) throw new Error('界面上没有「是否开启 API KEY 验证」这一行')
+
+    // 值列：原样是 yes，不是「开启」，也不是「关闭」。
+    expect(within(row).getByText('yes')).toBeInTheDocument()
+    expect(within(row).queryByText('开启')).not.toBeInTheDocument()
+    expect(within(row).queryByText('关闭')).not.toBeInTheDocument()
+
+    await user.click(within(row).getByRole('button', { name: '改' }))
+
+    // 触发器上也照原文，不编成「开启」。
+    expect(screen.getByLabelText('新值')).toHaveTextContent('yes')
+    // 弹窗里点明：库里的 yes 会在保存时被换掉。
+    expect(
+      screen.getByText('服务端存的是 yes，保存会改成你选的')
+    ).toBeInTheDocument()
   })
 })

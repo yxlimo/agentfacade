@@ -1,6 +1,6 @@
 import { create } from '@bufbuild/protobuf'
 import { describe, expect, it } from 'vitest'
-import { screen, within } from '@testing-library/react'
+import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
   ConfigItemSchema,
@@ -149,7 +149,7 @@ describe('配置页的分组', () => {
     expect(screen.queryByText('允许的跨域来源')).not.toBeInTheDocument()
   })
 
-  it('认不出来的分组原样显示，不猜', async () => {
+  it('认不出来的分组说「其它」，组键只放 title 里', async () => {
     const client = mockAdminClient({
       ListConfig: () =>
         create(ListConfigResponseSchema, {
@@ -162,12 +162,17 @@ describe('配置页的分组', () => {
 
     renderWithClient({ client, children: <ConfigPage /> })
 
-    const tab = await screen.findByRole('tab', { name: /weird-group/ })
-    expect(within(tab).getByText('(1)')).toBeInTheDocument()
-    // 认不出来的组接在已知组后面。
+    // 认不出来的分组不把组键摆到界面上：说成「其它」。
+    const tab = await screen.findByRole('tab', { name: /其它/ })
+    expect(tab.textContent).toBe('其它(1)')
+    // 组键不丢：只放在 title 里，鼠标悬停能看见。
+    expect(tab).toHaveAttribute('title', 'weird-group')
+    // 界面上没有机器字面量。
+    expect(tab).not.toHaveTextContent('weird-group')
+    // 已知组仍排在前面。
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual([
       '常规(1)',
-      'weird-group(1)',
+      '其它(1)',
     ])
   })
 })

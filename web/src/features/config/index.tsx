@@ -221,11 +221,16 @@ export function ConfigPage() {
     // 接在后面。
     const known = GROUP_ORDER.filter((group) => map.has(group))
     const extra = [...map.keys()].filter((group) => !GROUP_ORDER.includes(group))
-    return [...known, ...extra].map((group) => ({
-      key: group,
-      label: groupKey(group) ? t(groupKey(group)!) : group,
-      items: map.get(group) ?? [],
-    }))
+    return [...known, ...extra].map((group) => {
+      const key = groupKey(group)
+      return {
+        key: group,
+        // 认不出的分组不把组键摆到界面上：说成「其它」，组键只放 title 里。
+        label: t(key ?? 'configPage.unknownGroup'),
+        title: key ? undefined : group,
+        items: map.get(group) ?? [],
+      }
+    })
   }, [config.data, t])
 
   // 选中的那一组没了（比如重取之后分组变了），退回第一组。
@@ -284,7 +289,11 @@ export function ConfigPage() {
         <Tabs value={activeTab} onValueChange={setTab}>
           <TabsList className='w-full justify-start overflow-x-auto'>
             {groups.map((group) => (
-              <TabsTrigger key={group.key} value={group.key}>
+              <TabsTrigger
+                key={group.key}
+                value={group.key}
+                title={group.title}
+              >
                 {group.label}
                 <span className='text-xs text-muted-foreground'>
                   ({group.items.length})
@@ -297,7 +306,9 @@ export function ConfigPage() {
             <TabsContent key={group.key} value={group.key}>
               <Card>
                 <CardHeader>
-                  <CardTitle className='text-base'>{group.label}</CardTitle>
+                  <CardTitle className='text-base' title={group.title}>
+                    {group.label}
+                  </CardTitle>
                   <CardDescription>{effectText}</CardDescription>
                 </CardHeader>
                 <CardContent className='px-0'>
@@ -379,10 +390,19 @@ export function ConfigPage() {
                             ) : null}
                           </TableCell>
                           <TableCell>
-                            <Badge variant='outline'>
+                            {/* 来源走词典；闭集之外的来源说「未知」，原始名放 title，
+                                不把英文 token 摆到界面上。 */}
+                            <Badge
+                              variant='outline'
+                              title={
+                                sourceKey(item.source)
+                                  ? undefined
+                                  : item.source || undefined
+                              }
+                            >
                               {sourceKey(item.source)
                                 ? t(sourceKey(item.source)!)
-                                : (item.source || t('configPage.unknown'))}
+                                : t('configPage.unknown')}
                             </Badge>
                           </TableCell>
                           <TableCell className='text-right'>

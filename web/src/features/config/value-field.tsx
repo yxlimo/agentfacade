@@ -138,6 +138,19 @@ export function ConfigValueField({
       : item.maxValue.toString()
     : undefined
 
+  /**
+   * 库里的布尔值既不是 true 也不是 false：脏值。
+   *
+   * 面板不猜它是开还是关，触发器和值列一起照原文说；弹窗里再点明一句
+   * 保存会把它改成用户选的那个 —— 空值不算脏，那是「未设置」。
+   */
+  const booleanDirty =
+    item.kind === ConfigKind.BOOLEAN &&
+    !item.secret &&
+    value !== '' &&
+    value !== 'true' &&
+    value !== 'false'
+
   const booleanText =
     value === 'true'
       ? t('configPage.booleanOn')
@@ -190,6 +203,12 @@ export function ConfigValueField({
           onChange={(event) => onChange(event.target.value)}
         />
       )}
+      {/* 脏值：库里的原文留着，只补一句保存会改成什么。 */}
+      {booleanDirty ? (
+        <p className='text-xs text-muted-foreground'>
+          {t('configPage.booleanDirty', { value })}
+        </p>
+      ) : null}
       {error ? (
         <p id={errorId} role='alert' className='text-xs text-destructive'>
           {error}
