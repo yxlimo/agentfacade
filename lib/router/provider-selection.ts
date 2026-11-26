@@ -162,13 +162,77 @@ export function byOrder<T>(
  * ------------------------------------------------------------------ */
 
 /**
+ * Every word the classifier can say about a failure
+ *
+ * The union is closed on purpose: a new word must get a resend verdict below
+ */
+export type UpstreamFailureKind =
+  | "refused"
+  | "queued"
+  | "model"
+  | "quota"
+  | "rate-limit"
+  | "no-balance"
+  | "credential"
+  | "timeout"
+  | "server"
+  | "request"
+  | "unreachable"
+  | "connection"
+  | "unknown";
+
+/** The words in the union, so a verdict key missing at runtime can be caught */
+export const FAILURE_KINDS = [
+  "refused",
+  "queued",
+  "model",
+  "quota",
+  "rate-limit",
+  "no-balance",
+  "credential",
+  "timeout",
+  "server",
+  "request",
+  "unreachable",
+  "connection",
+  "unknown",
+] as const satisfies readonly UpstreamFailureKind[];
+
+type MissingFailureKind = Exclude<UpstreamFailureKind, (typeof FAILURE_KINDS)[number]>;
+const allKindsListed: [MissingFailureKind] extends [never] ? true : never = true;
+const finiteKindUnion: string extends UpstreamFailureKind ? never : true = true;
+void allKindsListed;
+void finiteKindUnion;
+
+/**
+ * Whether the caller should resend the whole request
+ *
+ * A different question from retryable: a rate-limited account cannot take
+ * another attempt right now, but the caller coming back later may well succeed
+ */
+export const RESENDABLE_BY_KIND: Record<UpstreamFailureKind, boolean> = {
+  server: true,
+  connection: true,
+  timeout: true,
+  "rate-limit": true,
+  refused: false,
+  credential: false,
+  quota: false,
+  "no-balance": false,
+  model: false,
+  request: false,
+  queued: false,
+  unreachable: false,
+  unknown: false,
+};
+/**
  * The codes that mean the account cannot serve the request.
  *
  * MiniMax's open platform puts its own code in the answer — sometimes in a
  * 200, in `base_resp.status_code` — so the HTTP status alone does not say
  * whether the account is out of credit or the request is wrong.
  */
-const ACCOUNT_CODES: Record<number, string> = {
+const ACCOUNT_CODES: Record<number, UpstreamFailureKind> = {
   1002: "rate-limit", // 请求频率超限
   1004: "credential", // 未授权
   1008: "quota", // 余额不足
@@ -181,7 +245,7 @@ const ACCOUNT_CODES: Record<number, string> = {
 };
 
 /** The codes that mean the request itself is wrong: another account fails too. */
-const REQUEST_CODES: Record<number, string> = {
+const REQUEST_CODES: Record<number, UpstreamFailureKind> = {
   2013: "request", // 参数错误
   2022: "request", // 模型不存在或无权使用
   // WorkBuddy 的渠道校验：请求不是官方客户端发来的。它认的是**模拟端的
@@ -192,7 +256,7 @@ const REQUEST_CODES: Record<number, string> = {
 };
 
 /** The codes the other platforms use, in their own words. */
-const NAMED_CODES: Record<string, { degradable: boolean; kind: string }> = {
+const NAMED_CODES: Record<string, { degradable: boolean; kind: UpstreamFailureKind }> = {
   quota_exceeded: { degradable: true, kind: "quota" }, // 墨点不够
   rate_limit_exceeded: { degradable: true, kind: "rate-limit" }, // 超 RPM/TPM
   insufficient_balance: { degradable: true, kind: "no-balance" },
@@ -236,7 +300,7 @@ export interface UpstreamFailure {
   /** The status the upstream sent, when it sent one. */
   status: number | null;
   /** A short word for the log. */
-  kind: string;
+  kind: UpstreamFailureKind;
   /**
    * Does an immediate retry on the same account make sense?
    *
@@ -246,8 +310,19 @@ export interface UpstreamFailure {
    * have their own path)
    */
   retryable: boolean;
+
+  /** Whether the caller should resend the whole request (the x-should-retry header) */
+  resendable: boolean;
 }
 
+function classifiedFailure(
+  kind: UpstreamFailureKind,
+  status: number | null,
+  degradable: boolean,
+  retryable: boolean,
+): UpstreamFailure {
+  return { degradable, status, kind, retryable, resendable: RESENDABLE_BY_KIND[kind] };
+}
 /**
  * Is this failure the candidate's fault?
  *
@@ -281,7 +356,7 @@ export function classifyUpstreamError(error: unknown): UpstreamFailure {
   // criterion: an HTML gateway page can arrive with any status, so deciding
   // here by status would misclassify the next vendor's page.
   if (error instanceof GatewayPageError) {
-    return { degradable: true, status: error.upstreamStatus, kind: "refused", retryable: false };
+    return classifiedFailure("refused", error.upstreamStatus, true, false);
   }
   // The upstream parked the model in a queue and waiting it out did not help.
   //
@@ -293,33 +368,33 @@ export function classifyUpstreamError(error: unknown): UpstreamFailure {
   // No status: the queue answer arrives inside a 200 stream, so the upstream
   // never sent one. The 429 the client finally sees is the gateway's own
   // answer, not the upstream's.
-  if (isQueued(error)) return { degradable: true, status: null, kind: "queued", retryable: false };
+  if (isQueued(error)) return classifiedFailure("queued", null, true, false);
   // The platform's own code says more than the status does.
   const code = businessCodeOf(error);
   // 「这个免费模型被限流」：换账号没用（限的是模型），也不该把整个账号下线
   // （别的模型还好好的）。所以它既不降级也不冷却 —— 与分组拒绝同一类。
-  if (isFreeModelRateLimit(error)) return { degradable: false, status, kind: "model", retryable: false };
+  if (isFreeModelRateLimit(error)) return classifiedFailure("model", status, false, false);
   const byCode = code === null ? null : classifyBusinessCode(code);
-  if (byCode) return { degradable: byCode.degradable, status, kind: byCode.kind, retryable: false };
+  if (byCode) return classifiedFailure(byCode.kind, status, byCode.degradable, false);
   // 「模型不在这个 key 的分组里」：信封里没解出这个码时，正文里写着也算。
   // 状态码这时是 403 —— 按凭据被拒处理会把整个账号冷却掉，而账号没有坏。
-  if (isModelGroupDenied(error)) return { degradable: false, status, kind: "model", retryable: false };
+  if (isModelGroupDenied(error)) return classifiedFailure("model", status, false, false);
   if (status !== null) {
-    if (status === 401 || status === 403) return { degradable: true, status, kind: "credential", retryable: false };
-    if (status === 402) return { degradable: true, status, kind: "no-balance", retryable: false };
-    if (status === 429) return { degradable: true, status, kind: "rate-limit", retryable: false };
-    if (status === 408) return { degradable: true, status, kind: "timeout", retryable: false };
-    if (status >= 500) return { degradable: true, status, kind: "server", retryable: true };
+    if (status === 401 || status === 403) return classifiedFailure("credential", status, true, false);
+    if (status === 402) return classifiedFailure("no-balance", status, true, false);
+    if (status === 429) return classifiedFailure("rate-limit", status, true, false);
+    if (status === 408) return classifiedFailure("timeout", status, true, false);
+    if (status >= 500) return classifiedFailure("server", status, true, true);
     // 400, 404, 413 and the rest: the request itself.
-    return { degradable: false, status, kind: "request", retryable: false };
+    return classifiedFailure("request", status, false, false);
   }
   // The network failure keeps its own name: "the host does not resolve" is a
   // different problem from "the connection broke", and the two are handled
   // differently (see the retryable field above and
   // cooldownForFailure in account-cooldown.ts).
   const network = networkReason(error);
-  if (network) return { degradable: true, status: null, kind: network, retryable: network === "connection" };
-  return { degradable: false, status: null, kind: "unknown", retryable: false };
+  if (network) return classifiedFailure(network, null, true, network === "connection");
+  return classifiedFailure("unknown", null, false, false);
 }
 
 /** The failure in one line: the kind and the status, for the log. */
@@ -333,7 +408,7 @@ export function describeUpstreamError(error: unknown): string {
 }
 
 /** What the platform's own code means. */
-function classifyBusinessCode(code: number | string): { degradable: boolean; kind: string } | null {
+function classifyBusinessCode(code: number | string): { degradable: boolean; kind: UpstreamFailureKind } | null {
   if (typeof code === "number") {
     const account = ACCOUNT_CODES[code];
     if (account) return { degradable: true, kind: account };
@@ -484,7 +559,7 @@ const NETWORK_CONNECTION_CODES = new Set([
  * "unreachable" outranks "connection": when one link in the chain says the
  * host does not resolve, waiting will not change it.
  */
-function networkReason(error: unknown): string | null {
+function networkReason(error: unknown): UpstreamFailureKind | null {
   const seen = new Set<unknown>();
   const codes: string[] = [];
   const names: string[] = [];

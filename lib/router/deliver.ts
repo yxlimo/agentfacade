@@ -12,6 +12,7 @@ import crypto from "node:crypto";
 import type Koa from "koa";
 import { AuthError } from "../credential.ts";
 import { anthropicStreamToOpenAI, openaiStreamToAnthropic } from "../dialect/stream.ts";
+import { classifyUpstreamError } from "./provider-selection.ts";
 import { anthropicToOpenAIResponse, openaiToAnthropicResponse } from "../dialect/response.ts";
 import { parseLooseJson, readOpenAIChunks, readOrAbort, readSseEvents, sseData, sseEvent, SSE_DONE } from "../sse-stream.ts";
 import { businessCodeOfPayload, isBusinessErrorEnvelope, withBusinessCode } from "../upstream-status.ts";
@@ -2101,6 +2102,12 @@ export function sendError(ctx: Koa.Context, e: unknown, headers: Record<string, 
     ctx.status = 499;
     ctx.body = { error: { type: "api_error", message: "the client went away" } };
     return;
+  }
+
+  // opencode reads this header ahead of its own error classification: a terminal
+  // failure left unmarked gets retried, and a transient one marked false does not
+  if (!Object.keys(extra).some((key) => key.toLowerCase() === "x-should-retry")) {
+    extra["x-should-retry"] = classifyUpstreamError(e).resendable ? "true" : "false";
   }
   const status = typeof err?.status === "number" ? err.status : 500;
   if (ctx.res.headersSent) {
