@@ -1,10 +1,8 @@
 // web/src/features/config/units.test.ts — 毫秒↔秒换算的钉子。
+// 面板只接受整数秒：小数不是合法的输入，换算函数原样返回，由面板层先拦住（用例断的是
+// 「不被悄悄转换」，不是「被四舍五入」）。反方向不给取整：初值必须是精确的秒，1500 毫秒
+// 显示成 "2" 的话，用户什么都没动保存就落库成 2000 —— 悄悄改值。
 //
-// 面板只接受整数秒：毫秒是整数，秒取整就够了。小数不是合法的输入，换算函数
-// 原样返回，由面板层先拦住（用例断的是「不被悄悄转换」，不是「被四舍五入」）。
-//
-// 显示那一步交给 humanize-duration，这里钉的是它的形状：中文「180 秒」、
-// 英文「600 seconds」，脏值不加单位。
 
 import { describe, expect, it } from 'vitest'
 import {
@@ -17,11 +15,19 @@ import {
 import { ConfigUnit } from '@/gen/agentfacade/admin/v1/admin_pb'
 
 describe('配置项的单位换算', () => {
-  it('毫秒串换算成整数秒串', () => {
+  it('毫秒串换算成精确的秒串', () => {
     expect(msToSecondsText('180000')).toBe('180')
     expect(msToSecondsText('600000')).toBe('600')
     expect(msToSecondsText('1000')).toBe('1')
     expect(msToSecondsText('0')).toBe('0')
+  })
+
+  it('非整秒的值保留小数，不被四舍五入成整数', () => {
+    // 四舍五入会把 1.5 秒初值写成 "2"，用户不动手保存就落库成 2000 毫秒。
+    expect(msToSecondsText('1500')).toBe('1.5')
+    expect(msToSecondsText('500')).toBe('0.5')
+    expect(msToSecondsText('1001')).toBe('1.001')
+    expect(msToSecondsText('1500')).not.toBe('2')
   })
 
   it('毫秒串的脏值原样返回，不硬套换算', () => {

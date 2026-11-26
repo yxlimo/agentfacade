@@ -109,7 +109,7 @@ test('控制台：走完六个页面、开了两个弹窗，全程 0 条报错',
   await screen.getByRole('tab', { name: /网关/ }).click();
   await screen
     .getByRole('row')
-    .filter({ hasText: '流空闲上限' })
+    .filter({ hasText: '多久算静默' })
     .getByRole('button', { name: '改' })
     .click();
   await expect(screen.getByRole('dialog')).toBeVisible();

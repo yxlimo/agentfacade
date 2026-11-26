@@ -118,7 +118,7 @@ test('配置页：界面上的项与 ListConfig 给的清单一致，分组 tab 
   await expect(browser).toHaveURL('/admin/config');
 });
 
-test('热设置：改「流空闲上限」立刻生效，弹窗不说要重启，能清回默认值', async ({
+test('热设置：改「多久算静默」立刻生效，弹窗不说要重启，能清回默认值', async ({
   app,
   screen,
   browser,
@@ -128,7 +128,8 @@ test('热设置：改「流空闲上限」立刻生效，弹窗不说要重启�
   await screen.getByRole('link', { name: '配置' }).click();
   await screen.getByRole('tab', { name: /网关/ }).click();
 
-  const row = screen.getByRole('row').filter({ hasText: '流空闲上限' });
+  // 项名是后端给的 label（lib/admin/config.ts 的 LABELS），面板不自己写死文案。
+  const row = screen.getByRole('row').filter({ hasText: '多久算静默' });
   await expect(row).toBeVisible();
   // 热设置：整页那句说的是「立刻生效」，不是「要重启」。
   await expect(
@@ -138,14 +139,16 @@ test('热设置：改「流空闲上限」立刻生效，弹窗不说要重启�
   await row.getByRole('button', { name: '改' }).click();
   const dialog = screen.getByRole('dialog');
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByLabel('新值')).toHaveValue('180000');
+  // 弹窗初值是秒（契约里是 180000 毫秒）。
+  await expect(dialog.getByLabel('新值')).toHaveValue('180');
   await expect(dialog.getByLabel('新值')).toBeVisible();
-  await dialog.getByLabel('新值').fill('5000');
+  // 面板上填的是秒：5 秒（600000 毫秒的上限换算过来是 600 秒，不会越界）。
+  await dialog.getByLabel('新值').fill('5');
   await dialog.getByRole('button', { name: '保存' }).click();
   await expect(dialog).toBeHidden();
 
   // 这一行立刻是新值，来源变成数据库覆盖。
-  await expect(row).toContainText('5000');
+  await expect(row).toContainText('5 秒');
   await expect(row).toContainText('数据库覆盖');
 
   // 服务端那边生效的也是这个值（面板上看到的不只是本地状态）。
@@ -162,7 +165,7 @@ test('热设置：改「流空闲上限」立刻生效，弹窗不说要重启�
   // 说了会让人以为得重启一次才算，实际下一个请求就是新值。
   await row.getByRole('button', { name: '改' }).click();
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByLabel('新值')).toHaveValue('5000');
+  await expect(dialog.getByLabel('新值')).toHaveValue('5');
   await expect(dialog.getByText('写入数据库后立即生效。')).toBeVisible();
   await expect(dialog.getByText('重启', { exact: false })).toHaveCount(0);
   await dialog.getByRole('button', { name: '取消' }).click();
@@ -170,7 +173,7 @@ test('热设置：改「流空闲上限」立刻生效，弹窗不说要重启�
 
   // 收拾干净：清回默认值，别把这一轮的值留给这次的其余测试。
   await row.getByRole('button', { name: '清回默认' }).click();
-  await expect(row).toContainText('180000');
+  await expect(row).toContainText('180 秒');
   await expect(row).toContainText('默认值');
 
   await expect(browser).toHaveURL('/admin/config');
@@ -238,4 +241,176 @@ test('配置页：自定义会话头来自后端清单，写入后刷新仍在�
       clear: true,
     }).catch(() => {});
   }
+});
+
+/**
+ * 毫秒设置的另一半：填秒、落库毫秒，读回来的值列与弹窗初值也都是秒。
+ *
+ * 「热设置」那条钉的是写入路径；这条钉读回来的形状 —— 值列与初值都由
+ * displayMilliseconds / msToSecondsText 从 ListConfig 的毫秒算出来，整页刷新
+ * 之后不会变成 5000，也不会被四舍五入成别的数。
+ */
+test('毫秒设置：填 5 秒落库 5000 毫秒，刷新后值列仍说「5 秒」、初值仍是「5」', async ({
+  app,
+  screen,
+  browser,
+}) => {
+  await app.open();
+  await login(screen);
+  await screen.getByRole('link', { name: '配置' }).click();
+  await screen.getByRole('tab', { name: /网关/ }).click();
+
+  const row = screen.getByRole('row').filter({ hasText: '多久算静默' });
+  await row.getByRole('button', { name: '改' }).click();
+  const dialog = screen.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  // 初值是秒：契约里的 180000 毫秒 → 180。
+  await expect(dialog.getByLabel('新值')).toHaveValue('180');
+  await dialog.getByLabel('新值').fill('5');
+  await dialog.getByRole('button', { name: '保存' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(row).toContainText('5 秒');
+
+  try {
+    // 整页刷新：值列那个「5 秒」是算出来的，不是某次保存留在内存里的。
+    await browser.goto('/admin/config');
+    await expect(screen.getByRole('heading', { name: '配置' })).toBeVisible();
+    await screen.getByRole('tab', { name: /网关/ }).click();
+    const after = screen.getByRole('row').filter({ hasText: '多久算静默' });
+    await expect(after).toContainText('5 秒');
+    await expect(after).toContainText('数据库覆盖');
+
+    // 弹窗初值也是秒，不是 5000。
+    await after.getByRole('button', { name: '改' }).click();
+    await expect(dialog.getByLabel('新值')).toHaveValue('5');
+    await dialog.getByRole('button', { name: '取消' }).click();
+    await expect(dialog).toBeHidden();
+
+    // 传输层仍是毫秒：ListConfig 给的是 5000。
+    const listed = await adminRpc<{
+      items?: Array<{ key: string; value: string }>;
+    }>('ListConfig');
+    const item = (listed.items ?? []).find(
+      (entry) => entry.key === 'ROUTER_STREAM_IDLE_MS',
+    );
+    expect(item?.value).toBe('5000');
+  } finally {
+    // 收拾干净：清回默认值，别把这一轮的值留给这次的其余测试。
+    await adminRpc('SetConfig', {
+      key: 'ROUTER_STREAM_IDLE_MS',
+      value: '',
+      clear: true,
+    }).catch(() => {});
+  }
+
+  await expect(browser).toHaveURL('/admin/config');
+});
+
+/**
+ * 填错的数字在面板层就被拦住：一个 SetConfig 都不发，字段下方出提示。
+ *
+ * 必须拦在面板层：服务端对数字项的脏值会静默落回默认值，用户看不到自己填错。
+ * 请求数是拦着 SetConfig 那条路由数出来的 —— 只看「界面没变」不够：填 900 秒时
+ * 服务端会把值按上限收下（存 600000），界面同样会变。
+ */
+test('毫秒设置填越界、填不进数字框的值：一个 SetConfig 都不发，字段下方出提示', async ({
+  app,
+  screen,
+  browser,
+}) => {
+  // 真发出去的请求会被这条路由记下来；正常路径下一次都不该被调用。
+  const sent: string[] = [];
+  await browser.route('**/SetConfig', async (route) => {
+    sent.push(route.request.postData ?? '');
+    await route.fulfill({ status: 200, json: { ok: true } });
+  });
+
+  await app.open();
+  await login(screen);
+  await screen.getByRole('link', { name: '配置' }).click();
+  await screen.getByRole('tab', { name: /网关/ }).click();
+
+  const row = screen.getByRole('row').filter({ hasText: '多久算静默' });
+  await row.getByRole('button', { name: '改' }).click();
+  const dialog = screen.getByRole('dialog');
+  const field = dialog.getByLabel('新值');
+  await expect(field).toBeVisible();
+
+  // 上限 600 秒（契约里的 600000 毫秒）：填 900 秒越界。
+  await field.fill('900');
+  await dialog.getByRole('button', { name: '保存' }).click();
+  await expect(dialog.getByText('不能大于 600 秒')).toBeVisible();
+  await expect(field).toHaveAttribute('aria-invalid', 'true');
+
+  // 数字框不收字母（浏览器自己就拦）：框里是空的，保存同样被拦住。
+  await field.fill('');
+  await field.pressSequentially('abc');
+  await expect(field).toHaveValue('');
+  await dialog.getByRole('button', { name: '保存' }).click();
+  await expect(dialog.getByText('这一项不能为空')).toBeVisible();
+
+  // 两次都被拦住：一个请求都没有。
+  expect(sent).toEqual([]);
+
+  // 弹窗留着让用户接着改；取消掉，库里什么都没动。
+  await dialog.getByRole('button', { name: '取消' }).click();
+  await expect(dialog).toBeHidden();
+  const listed = await adminRpc<{
+    items?: Array<{ key: string; value: string; source: string }>;
+  }>('ListConfig');
+  const item = (listed.items ?? []).find(
+    (entry) => entry.key === 'ROUTER_STREAM_IDLE_MS',
+  );
+  expect(item?.value).toBe('180000');
+  expect(item?.source).toBe('default');
+});
+
+/**
+ * 布尔项是下拉框：选「开启」落库的是 "true"，界面上的中文不外流到库里。
+ *
+ * 用「静默后自动续写」而不是 REQUIRE_API_KEY：e2e 的环境变量钉着后者
+ * （e2e.config.ts 给了 false），改了也不生效，看不到落库的形状。
+ */
+test('布尔项：选「开启」后 ListConfig 里是 true，清回默认后是后端给的 false', async ({
+  app,
+  screen,
+}) => {
+  const key = 'ROUTER_CONTINUE_ON_IDLE';
+
+  /** 这一项在服务端的形状：值 + 来源。面板上看到的必须与它一致。 */
+  const readValue = async (): Promise<{ value?: string; source?: string }> => {
+    const listed = await adminRpc<{
+      items?: Array<{ key: string; value: string; source: string }>;
+    }>('ListConfig');
+    return (listed.items ?? []).find((entry) => entry.key === key) ?? {};
+  };
+
+  await app.open();
+  await login(screen);
+  await screen.getByRole('link', { name: '配置' }).click();
+  await screen.getByRole('tab', { name: /网关/ }).click();
+
+  // 起手是代码里的默认值：关。
+  expect(await readValue()).toMatchObject({ value: 'false', source: 'default' });
+
+  const row = screen.getByRole('row').filter({ hasText: '静默后自动续写' });
+  await expect(row).toBeVisible();
+  await row.getByRole('button', { name: '改' }).click();
+  const dialog = screen.getByRole('dialog');
+  const trigger = dialog.getByLabel('新值');
+  // 下拉框上写的是给人看的中文，不是让人自己打 true。
+  expect((await trigger.textContent())?.trim()).toBe('关闭');
+  await trigger.click();
+  await screen.getByRole('option', { name: '开启' }).click();
+
+  await dialog.getByRole('button', { name: '保存' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(row).toContainText('数据库覆盖');
+  // 落库的是 true，不是界面上的「开启」。
+  expect(await readValue()).toMatchObject({ value: 'true', source: 'database' });
+
+  // 清回默认：回到后端给的默认值 false，不是空串，也不是残留的 true。
+  await row.getByRole('button', { name: '清回默认' }).click();
+  await expect(row).toContainText('默认值');
+  expect(await readValue()).toMatchObject({ value: 'false', source: 'default' });
 });

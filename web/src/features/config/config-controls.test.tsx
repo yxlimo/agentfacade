@@ -34,6 +34,27 @@ function millisecondItem() {
   })
 }
 
+/**
+ * 库里存在非整秒的项：1500 毫秒 —— 有人按毫秒算错了数，或者手工写的库。
+ *
+ * 面板既不能把它显示成 "2 秒"（四舍五入就是替用户改值），也不能自己把它写成
+ * 2000；初值照原样显示，用户不动手保存就被拦住。
+ */
+function fractionalSecondItem() {
+  return create(ConfigItemSchema, {
+    key: 'ROUTER_FIRST_FRAME_MS',
+    label: '首帧时限',
+    value: '1500',
+    fallback: '180000',
+    source: 'database',
+    group: 'gateway',
+    kind: ConfigKind.NUMBER,
+    unit: ConfigUnit.MILLISECONDS,
+    hasMax: true,
+    maxValue: 600000n,
+  })
+}
+
 describe('配置页按契约渲染控件', () => {
   it('毫秒的项显示与填写都是秒，保存发回的仍是毫秒', async () => {
     const user = userEvent.setup({ delay: null })
@@ -135,5 +156,34 @@ describe('配置页按契约渲染控件', () => {
     await user.click(screen.getByRole('button', { name: '保存' }))
 
     await waitFor(() => expect(sent).toEqual(['false']))
+  })
+
+  it('库里是非整秒的值：初值照原样显示，不动手保存就拦住 —— 不替用户四舍五入', async () => {
+    const user = userEvent.setup({ delay: null })
+    const sent: string[] = []
+    const client = mockAdminClient({
+      ListConfig: () =>
+        create(ListConfigResponseSchema, { items: [fractionalSecondItem()] }),
+      SetConfig: (input) => {
+        sent.push(input.value ?? '')
+        return create(SetConfigResponseSchema, { ok: true })
+      },
+    })
+
+    renderWithClient({ client, children: <ConfigPage /> })
+    await user.click(await screen.findByRole('tab', { name: /网关/ }))
+    await screen.findByText('首帧时限')
+
+    // 值列说的是 1.5 秒，不是四舍五入之后的 2 秒。
+    expect(screen.getByText('1.5 秒')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '改' }))
+    // 初值是精确的 1.5：显示成 2 的话，用户什么都没动就保存，落库就变成 2000。
+    expect(screen.getByLabelText('新值')).toHaveValue(1.5)
+
+    // 原样保存：小数不是合法的输入，面板拦住，一个请求都不发。
+    await user.click(screen.getByRole('button', { name: '保存' }))
+    expect(await screen.findByText('这一项要填整数')).toBeInTheDocument()
+    expect(sent).toEqual([])
   })
 })

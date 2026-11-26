@@ -157,8 +157,8 @@ function displayText(
 /**
  * 弹窗里的初值。
  *
- * 毫秒的项换成秒（毫秒是整数，秒取整）；布尔没有值时按关闭起手；敏感项的值读不
- * 出来，一律从空开始。
+ * 毫秒的项换成秒，换算不做四舍五入：初值必须是库里那个数，面板不替用户定。
+ * 布尔没有值时按关闭起手；敏感项的值读不出来，一律从空开始。
  */
 function initialDraft(item: ConfigItem): string {
   if (item.secret) return ''
