@@ -2120,7 +2120,7 @@ export function sendError(ctx: Koa.Context, e: unknown, headers: Record<string, 
   // opencode reads this header ahead of its own error classification: a terminal
   // failure left unmarked gets retried, and a transient one marked false does not
   if (!Object.keys(extra).some((key) => key.toLowerCase() === "x-should-retry")) {
-    extra["x-should-retry"] = classifyUpstreamError(e).resendable ? "true" : "false";
+    extra["x-should-retry"] = classifyUpstreamError(e).callerShouldResend ? "true" : "false";
   }
   const status = typeof err?.status === "number" ? err.status : 500;
   if (ctx.res.headersSent) {

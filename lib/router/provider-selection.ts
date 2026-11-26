@@ -207,10 +207,10 @@ void finiteKindUnion;
 /**
  * Whether the caller should resend the whole request
  *
- * A different question from retryable: a rate-limited account cannot take
+ * A different question from retrySameAccountNow: a rate-limited account cannot take
  * another attempt right now, but the caller coming back later may well succeed
  */
-export const RESENDABLE_BY_KIND: Record<UpstreamFailureKind, boolean> = {
+export const CALLER_RESEND_BY_KIND: Record<UpstreamFailureKind, boolean> = {
   server: true,
   connection: true,
   timeout: true,
@@ -302,26 +302,29 @@ export interface UpstreamFailure {
   /** A short word for the log. */
   kind: UpstreamFailureKind;
   /**
-   * Does an immediate retry on the same account make sense?
+   * Router's question: does an immediate retry on the same account make sense?
    *
-   * `retryable` only answers whether trying this account again right now is
+   * `retrySameAccountNow` only answers whether trying this account again right now is
    * worth it — it does not answer whether to come back after a wait
    * (rate-limit windows, cooldowns and the client's own timeout decision each
    * have their own path)
    */
-  retryable: boolean;
+  retrySameAccountNow: boolean;
 
-  /** Whether the caller should resend the whole request (the x-should-retry header) */
-  resendable: boolean;
+  /**
+   * Caller's question: should the caller resend the whole request?
+   * This is the x-should-retry header, not the router's same-account retry
+   */
+  callerShouldResend: boolean;
 }
 
 function classifiedFailure(
   kind: UpstreamFailureKind,
   status: number | null,
   degradable: boolean,
-  retryable: boolean,
+  retrySameAccountNow: boolean,
 ): UpstreamFailure {
-  return { degradable, status, kind, retryable, resendable: RESENDABLE_BY_KIND[kind] };
+  return { degradable, status, kind, retrySameAccountNow, callerShouldResend: CALLER_RESEND_BY_KIND[kind] };
 }
 /**
  * Is this failure the candidate's fault?
@@ -390,7 +393,7 @@ export function classifyUpstreamError(error: unknown): UpstreamFailure {
   }
   // The network failure keeps its own name: "the host does not resolve" is a
   // different problem from "the connection broke", and the two are handled
-  // differently (see the retryable field above and
+  // differently (see the retrySameAccountNow field above and
   // cooldownForFailure in account-cooldown.ts).
   const network = networkReason(error);
   if (network) return classifiedFailure(network, null, true, network === "connection");

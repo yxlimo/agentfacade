@@ -16,8 +16,8 @@
 //   9 手写错误响应也带 x-should-retry: false（真 Koa app）：
 //     未知模型 404、无效 api key 401、目录 400/404、头模板取不到会话 400
 //
-// 判据只有一份：classifyUpstreamError(e).resendable。它问的是「调用方要不要重发
-// 整个请求」，与 retryable（路由器现在要不要换账号再试）不是同一个问题。opencode
+// 判据只有一份：classifyUpstreamError(e).callerShouldResend。它问的是「调用方要不要重发
+// 整个请求」，与 retrySameAccountNow（路由器现在要不要换账号再试）不是同一个问题。opencode
 // 把这个头看得比自己的分类更重，所以「不该重试」必须明写 false，不能靠它猜
 
 import fs from "node:fs";
@@ -38,7 +38,7 @@ const { createOpenPlatform, syncPlatformModels } = await import("../lib/open-pla
 const { addAccount } = await import("../lib/providers.ts");
 const { writeOpenPlatformKey } = await import("../lib/open-platform-credentials.ts");
 const { ClientGoneError, StreamIdleError, sendError } = await import("../lib/router/deliver.ts");
-const { classifyUpstreamError, FAILURE_KINDS, RESENDABLE_BY_KIND } = await import("../lib/router/provider-selection.ts");
+const { classifyUpstreamError, FAILURE_KINDS, CALLER_RESEND_BY_KIND } = await import("../lib/router/provider-selection.ts");
 const { handle } = await import("../lib/router/handle.ts");
 const { loadKeys } = await import("../lib/api-keys.ts");
 const { app } = await import("../lib/router/app.ts");
@@ -295,22 +295,22 @@ check(
 const idleFailure = classifyUpstreamError(new StreamIdleError(150, "model=fake", "mid-stream"));
 const limitedFailure = classifyUpstreamError(new AuthError("rate limited", "", 429));
 check(
-  "timeout：retryable false 而 resendable true",
-  idleFailure.kind === "timeout" && idleFailure.retryable === false && idleFailure.resendable === true,
+  "timeout：retrySameAccountNow false 而 callerShouldResend true",
+  idleFailure.kind === "timeout" && idleFailure.retrySameAccountNow === false && idleFailure.callerShouldResend === true,
   JSON.stringify(idleFailure),
 );
 check(
-  "rate-limit：retryable false 而 resendable true",
-  limitedFailure.kind === "rate-limit" && limitedFailure.retryable === false && limitedFailure.resendable === true,
+  "rate-limit：retrySameAccountNow false 而 callerShouldResend true",
+  limitedFailure.kind === "rate-limit" && limitedFailure.retrySameAccountNow === false && limitedFailure.callerShouldResend === true,
   JSON.stringify(limitedFailure),
 );
-const verdictKeys = Object.keys(RESENDABLE_BY_KIND).sort();
+const verdictKeys = Object.keys(CALLER_RESEND_BY_KIND).sort();
 const kindNames = [...FAILURE_KINDS].sort();
 check(
   "每个 kind 都有 verdict，键集合一致",
   verdictKeys.length === kindNames.length &&
     kindNames.every((kind, i) => verdictKeys[i] === kind) &&
-    kindNames.every((kind) => typeof RESENDABLE_BY_KIND[kind] === "boolean"),
+    kindNames.every((kind) => typeof CALLER_RESEND_BY_KIND[kind] === "boolean"),
   `${kindNames.join(",")} vs ${verdictKeys.join(",")}`,
 );
 const shouldResend = ["server", "connection", "timeout", "rate-limit"] as const;
@@ -327,9 +327,9 @@ const shouldNotResend = [
 ] as const;
 check(
   "verdict 按 kind 分开（可重发四类，其余不重发）",
-  shouldResend.every((kind) => RESENDABLE_BY_KIND[kind] === true) &&
-    shouldNotResend.every((kind) => RESENDABLE_BY_KIND[kind] === false),
-  JSON.stringify(RESENDABLE_BY_KIND),
+  shouldResend.every((kind) => CALLER_RESEND_BY_KIND[kind] === true) &&
+    shouldNotResend.every((kind) => CALLER_RESEND_BY_KIND[kind] === false),
+  JSON.stringify(CALLER_RESEND_BY_KIND),
 );
 
 upstream.closeAllConnections?.();
