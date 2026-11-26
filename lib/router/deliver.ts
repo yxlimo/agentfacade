@@ -568,6 +568,11 @@ function retryableIdleMessage(e: unknown): string | null {
 
 /** Every other failure keeps its existing error frame byte for byte */
 function openAIErrorFrame(e: unknown): string | null {
+  // 提交之后的工具静默：这一类**不受** ROUTER_IDLE_ERROR_RETRYABLE 管（用户明确要它
+  // 可重试），形状与可重试的中途静默一样。
+  if (e instanceof ToolCallInFlightTimeoutError) {
+    return sseData({ error: { type: "server_error", code: "upstream_idle_timeout", message: e.message } });
+  }
   const message = retryableIdleMessage(e);
   if (message === null) return null;
   return sseData({ error: { type: "server_error", code: "upstream_idle_timeout", message } });
@@ -621,6 +626,12 @@ interface ContinueState {
   toolInFlight: boolean;
   /** 已经用掉几次续写。 */
   attempts: number;
+  /** 已经写给客户端多少字节（提交之后才有数）。 */
+  clientBytes: number;
+  /** 见过哪几类帧，按首次出现的顺序（正文/思考/工具名/参数/完成）。 */
+  frameKinds: string[];
+  /** 累积到的参数字节数。 */
+  argBytes: number;
 }
 
 /**
@@ -674,7 +685,10 @@ async function continueWith(
   if (why || !reopen) {
     // 不续写的时候一定要留一句为什么：从外面只看得见「客户端收到 error 事件」，
     // 到底是开关没开、没重发能力、次数用完还是工具调用在途，只有这里知道。
-    log.warn(`[DELIVER] 静默后不续写：${why ?? "没有重发能力"}（已产出 ${state.text.length} 字，已续 ${state.attempts} 次）`);
+    log.warn(
+      `[DELIVER] 静默后不续写：${why ?? "没有重发能力"}（已产出 ${state.text.length} 字，已续 ${state.attempts} 次，` +
+        `已发给客户端 ${state.clientBytes} 字节，帧序 ${frameKindLine(state)}，参数累积 ${state.argBytes} 字节）`,
+    );
     return { kind: "blocked", error };
   }
   state.attempts++;
@@ -687,6 +701,20 @@ async function continueWith(
   }
 }
 
+/** 帧的种类：日志里按首次出现的顺序记下来（最多六种）。 */
+const FRAME_KINDS = ["正文", "思考", "工具名", "参数", "完成"] as const;
+
+/**
+ * 记下一帧是哪种：去重，按首次出现的顺序。
+ *
+ * 只有种类与顺序，不记内容 —— 这一层从不把正文写进日志。
+ */
+function noteFrameKind(state: ContinueState, kind: (typeof FRAME_KINDS)[number]): void {
+  if (state.frameKinds.length >= FRAME_KINDS.length) return;
+  if (state.frameKinds.includes(kind)) return;
+  state.frameKinds.push(kind);
+}
+
 /** OpenAI 方言的一帧里产出了什么（正文、推理、工具调用在途）。 */
 function trackOpenAIChunk(chunk: Json, state: ContinueState): void {
   const delta = (chunk as { choices?: Array<{ delta?: Json }> })?.choices?.[0]?.delta;
@@ -696,6 +724,48 @@ function trackOpenAIChunk(chunk: Json, state: ContinueState): void {
   const reasoning = typeof d.reasoning_content === "string" ? d.reasoning_content : d.reasoning;
   if (typeof reasoning === "string" && reasoning) state.reasoning += reasoning;
   if (Array.isArray(d.tool_calls) && d.tool_calls.length > 0) state.toolInFlight = true;
+  noteFrameKinds(chunk, state);
+}
+
+/**
+ * 记下这一帧是哪种（正文/思考/工具名/参数/完成）与累积的参数字节。
+ *
+ * 与 trackOpenAIChunk 分开：帧序是给日志看的（两条投递路径都要记），而正文与工具
+ * 在途只跟续写有关。
+ */
+function noteFrameKinds(chunk: Json, state: ContinueState): void {
+  const delta = (chunk as { choices?: Array<{ delta?: Json }> })?.choices?.[0]?.delta;
+  if (delta && typeof delta === "object") {
+    const d = delta as Json;
+    if (typeof d.content === "string" && d.content) noteFrameKind(state, "正文");
+    const reasoning = typeof d.reasoning_content === "string" ? d.reasoning_content : d.reasoning;
+    if (typeof reasoning === "string" && reasoning) noteFrameKind(state, "思考");
+    if (Array.isArray(d.tool_calls)) {
+      for (const call of d.tool_calls) {
+        const fn = jsonObjectOf(jsonAt(call as JsonValue, "function"));
+        if (typeof fn?.name === "string" && fn.name) noteFrameKind(state, "工具名");
+        if (typeof fn?.arguments === "string" && fn.arguments) {
+          noteFrameKind(state, "参数");
+          state.argBytes += fn.arguments.length;
+        }
+      }
+    }
+  }
+  const finish = (chunk as { choices?: Array<{ finish_reason?: unknown }> })?.choices?.[0]?.finish_reason;
+  if (finish) noteFrameKind(state, "完成");
+}
+
+/**
+ * 帧的种类顺序，写进日志给人看：正文/思考/工具名/参数/完成。
+ */
+function frameKindLine(state: ContinueState): string {
+  return state.frameKinds.length > 0 ? state.frameKinds.join("/") : "无";
+}
+
+
+/** 一帧有多少字节（写给客户端的那些）。 */
+function frameBytes(chunk: string | Uint8Array): number {
+  return typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.length;
 }
 /** 一帧是不是「只带角色」的开场帧：续写的轮次不重发它（角色已经立过了）。 */
 function isRoleOnlyChunk(chunk: Json): boolean {
@@ -858,6 +928,32 @@ export class ToolCallSilenceError extends Error {
   constructor(idleMs: number, label: string) {
     super(idleSentence(idleMs, label, "mid-stream"));
     this.name = "ToolCallSilenceError";
+    this.idleMs = idleMs;
+    this.label = label;
+  }
+}
+
+
+/**
+ * 提交之后：工具调用还在写，上游却安静了。
+ *
+ * 提交点已经过去（客户端已经拿到了字节），续写不可能 —— 半截 JSON 拼不回来。所以
+ * 这一次的失败只能是把话说清楚：「超时了，工具调用还在写」。客户端据此决定要不要
+ * 重发。
+ *
+ * 形状与中途静默那句话一致，但**不受** ROUTER_IDLE_ERROR_RETRYABLE 管：那一类改写
+ * 是给「中途静默」用的，这一类用户明确要它可重试。
+ *
+ * `name` 是 TimeoutError：分类器据此判成「超时」，记账那一层记 504（超时）而不是
+ * 502（上游挂了）—— 上游没坏，坏的是这一条连接。
+ */
+export class ToolCallInFlightTimeoutError extends Error {
+  readonly idleMs: number;
+  readonly label: string;
+
+  constructor(idleMs: number, label: string) {
+    super(`upstream timed out after ${idleSpan(idleMs)} mid-stream: a tool call was still being written (${label})`);
+    this.name = "TimeoutError";
     this.idleMs = idleMs;
     this.label = label;
   }
@@ -1206,100 +1302,176 @@ function isNonEmptyContent(value: unknown): boolean {
   return false;
 }
 
-/** Anthropic 的一份 payload（已解析）是不是对用户可见的内容。 */
-function anthropicPayloadIsContent(json: Json): boolean {
-  if (!json || typeof json !== "object" || Array.isArray(json)) return false;
-  const type = json.type;
-  if (type === "content_block_delta") {
-    const delta = json.delta;
-    if (!delta || typeof delta !== "object") return false;
-    if (delta.type === "text_delta") return isNonEmptyContent(delta.text);
-    if (delta.type === "thinking_delta") return isNonEmptyContent(delta.thinking);
-    if (delta.type === "input_json_delta") return isNonEmptyContent(delta.partial_json);
+/**
+ * 一段参数是不是一个完整的 JSON 值。
+ *
+ * 工具调用的参数是一段 JSON 文本，上游分片送过来。只有拼完整了客户端才能执行：
+ * 半截 JSON 客户端既跑不了也补不上 —— 所以「参数收全了」之前，这一帧不算内容。
+ */
+function isCompleteJsonArgs(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  try {
+    JSON.parse(trimmed);
+    return true;
+  } catch {
     return false;
   }
-  if (type === "content_block_start") {
-    const block = json.content_block;
-    if (!block || typeof block !== "object") return false;
-    // A tool_use start with an empty input is only the opening frame: the
-    // arguments arrive later and the upstream may stay silent for minutes
-    // after it. Committing here flushes a half-built tool call to the client
-    // that can neither be continued nor taken back
-    const input: unknown = block.input;
-    return (
-      block.type === "tool_use" &&
-      input !== null &&
-      typeof input === "object" &&
-      !Array.isArray(input) &&
-      Object.keys(input).length > 0
-    );
-  }
-  return false;
-}
-
-/** OpenAI 的一份 payload（已解析）是不是对用户可见的内容。 */
-function openaiPayloadIsContent(json: Json): boolean {
-  if (!json || typeof json !== "object" || Array.isArray(json)) return false;
-  const choices = json.choices;
-  if (!Array.isArray(choices) || choices.length === 0) return false;
-  const delta = choices[0]?.delta;
-  if (!delta || typeof delta !== "object") return false;
-  if (isNonEmptyContent(delta.content)) return true;
-  if (isNonEmptyContent(delta.reasoning_content)) return true;
-  // A tool_calls frame with empty arguments is only the opening frame (id and
-  // name); the arguments arrive later and the upstream may stay silent for
-  // minutes after it. Committing here flushes a half-built tool call to the
-  // client that can neither be continued nor taken back
-  const calls: Json[] = Array.isArray(delta.tool_calls) ? delta.tool_calls : [];
-  for (const call of calls) {
-    const fn = call?.function;
-    if (typeof fn?.arguments === "string" && fn.arguments.length > 0) return true;
-  }
-  return false;
 }
 
 /**
- * 一帧是不是「工具调用的开局帧」：工具的名字来了，参数还没来。
+ * 工具调用的参数按 index 累积。
  *
- * 判据与「这块内容算不算数」是同一套反过来：OpenAI 那边是 tool_calls 里某条 call
- * 的 function.arguments 为空；Anthropic 那边是 content_block_start 的 tool_use 且
- * input 是空对象。两边都说明上游已经把工具调用开了个头 —— 而上游可以在这个开局
- * 帧之后一声不吭几百秒。
+ * 上游给每个工具调用一个 index，参数分片都挂在它下面；没有 index 的按它在帧里
+ * 出现的位置编号（0,1,2…），这样同一个调用的分片落进同一份累积。
  */
-function isToolOpeningFrame(json: Json, dialect: UpstreamDialect): boolean {
-  if (dialect === "anthropic") return isAnthropicToolOpening(json);
-  return isOpenAIToolOpening(json);
-}
+class ToolArgumentLedger {
+  private readonly args = new Map<number, string>();
+  private total = 0;
 
-/** Anthropic 的 tool_use 开局块：input 是空对象（或者压根没有 input）。 */
-function isAnthropicToolOpening(json: Json): boolean {
-  if (!json || typeof json !== "object" || Array.isArray(json)) return false;
-  if (json.type !== "content_block_start") return false;
-  const block = json.content_block;
-  if (!block || typeof block !== "object" || Array.isArray(block)) return false;
-  if (block.type !== "tool_use") return false;
-  const input: unknown = block.input;
-  // 空对象（或者没有 input）是开局帧：参数还在后面。带键的 input 是内容。
-  if (input === null || input === undefined) return true;
-  if (typeof input !== "object" || Array.isArray(input)) return false;
-  return Object.keys(input).length === 0;
-}
-
-/** OpenAI 的 tool_calls 开局帧：某条 call 的 function.arguments 是空的。 */
-function isOpenAIToolOpening(json: Json): boolean {
-  if (!json || typeof json !== "object" || Array.isArray(json)) return false;
-  const choices = json.choices;
-  if (!Array.isArray(choices) || choices.length === 0) return false;
-  const delta = choices[0]?.delta;
-  if (!delta || typeof delta !== "object") return false;
-  const calls: Json[] = Array.isArray(delta.tool_calls) ? delta.tool_calls : [];
-  if (calls.length === 0) return false;
-  // 参数到了就不是开局帧了：那帧算内容（见 openaiPayloadIsContent）。
-  for (const call of calls) {
-    const args = call?.function?.arguments;
-    if (typeof args === "string" && args.length > 0) return false;
+  /** 收下一段参数，返回这个工具调用的编号与累积后的全部参数。 */
+  push(index: number, fragment: string): { key: number; merged: string } {
+    const key = index;
+    const merged = (this.args.get(key) ?? "") + fragment;
+    this.args.set(key, merged);
+    this.total += fragment.length;
+    return { key, merged };
   }
-  return true;
+
+  /** 累积的参数字节总数。 */
+  get bytes(): number {
+    return this.total;
+  }
+}
+
+/**
+ * 一条流里的工具调用状态。
+ *
+ * 判据只有一条：**参数收全了（能 JSON.parse）才算内容**。收全之前这一帧扣在内容
+ * 闸里，客户端一个字节都看不到 —— 半截参数对它没有用处，提交之后也拼不回来。
+ *
+ * 正文与思考不缓冲：它们到了就是到了。
+ */
+class ToolCallTracker {
+  private readonly ledger = new ToolArgumentLedger();
+  /** 参数还没收全的工具调用。 */
+  private readonly pending = new Set<number>();
+  private readonly dialect: UpstreamDialect;
+  /** 最近一帧带的是不是工具（开局帧或参数碎片）。 */
+  private toolFrameSeen = false;
+
+  constructor(dialect: UpstreamDialect) {
+    this.dialect = dialect;
+  }
+
+  /**
+   * 收下一帧：这一帧是不是对用户可见的内容？
+   */
+  observe(json: Json): boolean {
+    this.toolFrameSeen = false;
+    return this.dialect === "anthropic" ? this.observeAnthropic(json) : this.observeOpenAI(json);
+  }
+
+  /** 最近一帧带的是不是工具（开局帧或参数碎片）。 */
+  get toolFrame(): boolean {
+    return this.toolFrameSeen;
+  }
+
+  /** 有工具调用的参数没收全吗？ */
+  get inFlight(): boolean {
+    return this.pending.size > 0;
+  }
+
+  /** 累积的参数字节总数。 */
+  get argBytes(): number {
+    return this.ledger.bytes;
+  }
+
+  /**
+   * 参数超了上限：不再等它收全。
+   *
+   * 这时提交点已经过去，工具调用就当它结束了 —— 此后的静默归中途那个窗口，不然
+   * 一条超长的参数会把请求永远吊着。
+   */
+  forceComplete(): void {
+    this.pending.clear();
+  }
+
+  private observeOpenAI(json: Json): boolean {
+    const choices = jsonAt(json, "choices");
+    if (!Array.isArray(choices) || choices.length === 0) return false;
+    const delta = jsonObjectOf(jsonAt(choices[0] as JsonValue, "delta"));
+    if (!delta) return false;
+    if (isNonEmptyContent(delta.content)) return true;
+    if (isNonEmptyContent(delta.reasoning_content)) return true;
+    const calls = delta.tool_calls;
+    if (!Array.isArray(calls)) return false;
+    let content = false;
+    for (const [position, call] of calls.entries()) {
+      const callRecord = jsonObjectOf(call);
+      const fn = callRecord ? jsonObjectOf(callRecord.function) : null;
+      const name = typeof fn?.name === "string" ? fn.name : "";
+      const fragment = typeof fn?.arguments === "string" ? fn.arguments : "";
+      // 名字与参数都没有的条目不是工具帧（有些上游发的是别的字段）。
+      if (!name && !fragment) continue;
+      this.toolFrameSeen = true;
+      const index = typeof callRecord?.index === "number" ? callRecord.index : position;
+      const { key, merged } = this.ledger.push(index, fragment);
+      if (isCompleteJsonArgs(merged)) {
+        this.pending.delete(key);
+        // 参数收全了：这一帧就是内容，提交点落在这一帧。
+        content = true;
+      } else {
+        this.pending.add(key);
+      }
+    }
+    return content;
+  }
+
+  private observeAnthropic(json: Json): boolean {
+    const type = jsonAt(json, "type");
+    if (type === "content_block_delta") {
+      const delta = jsonObjectOf(jsonAt(json, "delta"));
+      if (!delta) return false;
+      if (delta.type === "text_delta") return isNonEmptyContent(delta.text);
+      if (delta.type === "thinking_delta") return isNonEmptyContent(delta.thinking);
+      if (delta.type !== "input_json_delta") return false;
+      const fragment = typeof delta.partial_json === "string" ? delta.partial_json : "";
+      this.toolFrameSeen = true;
+      const { key, merged } = this.ledger.push(this.blockIndex(json), fragment);
+      if (isCompleteJsonArgs(merged)) {
+        this.pending.delete(key);
+        return true;
+      }
+      this.pending.add(key);
+      return false;
+    }
+    if (type === "content_block_start") {
+      const block = jsonObjectOf(jsonAt(json, "content_block"));
+      if (!block || block.type !== "tool_use") return false;
+      const input = block.input;
+      // 带键的 input 本身就是内容（上游一次把参数给全了）。
+      if (input !== null && typeof input === "object" && !Array.isArray(input) && Object.keys(input).length > 0) {
+        return true;
+      }
+      // 空 input 是开局帧：参数还在后面。
+      this.toolFrameSeen = true;
+      this.pending.add(this.blockIndex(json));
+      return false;
+    }
+    if (type === "content_block_stop") {
+      // 块结束了：参数就是它能给的那个样子（收不全也是结束了）。
+      this.pending.delete(this.blockIndex(json));
+      return true;
+    }
+    return false;
+  }
+
+  /** 内容块的下标：没有就是 0。 */
+  private blockIndex(json: Json): number {
+    const index = jsonAt(json, "index");
+    return typeof index === "number" ? index : 0;
+  }
 }
 
 /**
@@ -1320,32 +1492,33 @@ function toolOpeningMs(): number {
 /**
  * 工具开局之后那道闸：几时开始计时、还剩多久、到点了是什么错。
  *
- * 只有内容闸用得上：工具开局帧按判据**不算内容**，所以它一定被扣在闸里 —— 从它
- * 到达那一刻起，上游可能一声不吭。这道闸量的就是「开局之后等参数等了多久」。
+ * 只有内容闸用得上：工具帧按判据**不算内容**（参数没收全），所以它一定被扣在
+ * 闸里 —— 从它到达那一刻起，上游可能一声不吭。这道闸量的就是「上一个工具帧
+ * 之后等了多久」。
  */
 interface ToolOpeningGate {
   /** 这个上限（毫秒）。0 = 关着：沿用中途那个窗口，也就是今天的行为。 */
   ms: number;
   /** 没在计时的时候是 null；计时之后是「还剩几毫秒」（负数表示已经到点）。 */
   remainingMs(): number | null;
-  /** 看一帧：它是不是工具开局帧？是的话从这一刻起开始计时。 */
-  observe(json: Json): void;
+  /** 看一帧：它是不是工具帧？是的话从这一刻起开始计时。 */
+  observe(tracker: ToolCallTracker): void;
   /** The timeout: this error (the tool opened, the arguments did not come). */
   timeoutError(): ToolCallSilenceError;
 }
 
-function toolOpeningGate(dialect: UpstreamDialect, label: string): ToolOpeningGate {
+function toolOpeningGate(label: string): ToolOpeningGate {
   const ms = toolOpeningMs();
   let deadline: number | null = null;
   return {
     ms,
     remainingMs: () => (deadline === null ? null : deadline - Date.now()),
-    observe(json) {
+    observe(tracker) {
       // 关着的时候什么也不看：今天的行为一个字都不改。
       if (!(ms > 0)) return;
-      // 只认第一帧：后来的开局帧不许把死线往后推，否则一串开局帧能把超时一直拖下去。
-      if (deadline !== null) return;
-      if (!isToolOpeningFrame(json, dialect)) return;
+      // 锚点是**最后一个工具帧**：参数在慢慢流动（每 20ms 一片）不算静默，慢流
+      // 不该被砍。只有工具帧推这条死线。
+      if (!tracker.toolFrame) return;
       deadline = Date.now() + ms;
     },
     timeoutError: () => {
@@ -1403,6 +1576,76 @@ function replayHeld(held: Uint8Array[], reader: ReadableStreamDefaultReader<Uint
   });
 }
 
+
+/**
+ * 提交之后：工具调用还在写，上游却安静了 —— 按工具那个窗口快速失败。
+ *
+ * 提交点已经过去，续写不可能（半截 JSON 拼不回来），所以这一次的失败只能是超时，
+ * 而且要快：等满中途那个窗口（生产上 300s）用户什么都拿不到。窗口用
+ * ROUTER_TOOL_OPENING_MS：开着的时候按它算（生产上 60s），关着的时候沿用中途那个
+ * 窗口 —— 今天的行为一个字都不改。
+ *
+ * 锚点是**最后一个工具帧**：参数在慢慢流动（每 20ms 一片）不算静默，慢流不该被砍。
+ */
+function withToolSilenceGuard(
+  body: ReadableStream<Uint8Array>,
+  dialect: UpstreamDialect,
+  label: string,
+): ReadableStream<Uint8Array> {
+  const windowMs = toolOpeningMs();
+  // 键关着的时候沿用中途那道闸：这里什么都不做。
+  if (!(windowMs > 0)) return body;
+  const reader = body.getReader();
+  const tracker = new ToolCallTracker(dialect);
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let lastToolAt = 0;
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const deadline = tracker.inFlight ? lastToolAt + windowMs : null;
+        const read = reader.read();
+        const { done, value } =
+          deadline === null
+            ? await read
+            : await within(read, Math.max(0, deadline - Date.now()), () => new ToolCallInFlightTimeoutError(windowMs, label));
+        if (done) {
+          controller.close();
+          return;
+        }
+        if (value && value.length > 0) {
+          buffer += decoder.decode(value, { stream: true });
+          let idx: number;
+          while ((idx = buffer.indexOf("\n\n")) >= 0) {
+            const raw = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            const frame = parseRawSseFrame(raw);
+            if (!frame) continue;
+            let json: Json;
+            try {
+              json = parseLooseJson(frame.data);
+            } catch {
+              continue;
+            }
+            tracker.observe(json);
+            if (tracker.toolFrame) lastToolAt = Date.now();
+            // 参数累积超了上限：不再等它收全（此后静默归中途那个窗口）。
+            if (tracker.argBytes > CONTENT_GATE_MAX_BYTES) tracker.forceComplete();
+          }
+        }
+        if (value) controller.enqueue(value);
+      } catch (e) {
+        // 上游那一侧要收掉：它还挂着就是在计费。
+        await cancelReader(reader);
+        throw e;
+      }
+    },
+    cancel(reason) {
+      void reader.cancel(reason);
+    },
+  });
+}
+
 /**
  * 把上游的帧扣在手里，直到出现第一块对用户可见的内容。
  *
@@ -1435,7 +1678,8 @@ async function gateUntilContent(
   let frameCount = 0;
   let buffer = "";
   // 工具开局之后那道闸（键关着的时候它什么也不做）。
-  const opening = toolOpeningGate(dialect, label);
+  const tracker = new ToolCallTracker(dialect);
+  const opening = toolOpeningGate(label);
 
   try {
     for (;;) {
@@ -1476,11 +1720,17 @@ async function gateUntilContent(
           continue;
         }
         // 工具开局帧：从这一刻起开始计时（上限关着的时候什么也不发生）。
-        opening.observe(json);
-        const isContent = dialect === "anthropic" ? anthropicPayloadIsContent(json) : openaiPayloadIsContent(json);
+        const isContent = tracker.observe(json);
+        // 工具帧：从这一刻起开始计时（上限关着的时候什么也不发生）。
+        opening.observe(tracker);
         if (isContent) {
           return replayHeld(held, reader);
         }
+      }
+      // 参数累积超了上限：不再等它收全，立刻提交（此后静默归中途那个窗口）。
+      if (tracker.argBytes > CONTENT_GATE_MAX_BYTES) {
+        tracker.forceComplete();
+        return replayHeld(held, reader);
       }
       if (heldBytes > CONTENT_GATE_MAX_BYTES || frameCount > CONTENT_GATE_MAX_FRAMES) {
         return replayHeld(held, reader);
@@ -1507,7 +1757,8 @@ async function gateChunksUntilContent(iterator: AsyncIterator<Json>, label: stri
   let heldBytes = 0;
   let frameCount = 0;
   // 工具开局之后那道闸（键关着的时候它什么也不做）。
-  const opening = toolOpeningGate("openai", label);
+  const tracker = new ToolCallTracker("openai");
+  const opening = toolOpeningGate(label);
   try {
     for (;;) {
       // 工具开局之后的上限：这一读最多等那么久。没在计时的时候就是一直等。
@@ -1522,8 +1773,14 @@ async function gateChunksUntilContent(iterator: AsyncIterator<Json>, label: stri
       frameCount++;
       heldBytes += JSON.stringify(next.value ?? null).length;
       // 工具开局帧：从这一刻起开始计时（上限关着的时候什么也不发生）。
-      opening.observe(next.value);
-      if (openaiPayloadIsContent(next.value)) return held;
+      const isContent = tracker.observe(next.value);
+      opening.observe(tracker);
+      if (isContent) return held;
+      // 参数累积超了上限：不再等它收全，立刻提交（此后静默归中途那个窗口）。
+      if (tracker.argBytes > CONTENT_GATE_MAX_BYTES) {
+        tracker.forceComplete();
+        return held;
+      }
       if (heldBytes > CONTENT_GATE_MAX_BYTES || frameCount > CONTENT_GATE_MAX_FRAMES) return held;
     }
   } catch (e) {
@@ -1693,6 +1950,8 @@ export async function deliverOpenAIStream(
     // 第一帧读到不等于答复开始：信封扣住，等第一块对用户可见的内容。内容之前
     // 上游失败或静默，头还没发，原样抛出换目标。
     upstream = await gateUntilContent(upstream, "openai", `model=${model}`, abort.signal);
+    // 提交之后：工具调用在途又静默 → 按工具那个窗口快速失败（可重试）。
+    upstream = withToolSilenceGuard(upstream, "openai", `model=${model}`);
   } catch (e) {
     if (e instanceof ClientGoneError) {
       reportClientGone(ctx, onFailure);
@@ -1720,7 +1979,15 @@ export async function deliverOpenAIStream(
   }
   // 续写：一条答复一个转换器，多轮上游流在它下游串起来（见 chainedOpenAIChunks）
   // ——每条流换一个转换器会重发开场帧、重发 content_block_start，块编号被顶掉。
-  const continueState: ContinueState = { text: "", reasoning: "", toolInFlight: false, attempts: 0 };
+  const continueState: ContinueState = {
+    text: "",
+    reasoning: "",
+    toolInFlight: false,
+    attempts: 0,
+    clientBytes: 0,
+    frameKinds: [],
+    argBytes: 0,
+  };
   let current = upstream;
   const nextStream = async (e: unknown): Promise<ContinueOutcome> => {
     const outcome = await continueWith(continueState, reopen, e, `model=${model}`);
@@ -1742,6 +2009,8 @@ export async function deliverOpenAIStream(
         reportClientGone(ctx, onFailure);
         break;
       }
+      // 已经写给客户端多少字节：日志里要能看出「哪一帧先到了客户端」。
+      continueState.clientBytes += frameBytes(chunk);
     }
     // 上游安静的时候客户端断开：这条请求不算成功（客户端一个字都没拿到）。
     reportClientGone(ctx, onFailure);
@@ -1803,6 +2072,8 @@ export async function deliverAnthropicStream(
     // 信封扣住，等第一块对用户可见的内容：内容之前上游失败或静默，头还没发，
     // 原样抛出换目标。
     upstream = await gateUntilContent(upstream, "anthropic", `model=${model}`, abort.signal);
+    // 提交之后：工具调用在途又静默 → 按工具那个窗口快速失败（可重试）。
+    upstream = withToolSilenceGuard(upstream, "anthropic", `model=${model}`);
   } catch (e) {
     if (e instanceof ClientGoneError) {
       reportClientGone(ctx, onFailure);
@@ -2144,7 +2415,15 @@ async function pipeOpenAIChunks(
   reopen?: Reopen,
 ): Promise<void> {
   // 续写把好几条流接成一条答复：片段计数跨轮累加，结束原因取最后一轮。
-  const continueState: ContinueState = { text: "", reasoning: "", toolInFlight: false, attempts: 0 };
+  const continueState: ContinueState = {
+    text: "",
+    reasoning: "",
+    toolInFlight: false,
+    attempts: 0,
+    clientBytes: 0,
+    frameKinds: [],
+    argBytes: 0,
+  };
   const counts: AnswerSegments = { content: 0, thinking: 0, tool: 0 };
   let finishReason: string | undefined;
   const accFinish = (finish: AnswerFinish) => {
@@ -2167,13 +2446,17 @@ async function pipeOpenAIChunks(
             continue;
           }
           firstOfRound = false;
-          if (!(await writeFrame(ctx, sseData(chunk)))) {
+          const frame = sseData(chunk);
+          if (!(await writeFrame(ctx, frame))) {
             // 客户端走了：上游也别接着算（还在计费），这一条也不该记成成功。
             await stopUpstream(upstream, abort);
             reportClientGone(ctx, onFailure);
             roundGone = true;
             break;
           }
+          // 已经写给客户端多少字节、见过哪几类帧：日志里要能看出「哪一帧先到了客户端」。
+          continueState.clientBytes += frameBytes(frame);
+          noteFrameKinds(chunk, continueState);
         }
         if (roundGone) {
           reportClientGone(ctx, onFailure);
