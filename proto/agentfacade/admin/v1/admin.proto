@@ -328,6 +328,21 @@ message SetAccountEnabledResponse {
 
 message ListConfigRequest {}
 
+// 这个设置该用什么控件。前端按它渲染，别自己拿键名后缀去猜 ——
+// 「_MS 结尾就当毫秒」这种推断在键名一改就悄悄失效。
+enum ConfigKind {
+  CONFIG_KIND_UNSPECIFIED = 0;
+  CONFIG_KIND_STRING = 1;
+  CONFIG_KIND_NUMBER = 2;
+  CONFIG_KIND_BOOLEAN = 3;
+}
+
+// 数值的单位。传输一律用代码里的单位（毫秒），换成人看的单位是前端的事。
+enum ConfigUnit {
+  CONFIG_UNIT_UNSPECIFIED = 0;
+  CONFIG_UNIT_MILLISECONDS = 1;
+}
+
 message ConfigItem {
   string key = 1;
   // 给人看的名字：「是否开启 API KEY 验证」这种，不要把 env 的键名甩给人。
@@ -351,6 +366,16 @@ message ConfigItem {
   // 留在库里等：环境变量撤了才轮到它。所以面板两个都看得见 —— 一个是现在
   // 生效的，一个是它写下去等着的。
   string override_value = 10;
+  // 控件类型：字符串、数字、布尔。布尔该是下拉框，不是让人手打 true。
+  ConfigKind kind = 11;
+  // 数字的单位。CONFIG_UNIT_MILLISECONDS 时前端按秒显示与写入，传输仍是毫秒。
+  ConfigUnit unit = 12;
+  // 数值的上下界，只有有界的整数才有。没有界时 has_min / has_max 为假，
+  // 此时 min_value / max_value 无意义 —— 别把 0 当成「下界是 0」。
+  bool has_min = 13;
+  int64 min_value = 14;
+  bool has_max = 15;
+  int64 max_value = 16;
 }
 
 message ListConfigResponse {
