@@ -8,6 +8,8 @@
 
 import { log } from "../log.ts";
 import type { Json } from "../json.ts";
+import { jsonAt, jsonObjectOf, type JsonValue } from "../dialect/json-value.ts";
+import type { Usage } from "../dialect/cache.ts";
 import crypto from "node:crypto";
 import type Koa from "koa";
 import { AuthError } from "../credential.ts";
@@ -364,7 +366,7 @@ function onClientGone(ctx: Koa.Context, body: ReadableStream<Uint8Array> | null 
  * middle of it. A chunk that does not parse yields nothing: the answer is
  * then passed through and the stream reports the failure itself.
  */
-function payloadIn(text: string): any | undefined {
+function payloadIn(text: string): JsonValue | undefined {
   const trimmed = text.trim();
   if (!trimmed) return undefined;
   let candidate = trimmed;
@@ -391,17 +393,19 @@ function payloadIn(text: string): any | undefined {
 function looksLikeErrorPayload(head: string): boolean {
   const parsed = payloadIn(head);
   if (!parsed || typeof parsed !== "object") return false;
+  const record = jsonObjectOf(parsed);
+  if (!record) return false;
   // Anthropic dialect: { type: "error", error: {...} }
-  if (parsed.type === "error") return true;
+  if (record.type === "error") return true;
   // OpenAI dialect: { error: {...} }
-  if (parsed.error && typeof parsed.error === "object") return true;
-  if (typeof parsed.error === "string" && parsed.error.length > 0) return true;
+  if (record.error && typeof record.error === "object") return true;
+  if (typeof record.error === "string" && record.error.length > 0) return true;
   // Business codes: the string is the name, the number is the code. A zero
   // code means no error, so only a non-zero number counts.
-  if (typeof parsed.errorCode === "string") return true;
-  if (typeof parsed.errorCode === "number" && parsed.errorCode !== 0) return true;
-  if (typeof parsed.error_code === "string") return true;
-  if (typeof parsed.error_code === "number" && parsed.error_code !== 0) return true;
+  if (typeof record.errorCode === "string") return true;
+  if (typeof record.errorCode === "number" && record.errorCode !== 0) return true;
+  if (typeof record.error_code === "string") return true;
+  if (typeof record.error_code === "number" && record.error_code !== 0) return true;
   // A top-level business code: { code: 11128, msg: "...", displayMsg: {...} }.
   // That is the shape WorkBuddy's channel check answers with (recorded in
   // test/fixtures/workbuddy-channel-check-11128.json). Without this the 200
@@ -411,7 +415,7 @@ function looksLikeErrorPayload(head: string): boolean {
   // Zero means no error (that is what the platforms answer on success), and
   // so does a body that carries an answer (choices/object): those are the
   // normal frames, not envelopes.
-  if (looksLikeBusinessErrorEnvelope(parsed)) return true;
+  if (looksLikeBusinessErrorEnvelope(record)) return true;
   return false;
 }
 
@@ -420,7 +424,7 @@ function looksLikeErrorPayload(head: string): boolean {
  *
  * An envelope has a business code that is not zero, and no answer in it.
  */
-function looksLikeBusinessErrorEnvelope(parsed: any): boolean {
+function looksLikeBusinessErrorEnvelope(parsed: unknown): boolean {
   return isBusinessErrorEnvelope(parsed);
 }
 
@@ -1105,14 +1109,14 @@ export async function peekStream(
     let said = scrubForClient(text.trim(), 300);
     const parsed = payloadIn(text);
     if (parsed) {
-      const detail = parsed?.error ?? parsed;
+      const detail = jsonAt(parsed, "error") ?? parsed;
       // An empty sentence is no sentence: fall back to the raw body.
       // `msg` 是平台自己说的那句（WorkBuddy 的渠道校验就是它），`message` 是
       // 另一种写法。两个都看。
       const words =
         typeof detail === "string"
           ? detail
-          : detail?.message || detail?.msg || parsed?.message || parsed?.msg;
+          : jsonAt(detail, "message") || jsonAt(detail, "msg") || jsonAt(parsed, "message") || jsonAt(parsed, "msg");
       if (typeof words === "string" && words) said = scrubForClient(words, 300);
     }
     log.warn("[DELIVER] 上游在正文里报错：" + scrubForLog(said, 200));
@@ -1147,12 +1151,12 @@ export async function peekStream(
  * The answer carries the failure inside the body (an OpenAI `error` object);
  * this turns it into the error the client sees.
  */
-export function errorFromUpstreamPayload(detail: any): AuthError {
+export function errorFromUpstreamPayload(detail: JsonValue | undefined): AuthError {
+  const type = jsonAt(detail, "type") ?? jsonAt(detail, "code") ?? "unknown";
+  const message = jsonAt(detail, "message");
   return new AuthError(
-    `upstream error (${detail?.type ?? detail?.code ?? "unknown"})`,
-    typeof detail?.message === "string"
-      ? scrubForClient(detail.message, 300)
-      : scrubForClient(JSON.stringify(detail), 300),
+    `upstream error (${type})`,
+    typeof message === "string" ? scrubForClient(message, 300) : scrubForClient(JSON.stringify(detail), 300),
     502,
   );
 }
@@ -1500,9 +1504,9 @@ export function deliverJson(
   ctx: Koa.Context,
   dialect: Dialect,
   from: UpstreamDialect,
-  json: any,
+  json: Json,
   model: string,
-  onUsage?: (usage: any) => void,
+  onUsage?: (usage: Usage) => void,
 ): void {
   if (from === "openai" && json?.error) throw errorFromUpstreamPayload(json.error);
   let payload = json;
@@ -1555,7 +1559,7 @@ function countOpenAISegments(chunk: Json, counts: AnswerSegments): void {
 async function* watchFinish(
   chunks: AsyncIterable<Json>,
   onFinish?: (finish: AnswerFinish) => void,
-  onUsage?: (usage: any) => void,
+  onUsage?: (usage: Usage) => void,
 ): AsyncGenerator<Json> {
   const counts: AnswerSegments = { content: 0, thinking: 0, tool: 0 };
   let reason: string | undefined;
@@ -1626,7 +1630,7 @@ export async function deliverOpenAIStream(
   dialect: Dialect,
   model: string,
   onFinish?: (finish: AnswerFinish) => void,
-  onUsage?: (usage: any) => void,
+  onUsage?: (usage: Usage) => void,
   onFailure?: (error: unknown) => void,
   reopen?: Reopen,
 ): Promise<void> {
@@ -1736,7 +1740,7 @@ export async function deliverAnthropicStream(
   dialect: Dialect,
   model: string,
   pingMs = 0,
-  onUsage?: (usage: any) => void,
+  onUsage?: (usage: Usage) => void,
   onFailure?: (error: unknown) => void,
   onFinish?: (finish: AnswerFinish) => void,
 ): Promise<void> {
@@ -1886,10 +1890,10 @@ function reportClientGone(ctx: Koa.Context, onFailure?: (error: unknown) => void
 /** A stream of OpenAI chunks that are already parsed (the legacy protocol). */
 export async function deliverOpenAIChunks(
   ctx: Koa.Context,
-  chunks: AsyncIterable<any>,
+  chunks: AsyncIterable<Json>,
   dialect: Dialect,
   model: string,
-  onUsage?: (usage: any) => void,
+  onUsage?: (usage: Usage) => void,
   onFailure?: (error: unknown) => void,
 ): Promise<void> {
   ctx.res.setHeader("x-request-id", rid("req_"));
@@ -2013,12 +2017,14 @@ function isRawDisconnectText(text: string): boolean {
  */
 function isRawConnectionFailure(e: unknown): boolean {
   const seen = new Set<unknown>();
-  let current: any = e;
+  let current: unknown = e;
   while (current && typeof current === "object" && !seen.has(current)) {
     seen.add(current);
-    if (/^UND_ERR_/.test(String(current.code ?? ""))) return true;
-    if (isRawDisconnectText(String(current.message ?? ""))) return true;
-    current = current.cause;
+    const record = jsonObjectOf(current);
+    if (!record) break;
+    if (/^UND_ERR_/.test(String(record.code ?? ""))) return true;
+    if (isRawDisconnectText(String(record.message ?? ""))) return true;
+    current = record.cause;
   }
   return false;
 }
@@ -2063,14 +2069,19 @@ function failureLine(e: unknown): string {
  * stream matters then. So a minimal legal message is filled in: the numbers
  * in it are zeros, because the upstream never sent any.
  */
-export function repairMessageStart(json: any, model: string): { json: any; repaired: boolean } {
-  if (!json || typeof json !== "object" || Array.isArray(json)) return { json, repaired: false };
-  const message = json.message;
-  if (message && typeof message === "object" && !Array.isArray(message)) {
-    message.model = model;
+export function repairMessageStart(json: string, model: string): { json: string; repaired: boolean };
+export function repairMessageStart(json: Json, model: string): { json: Json; repaired: boolean };
+export function repairMessageStart(json: JsonValue, model: string): { json: JsonValue; repaired: boolean };
+export function repairMessageStart(json: JsonValue, model: string): { json: JsonValue; repaired: boolean } {
+  const record = jsonObjectOf(json);
+  if (!record || Array.isArray(json)) return { json, repaired: false };
+  const message = jsonAt(json, "message");
+  const messageRecord = jsonObjectOf(message);
+  if (messageRecord && !Array.isArray(message)) {
+    messageRecord.model = model;
     return { json, repaired: false };
   }
-  json.message = {
+  record.message = {
     id: `msg_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`,
     type: "message",
     role: "assistant",
@@ -2088,7 +2099,7 @@ async function pipeOpenAIChunks(
   body: ReadableStream<Uint8Array>,
   ctx: Koa.Context,
   onFinish?: (finish: AnswerFinish) => void,
-  onUsage?: (usage: any) => void,
+  onUsage?: (usage: Usage) => void,
   model?: string,
   onFailure?: (error: unknown) => void,
   abort?: AbortController,
