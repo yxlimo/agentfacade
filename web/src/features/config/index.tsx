@@ -25,8 +25,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import {
   Table,
   TableBody,
@@ -37,7 +35,24 @@ import {
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useConfig, useSetConfig } from '@/features/config/api'
-import type { ConfigItem } from '@/gen/agentfacade/admin/v1/admin_pb'
+import {
+  ConfigValueField,
+  validateDraft,
+  type EditingItem,
+  type ValueProblem,
+} from '@/features/config/value-field'
+import {
+  displayMilliseconds,
+  durationLanguage,
+  isMilliseconds,
+  msToSecondsText,
+  secondsToMsText,
+} from '@/features/config/units'
+import {
+  ConfigKind,
+  ConfigUnit,
+  type ConfigItem,
+} from '@/gen/agentfacade/admin/v1/admin_pb'
 
 type SourceKey = 'database' | 'environment' | 'default'
 type GroupKey = 'general' | 'gateway' | 'benefits' | 'qoder'
@@ -123,17 +138,52 @@ function showKey(item: ConfigItem): boolean {
   return itemTitle(item) !== item.key
 }
 
+/**
+ * 一个值显示给人看的形状。
+ *
+ * 毫秒的项：传输层是毫秒，面板上是秒 —— 显示与填写都是秒，换算在 units.ts 里做。
+ * 空值说成「—」，其余原样。
+ */
+function displayText(
+  value: string,
+  unit: ConfigUnit,
+  language: ReturnType<typeof durationLanguage>
+): string {
+  if (!value) return '—'
+  if (!isMilliseconds(unit)) return value
+  return displayMilliseconds(value, language)
+}
+
+/**
+ * 弹窗里的初值。
+ *
+ * 毫秒的项换成秒（毫秒是整数，秒取整）；布尔没有值时按关闭起手；敏感项的值读不
+ * 出来，一律从空开始。
+ */
+function initialDraft(item: ConfigItem): string {
+  if (item.secret) return ''
+  if (isMilliseconds(item.unit)) return msToSecondsText(item.value)
+  const value = item.value.trim()
+  if (item.kind === ConfigKind.BOOLEAN) return value === '' ? 'false' : value
+  return item.value
+}
+
+/** 发给服务端的值：毫秒的项换回毫秒，其余原样。传输单位不变。 */
+function toWireValue(item: EditingItem, draft: string): string {
+  if (isMilliseconds(item.unit)) return secondsToMsText(draft)
+  return draft
+}
+
 export function ConfigPage() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const language = durationLanguage(i18n.language)
   const config = useConfig()
   const setConfig = useSetConfig()
-  const [editing, setEditing] = useState<{
-    key: string
-    title: string
-    description: string
-    secret: boolean
-  } | null>(null)
+  // 正在改的这一项：契约给的面板要用的那几项。
+  const [editing, setEditing] = useState<EditingItem | null>(null)
   const [draft, setDraft] = useState('')
+  // 填错了什么：面板层拦住，不发请求。
+  const [problem, setProblem] = useState<ValueProblem | null>(null)
   const [busy, setBusy] = useState(false)
   // 打开配置页停在「常规」那一组。
   const [tab, setTab] = useState('general')
@@ -272,14 +322,18 @@ export function ConfigPage() {
                               </span>
                             ) : (
                               <span className='font-mono text-xs'>
-                                {item.value || '—'}
+                                {displayText(item.value, item.unit, language)}
                               </span>
                             )}
                             {item.fallback &&
                             item.fallback !== item.value ? (
                               <div className='text-xs text-muted-foreground'>
                                 {t('configPage.fallback', {
-                                  value: item.fallback,
+                                  value: displayText(
+                                    item.fallback,
+                                    item.unit,
+                                    language
+                                  ),
                                 })}
                               </div>
                             ) : null}
@@ -288,7 +342,11 @@ export function ConfigPage() {
                               // 面板写了、但环境变量在用：这份在库里等着。
                               <div className='text-xs text-muted-foreground'>
                                 {t('configPage.override', {
-                                  value: item.overrideValue,
+                                  value: displayText(
+                                    item.overrideValue,
+                                    item.unit,
+                                    language
+                                  ),
                                 })}
                               </div>
                             ) : null}
@@ -311,9 +369,15 @@ export function ConfigPage() {
                                     title: itemTitle(item),
                                     description: item.description,
                                     secret: item.secret,
+                                    kind: item.kind,
+                                    unit: item.unit,
+                                    hasMin: item.hasMin,
+                                    minValue: item.minValue,
+                                    hasMax: item.hasMax,
+                                    maxValue: item.maxValue,
                                   })
-                                  // 敏感项的值读不出来，输入框一律从空开始。
-                                  setDraft(item.secret ? '' : item.value)
+                                  setDraft(initialDraft(item))
+                                  setProblem(null)
                                 }}
                               >
                                 <Save />
@@ -363,23 +427,25 @@ export function ConfigPage() {
               {editing?.description ? ` —— ${editing.description}` : ''}
             </DialogDescription>
           </DialogHeader>
-          <div className='grid gap-2'>
-            <Label htmlFor='config-value'>{t('configPage.newValue')}</Label>
-            <Input
-              id='config-value'
+          {editing ? (
+            <ConfigValueField
+              item={editing}
               value={draft}
-              autoFocus
-              type={editing?.secret ? 'password' : 'text'}
-              onChange={(event) => setDraft(event.target.value)}
+              problem={problem}
+              onChange={(next) => {
+                setDraft(next)
+                // 改了就重新判一次：旧的错处提示留着是骗人。
+                setProblem(null)
+              }}
             />
-            <p className='text-xs text-muted-foreground'>
-              {editing?.secret
-                ? t('configPage.secretHint')
-                : pendingRestart
-                  ? t('configPage.secretRestartHint')
-                  : t('configPage.liveHint')}
-            </p>
-          </div>
+          ) : null}
+          <p className='text-xs text-muted-foreground'>
+            {editing?.secret
+              ? t('configPage.secretHint')
+              : pendingRestart
+                ? t('configPage.secretRestartHint')
+                : t('configPage.liveHint')}
+          </p>
           <DialogFooter>
             <Button
               variant='outline'
@@ -400,7 +466,15 @@ export function ConfigPage() {
                   setEditing(null)
                   return
                 }
-                void save(editing.key, draft, false)
+                // 填错了在面板层拦住：服务端会把数字项的脏值静默落回默认值，
+                // 用户看不到自己填错了。
+                const found = validateDraft(editing, draft)
+                if (found) {
+                  setProblem(found)
+                  return
+                }
+                setProblem(null)
+                void save(editing.key, toWireValue(editing, draft), false)
               }}
             >
               {t('configPage.save')}
