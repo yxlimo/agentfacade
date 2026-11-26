@@ -573,6 +573,16 @@ const NETWORK_CONNECTION_CODES = new Set([
 ]);
 
 /**
+ * The cause chain can hold anyone's error, so nothing on a link is known up front
+ */
+interface CauseStep {
+  code?: unknown;
+  name?: unknown;
+  message?: unknown;
+  cause?: unknown;
+}
+
+/**
  * The network failure behind an error, if that is what it is.
  *
  * A connection that failed, a socket that hung up, a timeout that ran out —
@@ -607,13 +617,14 @@ function networkReason(error: unknown): UpstreamFailureKind | null {
   const codes: string[] = [];
   const names: string[] = [];
   const messages: string[] = [];
-  let current: any = error;
-  while (current && typeof current === "object" && !seen.has(current)) {
+  let current: unknown = error;
+  while (current !== null && typeof current === "object" && !seen.has(current)) {
+    const step = current as CauseStep;
     seen.add(current);
-    codes.push(String(current.code ?? ""));
-    names.push(String(current.name ?? ""));
-    messages.push(String(current.message ?? "").toLowerCase());
-    current = current.cause;
+    codes.push(String(step.code ?? ""));
+    names.push(String(step.name ?? ""));
+    messages.push(String(step.message ?? "").toLowerCase());
+    current = step.cause;
   }
   if (codes.some((code) => NETWORK_TIMEOUT_CODES.has(code)) || names.some((name) => NETWORK_TIMEOUT_NAMES.has(name))) {
     return "timeout";
@@ -640,15 +651,16 @@ export function networkDetailOf(error: unknown): string {
   const seen = new Set<unknown>();
   let withCode = "";
   let last = "";
-  let current: any = error;
-  while (current && typeof current === "object" && !seen.has(current)) {
+  let current: unknown = error;
+  while (current !== null && typeof current === "object" && !seen.has(current)) {
+    const step = current as CauseStep;
     seen.add(current);
-    const code = String(current.code ?? "");
-    const message = String(current.message ?? "");
+    const code = String(step.code ?? "");
+    const message = String(step.message ?? "");
     const said = [code, message].filter(Boolean).join(" ");
     if (said) last = said;
     if (code && said) withCode = said;
-    current = current.cause;
+    current = step.cause;
   }
   return withCode || last;
 }
