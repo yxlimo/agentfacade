@@ -140,21 +140,24 @@ function replyState(ctx: Koa.Context): ReplyState {
   if (!state) {
     state = { gone: false, pending: new Set(), timer: null, goneReported: false };
     replyStates.set(res, state);
+    // The listeners below read this instead: `state` is a let, so the narrowing
+    // that makes it a ReplyState here does not reach into a closure.
+    const tracked = state;
     // 连接随时可能报错，而 Node 的「事件没有监听器」就是一次未捕获异常 ——
     // 整个进程没了。所以这里常驻一个监听器：它只是把「客户端走了」记下来。
     res.on("error", () => {
-      markGone(ctx, state!);
+      markGone(ctx, tracked);
     });
     // 连接断了（客户端走了）：也是「客户端走了」。上游在想的时候没有帧在写，
     // 这时才知道客户端已经走了 —— 不然网关会一直读上游、一直计费，直到下一
     // 帧到来才发现。
     res.on("close", () => {
-      markGone(ctx, state!);
+      markGone(ctx, tracked);
     });
     // 连接可能在我们挂上监听器**之前**就断了 —— 那个事件已经发过了，谁也没
     // 听见。那就当它已经走了（2026-11-03，作者复查发现：客户端在网关挂上
     // 监听器之前断开，这一段就没人管了）。
-    if (res.destroyed) markGone(ctx, state!);
+    if (res.destroyed) markGone(ctx, tracked);
   }
   return state;
 }
@@ -1502,12 +1505,13 @@ export function deliverJson(
   onUsage?: (usage: any) => void,
 ): void {
   if (from === "openai" && json?.error) throw errorFromUpstreamPayload(json.error);
-  const payload =
-    dialect === from
-      ? json
-      : from === "openai"
+  let payload = json;
+  if (dialect !== from) {
+    payload =
+      from === "openai"
         ? openaiToAnthropicResponse(json, model)
         : anthropicToOpenAIResponse(json, model);
+  }
   // The answer names the model the client asked for. The upstream may know it
   // by another name — a tier key, or the name behind a published model — but
   // the client asked for this one. Both dialects: an Anthropic answer that
@@ -2319,13 +2323,19 @@ export function sendError(ctx: Koa.Context, e: unknown, headers: Record<string, 
   ctx.status = status;
   if (Object.keys(extra).length) ctx.set(extra);
   log.warn(`[DELIVER] 答复 ${status}：${err?.message ?? "request failed"}`);
+  // A failure that names its own type keeps it; one that names none falls back on
+  // the status (503 means the credential, 400 the request, everything else the upstream).
+  let errorType = err?.type;
+  if (errorType === undefined || errorType === null) {
+    if (status === 503) errorType = "authentication_error";
+    else if (status === 400) errorType = "invalid_request_error";
+    else errorType = "api_error";
+  }
   ctx.body = {
     error: {
       // 503 means the credential is the problem; everything else is the request
       // or the upstream failing. A failure that says otherwise says so.
-      type:
-        err?.type ??
-        (status === 503 ? "authentication_error" : status === 400 ? "invalid_request_error" : "api_error"),
+      type: errorType,
       message: err?.message ?? "request failed",
     },
     ...(err?.hint ? { hint: err.hint } : {}),
