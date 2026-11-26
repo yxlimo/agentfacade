@@ -85,6 +85,7 @@ const NEW_KEYS = [
   "QODER_LEGACY_RETRY_MS",
   "ROUTER_CONTINUE_ON_IDLE",
   "ROUTER_CONTINUE_MAX",
+  "ROUTER_IDLE_ERROR_RETRYABLE",
 ];
 const keys = configItems().map((i) => i.key);
 for (const key of NEW_KEYS) {
@@ -273,6 +274,20 @@ check("ROUTER_CONTINUE_ON_IDLE 默认是关", item("ROUTER_CONTINUE_ON_IDLE")?.v
 check("ROUTER_CONTINUE_ON_IDLE 默认值也是关", item("ROUTER_CONTINUE_ON_IDLE")?.fallback === "false", String(item("ROUTER_CONTINUE_ON_IDLE")?.fallback));
 check("ROUTER_CONTINUE_MAX 默认是 2", configNumber("ROUTER_CONTINUE_MAX", -1) === 2, String(configNumber("ROUTER_CONTINUE_MAX", -1)));
 check("ROUTER_CONTINUE_MAX 面板显示的默认值也是 2", item("ROUTER_CONTINUE_MAX")?.fallback === "2", String(item("ROUTER_CONTINUE_MAX")?.fallback));
+
+section("静默超时报可重试的开关");
+
+check("ROUTER_IDLE_ERROR_RETRYABLE 默认是关", item("ROUTER_IDLE_ERROR_RETRYABLE")?.value === "false", String(item("ROUTER_IDLE_ERROR_RETRYABLE")?.value));
+check("ROUTER_IDLE_ERROR_RETRYABLE 默认值也是关", item("ROUTER_IDLE_ERROR_RETRYABLE")?.fallback === "false", String(item("ROUTER_IDLE_ERROR_RETRYABLE")?.fallback));
+check("面板上有 ROUTER_IDLE_ERROR_RETRYABLE", keys.includes("ROUTER_IDLE_ERROR_RETRYABLE"), JSON.stringify(keys));
+
+const retryableOn = setConfigValue("ROUTER_IDLE_ERROR_RETRYABLE", "true");
+check("ROUTER_IDLE_ERROR_RETRYABLE 能打开", retryableOn.ok === true, retryableOn.message);
+check("ROUTER_IDLE_ERROR_RETRYABLE 设成 true 后读到 true", item("ROUTER_IDLE_ERROR_RETRYABLE")?.value === "true", String(item("ROUTER_IDLE_ERROR_RETRYABLE")?.value));
+
+configClear("ROUTER_IDLE_ERROR_RETRYABLE");
+reloadConfig();
+check("清掉之后回到默认值 false", item("ROUTER_IDLE_ERROR_RETRYABLE")?.value === "false", String(item("ROUTER_IDLE_ERROR_RETRYABLE")?.value));
 
 // 0 到 5 是合法范围。越界写进去的值要夹回边界，并且说出来，不静默改数。
 const clampMin = setConfigValue("ROUTER_CONTINUE_MAX", "-1");

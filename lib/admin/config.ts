@@ -68,6 +68,12 @@ configNumber("ROUTER_RETRY_BUDGET_MS", 180_000);
 configFlag("ROUTER_CONTINUE_ON_IDLE", false);
 configNumber("ROUTER_CONTINUE_MAX", 2);
 
+// 与「静默超时后自动续写」互为替代，不是上下位：续写是我们替客户端把话说完（无痕、
+// 不重复计费），这个是让客户端自己整回合重发（它掌握次数与退避）。两者同时开时以求
+// 续写为准，deliver.ts 里有一条 warn 与用例钉这个优先级。
+// 默认关：客户端只在认出「可重试的超时」时才重发，改默认等于悄悄换掉所有人看到的失败形状。
+configFlag("ROUTER_IDLE_ERROR_RETRYABLE", false);
+
 // 剩下这几个是「读一次就定在常量里」的（lib/periodic.ts 的定时器、
 // lib/admin/upstreams.ts 的快照过期时间、lib/admin/benefits.ts 的间隔、
 // lib/router/handle.ts 的排队重试）：面板改得动，但要重启才生效。同样在这里显式
@@ -135,6 +141,7 @@ const DESCRIPTIONS: Record<string, string> = {
   ROUTER_RETRY_BUDGET_MS: "一次请求的重试总时限（毫秒）。调小会让上游抽一下就直接报错",
   ROUTER_CONTINUE_ON_IDLE: "流中途静默超时后自动续写，关闭时超时就断不续写",
   ROUTER_CONTINUE_MAX: "每个请求最多续写几次，0 到 5，0 就是不续写",
+  ROUTER_IDLE_ERROR_RETRYABLE: "与自动续写二选一：报可重试超时，让客户端重发",
   PERIODIC_ENABLED: "后台定时任务总开关。关闭后不换令牌、不签到、不扫余额",
   HEALTH_CACHE_MS: "额度与状态快照多久刷新一次（毫秒）",
   BENEFITS_DISABLED: "关闭每日签到与领奖。关闭后积分不会自动到账",
@@ -161,6 +168,7 @@ const LABELS: Record<string, string> = {
   ROUTER_RETRY_BUDGET_MS: "重试总时限",
   ROUTER_CONTINUE_ON_IDLE: "静默超时后自动续写",
   ROUTER_CONTINUE_MAX: "最多续写次数",
+  ROUTER_IDLE_ERROR_RETRYABLE: "静默超时报可重试",
   PERIODIC_ENABLED: "后台定时任务",
   HEALTH_CACHE_MS: "快照刷新间隔",
   BENEFITS_DISABLED: "关闭签到与领奖",
@@ -231,6 +239,7 @@ const USER_FACING = new Set([
   // 流中途静默超时后的自动续写
   "ROUTER_CONTINUE_ON_IDLE",
   "ROUTER_CONTINUE_MAX",
+  "ROUTER_IDLE_ERROR_RETRYABLE",
   // 后台的定时任务与它刷的那份快照
   "PERIODIC_ENABLED",
   "HEALTH_CACHE_MS",
