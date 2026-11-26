@@ -371,7 +371,7 @@ test('毫秒设置填越界、填不进数字框的值：一个 SetConfig 都不
  * 用「静默后自动续写」而不是 REQUIRE_API_KEY：e2e 的环境变量钉着后者
  * （e2e.config.ts 给了 false），改了也不生效，看不到落库的形状。
  */
-test('布尔项：选「开启」后 ListConfig 里是 true，清回默认后是后端给的 false', async ({
+test('布尔项：选「开启」值列说「开启」、落库 true；改回「关闭」值列说「关闭」', async ({
   app,
   screen,
 }) => {
@@ -395,6 +395,9 @@ test('布尔项：选「开启」后 ListConfig 里是 true，清回默认后是
 
   const row = screen.getByRole('row').filter({ hasText: '静默后自动续写' });
   await expect(row).toBeVisible();
+  // 值列说「关闭」，与弹窗里的下拉同一套词 —— 不是裸的 false。
+  await expect(row).toContainText('关闭');
+  await expect(row).not.toContainText('false');
   await row.getByRole('button', { name: '改' }).click();
   const dialog = screen.getByRole('dialog');
   const trigger = dialog.getByLabel('新值');
@@ -409,8 +412,25 @@ test('布尔项：选「开启」后 ListConfig 里是 true，清回默认后是
   // 落库的是 true，不是界面上的「开启」。
   expect(await readValue()).toMatchObject({ value: 'true', source: 'database' });
 
+  // 值列跟着下拉改口径：库里是 true，界面说「开启」。
+  await expect(row).toContainText('开启');
+  await expect(row).not.toContainText('true');
+
+  // 改回「关闭」：值列也跟着说「关闭」，落库是 false。
+  await row.getByRole('button', { name: '改' }).click();
+  await expect(dialog).toBeVisible();
+  expect((await dialog.getByLabel('新值').textContent())?.trim()).toBe('开启');
+  await dialog.getByLabel('新值').click();
+  await screen.getByRole('option', { name: '关闭' }).click();
+  await dialog.getByRole('button', { name: '保存' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(row).toContainText('关闭');
+  await expect(row).not.toContainText('false');
+  expect(await readValue()).toMatchObject({ value: 'false', source: 'database' });
+
   // 清回默认：回到后端给的默认值 false，不是空串，也不是残留的 true。
   await row.getByRole('button', { name: '清回默认' }).click();
+  await expect(row).toContainText('关闭');
   await expect(row).toContainText('默认值');
   expect(await readValue()).toMatchObject({ value: 'false', source: 'default' });
 });

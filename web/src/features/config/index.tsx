@@ -58,6 +58,14 @@ type SourceKey = 'database' | 'environment' | 'default'
 type GroupKey = 'general' | 'gateway' | 'benefits' | 'qoder'
 
 /**
+ * 布尔项说给人听的词：与编辑弹窗里的下拉同一套。
+ *
+ * 用同一个来源（configPage.booleanOn / booleanOff）译文，值列和下拉才不会
+ * 各说各的 —— 同一个页面两套口径，用户看不出这是同一件事。
+ */
+type BooleanLabels = { on: string; off: string }
+
+/**
  * tab 的顺序。
  *
  * 只是排个先后：服务端没给的组不画，冒出来的新组接在后面。
@@ -139,17 +147,26 @@ function showKey(item: ConfigItem): boolean {
 }
 
 /**
- * 一个值显示给人看的形状。
+ * 一个值显示给人看的形状：人能读的那一档。
  *
+ * 布尔项说成「开启」「关闭」，与编辑弹窗里的下拉是同一套词 —— 同一个页面
+ * 两套口径（值列 true、下拉「开启」），用户看不出这是同一件事。
  * 毫秒的项：传输层是毫秒，面板上是秒 —— 显示与填写都是秒，换算在 units.ts 里做。
- * 空值说成「—」，其余原样。
+ * 认不出的布尔与脏值原样透出，别替服务端编话。空值说成「—」。
  */
 function displayText(
   value: string,
+  kind: ConfigKind,
   unit: ConfigUnit,
+  labels: BooleanLabels,
   language: ReturnType<typeof durationLanguage>
 ): string {
   if (!value) return '—'
+  if (kind === ConfigKind.BOOLEAN) {
+    if (value === 'true') return labels.on
+    if (value === 'false') return labels.off
+    return value
+  }
   if (!isMilliseconds(unit)) return value
   return displayMilliseconds(value, language)
 }
@@ -229,6 +246,12 @@ export function ConfigPage() {
   const effectText = t(
     pendingRestart ? 'configPage.effectRestart' : 'configPage.effectLive'
   )
+
+  // 值列与弹窗说同一套词：布尔项是「开启」「关闭」，不是裸的 true/false。
+  const booleanLabels: BooleanLabels = {
+    on: t('configPage.booleanOn'),
+    off: t('configPage.booleanOff'),
+  }
 
   const save = async (key: string, value: string, clear: boolean) => {
     setBusy(true)
@@ -322,7 +345,7 @@ export function ConfigPage() {
                               </span>
                             ) : (
                               <span className='font-mono text-xs'>
-                                {displayText(item.value, item.unit, language)}
+                                {displayText(item.value, item.kind, item.unit, booleanLabels, language)}
                               </span>
                             )}
                             {item.fallback &&
@@ -331,7 +354,9 @@ export function ConfigPage() {
                                 {t('configPage.fallback', {
                                   value: displayText(
                                     item.fallback,
+                                    item.kind,
                                     item.unit,
+                                    booleanLabels,
                                     language
                                   ),
                                 })}
@@ -344,7 +369,9 @@ export function ConfigPage() {
                                 {t('configPage.override', {
                                   value: displayText(
                                     item.overrideValue,
+                                    item.kind,
                                     item.unit,
+                                    booleanLabels,
                                     language
                                   ),
                                 })}

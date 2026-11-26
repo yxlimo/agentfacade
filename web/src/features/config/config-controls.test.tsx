@@ -5,7 +5,7 @@
 
 import { create } from '@bufbuild/protobuf'
 import { describe, expect, it } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
   ConfigItemSchema,
@@ -156,6 +156,67 @@ describe('配置页按契约渲染控件', () => {
     await user.click(screen.getByRole('button', { name: '保存' }))
 
     await waitFor(() => expect(sent).toEqual(['false']))
+  })
+
+  /**
+   * 布尔项读出来的那一路：值列与下拉必须是同一套词。
+   *
+   * 值列写裸的 true/false 而下拉写「开启」/「关闭」，同一个页面两套口径 ——
+   * 用户看不出这是同一件事。面板上不给机器字面量。
+   */
+  it('布尔项的值列说「开启」「关闭」，不出现 true/false', async () => {
+    const user = userEvent.setup({ delay: null })
+    const client = mockAdminClient({
+      ListConfig: () =>
+        create(ListConfigResponseSchema, {
+          items: [
+            create(ConfigItemSchema, {
+              key: 'ROUTER_CONTINUE_ON_IDLE',
+              label: '静默后自动续写',
+              value: 'true',
+              fallback: 'true',
+              source: 'database',
+              group: 'gateway',
+              kind: ConfigKind.BOOLEAN,
+            }),
+            create(ConfigItemSchema, {
+              key: 'REQUIRE_API_KEY',
+              label: '是否开启 API KEY 验证',
+              value: 'false',
+              fallback: 'false',
+              source: 'default',
+              group: 'gateway',
+              kind: ConfigKind.BOOLEAN,
+            }),
+          ],
+        }),
+    })
+
+    renderWithClient({ client, children: <ConfigPage /> })
+    await user.click(await screen.findByRole('tab', { name: /网关/ }))
+    await screen.findByText('静默后自动续写')
+
+    /** 找 label 那一行：「值列显示什么」只在行里判，不受表头之类干扰。 */
+    const rowFor = (label: string): HTMLElement => {
+      const row = screen
+        .getAllByRole('row')
+        .find((candidate) => candidate.textContent?.includes(label))
+      if (!row) throw new Error(`界面上没有「${label}」这一行`)
+      return row
+    }
+
+    const onRow = rowFor('静默后自动续写')
+    expect(within(onRow).getByText('开启')).toBeInTheDocument()
+    // 值列里没有机器字面量：true 只在库里，不在界面上。
+    expect(onRow).not.toHaveTextContent('true')
+
+    const offRow = rowFor('是否开启 API KEY 验证')
+    expect(within(offRow).getByText('关闭')).toBeInTheDocument()
+    expect(offRow).not.toHaveTextContent('false')
+
+    // 与下拉是同一套词：打开弹窗，触发器上写的也是「开启」。
+    await user.click(within(onRow).getByRole('button', { name: '改' }))
+    expect(screen.getByLabelText('新值')).toHaveTextContent('开启')
   })
 
   it('库里是非整秒的值：初值照原样显示，不动手保存就拦住 —— 不替用户四舍五入', async () => {
