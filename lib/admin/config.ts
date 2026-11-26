@@ -149,13 +149,13 @@ export interface ConfigItemView {
  * 窗口、模拟客户端用的请求标识）改了也没有人读，露出来只会让人改出坏状态。
  */
 const DESCRIPTIONS: Record<string, string> = {
-  ROUTER_FIRST_FRAME_MS: `等首字最多多久（秒），上限 ${STREAM_LIMIT_MAX_MS / 1000}`,
-  ROUTER_STREAM_IDLE_MS: "连续多久没有新内容就算静默（秒）",
-  ROUTER_TOOL_OPENING_MS: "工具开头到了、参数还没来，最多等多久（秒）；0 表示不计时",
+  ROUTER_FIRST_FRAME_MS: "等不到第一个字就换一个上游重试（秒）；这是等首字的上限",
+  ROUTER_STREAM_IDLE_MS: "正文或 thinking 停这么久就算静默（秒）；之后见下面三项",
+  ROUTER_TOOL_OPENING_MS: "tool_call 发一半停这么久就算静默（秒）；0 = 跟「多久算静默」一致。静默后把同一请求重发给同一上游，不换上游",
   ROUTER_RETRY_BUDGET_MS: "一次请求的重试总时限（秒）",
-  ROUTER_CONTINUE_ON_IDLE: "判定为静默后替客户端把话说完",
-  ROUTER_CONTINUE_MAX: "一次答复最多续写几次，0 就不续",
-  ROUTER_IDLE_ERROR_RETRYABLE: "与自动续写二选一：让客户端重发",
+  ROUTER_CONTINUE_ON_IDLE: "断开重连让上游接着写，客户端感觉不到中断",
+  ROUTER_CONTINUE_MAX: "一次答复最多续写几次；0 = 不续写，直接报错",
+  ROUTER_IDLE_ERROR_RETRYABLE: "与续写二选一：改成报可重试超时，让客户端整回合重发",
   HEALTH_CACHE_MS: "额度与状态快照多久刷新（秒）",
   BENEFITS_INTERVAL_MS: "签到任务多久跑一次（秒）",
   QODER_LEGACY_RETRY_MS: "Qoder 旧协议排队后隔多久重试（秒）",
@@ -179,7 +179,7 @@ const DESCRIPTIONS: Record<string, string> = {
 const LABELS: Record<string, string> = {
   ROUTER_FIRST_FRAME_MS: "等首字时限",
   ROUTER_STREAM_IDLE_MS: "多久算静默",
-  ROUTER_TOOL_OPENING_MS: "工具开局最多等多久",
+  ROUTER_TOOL_OPENING_MS: "tool_call 静默多久",
   ROUTER_RETRY_BUDGET_MS: "重试总时限",
   ROUTER_CONTINUE_ON_IDLE: "静默后自动续写",
   ROUTER_CONTINUE_MAX: "最多续写几次",
@@ -285,7 +285,7 @@ const USER_FACING = new Set([
   "ADMIN_CORS_ORIGINS",
   // 用量记录留多久
   "USAGE_RETENTION_DAYS",
-  // 四个超时旋钮：等首帧、流中途的停顿、工具开局、重试的总时限
+  // 四个超时旋钮：等首帧、流中途的停顿、tool_call 静默、重试的总时限
   "ROUTER_FIRST_FRAME_MS",
   "ROUTER_STREAM_IDLE_MS",
   "ROUTER_TOOL_OPENING_MS",

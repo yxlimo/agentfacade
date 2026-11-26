@@ -106,16 +106,30 @@ for (const key of ["BENEFITS_INTERVAL_MS", "HEALTH_CACHE_MS", "QODER_LEGACY_RETR
 check("签到间隔默认是一小时", Number(item("BENEFITS_INTERVAL_MS")?.value) === 3_600_000, JSON.stringify(item("BENEFITS_INTERVAL_MS")?.value));
 
 // 一句说明一条控件：没有说明的那一项，面板上只剩一个键名，谁也不知道能改。
-// 说明要在面板上一行放得下：这条对每一项都一样，没有例外。
-
+// 说明要在面板上一行放得下：默认 30 字。只有下面这张表里的键另给额度，并且每条都要
+// 写明为什么 30 字不够 —— 表是「例外名单」，不是「统一放宽」。
+const DESCRIPTION_LIMIT: Record<string, number> = {
+  // 要点到正文、thinking、tool_call 三件事，还要留出「之后见下面三项」的指引
+  ROUTER_STREAM_IDLE_MS: 60,
+  // 除了「多久算静默」，还得说清 0 是什么含义、超时之后是重发给同一个上游
+  ROUTER_TOOL_OPENING_MS: 60,
+};
 for (const key of NEW_KEYS) {
   const row = item(key);
   check(`${key} 有名字`, Boolean(row?.label) && row!.label !== key, JSON.stringify(row?.label));
   check(`${key} 有说明`, Boolean(row?.description), JSON.stringify(row?.description));
+  const budget = DESCRIPTION_LIMIT[key] ?? 30;
+  const length = (row?.description ?? "").length;
+  check(`${key} 的说明不超过 ${budget} 字`, length <= budget, `${length} 字：${row?.description}`);
+}
+
+// If a copy line gets shortened, its exception must go away with it
+for (const [key, budget] of Object.entries(DESCRIPTION_LIMIT)) {
+  const length = (item(key)?.description ?? "").length;
   check(
-    `${key} 的说明不超过 30 字`,
-    (row?.description ?? "").length <= 30,
-    `${row?.description?.length} 字：${row?.description}`,
+    `${key} 的说明确实超过默认的 30 字`,
+    length > 30 && budget > 30,
+    `${length} 字；若说明已收短，请从表删掉这一项`
   );
 }
 
@@ -434,13 +448,13 @@ check(
 );
 
 const COPY: [string, string, string][] = [
-  ["ROUTER_FIRST_FRAME_MS", "等首字时限", "等首字最多多久（秒），上限 600"],
-  ["ROUTER_STREAM_IDLE_MS", "多久算静默", "连续多久没有新内容就算静默（秒）"],
-  ["ROUTER_TOOL_OPENING_MS", "工具开局最多等多久", "工具开头到了、参数还没来，最多等多久（秒）；0 表示不计时"],
+  ["ROUTER_FIRST_FRAME_MS", "等首字时限", "等不到第一个字就换一个上游重试（秒）；这是等首字的上限"],
+  ["ROUTER_STREAM_IDLE_MS", "多久算静默", "正文或 thinking 停这么久就算静默（秒）；之后见下面三项"],
+  ["ROUTER_TOOL_OPENING_MS", "tool_call 静默多久", "tool_call 发一半停这么久就算静默（秒）；0 = 跟「多久算静默」一致。静默后把同一请求重发给同一上游，不换上游"],
   ["ROUTER_RETRY_BUDGET_MS", "重试总时限", "一次请求的重试总时限（秒）"],
-  ["ROUTER_CONTINUE_ON_IDLE", "静默后自动续写", "判定为静默后替客户端把话说完"],
-  ["ROUTER_CONTINUE_MAX", "最多续写几次", "一次答复最多续写几次，0 就不续"],
-  ["ROUTER_IDLE_ERROR_RETRYABLE", "静默时报可重试", "与自动续写二选一：让客户端重发"],
+  ["ROUTER_CONTINUE_ON_IDLE", "静默后自动续写", "断开重连让上游接着写，客户端感觉不到中断"],
+  ["ROUTER_CONTINUE_MAX", "最多续写几次", "一次答复最多续写几次；0 = 不续写，直接报错"],
+  ["ROUTER_IDLE_ERROR_RETRYABLE", "静默时报可重试", "与续写二选一：改成报可重试超时，让客户端整回合重发"],
   ["HEALTH_CACHE_MS", "快照刷新间隔", "额度与状态快照多久刷新（秒）"],
   ["BENEFITS_INTERVAL_MS", "签到间隔", "签到任务多久跑一次（秒）"],
   ["QODER_LEGACY_RETRY_MS", "排队重试间隔", "Qoder 旧协议排队后隔多久重试（秒）"],
