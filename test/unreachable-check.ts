@@ -23,6 +23,7 @@
 //      第二个请求立刻被冷却挡住；降级策略两个账号 → 第一个失败立刻换第二个。
 
 import fs from "node:fs";
+import { lookup as dnsLookup } from "node:dns";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -38,6 +39,36 @@ const MODEL = "MiniMax-M3.1-Flash";
  * 不是靠本机改 hosts、也不靠网络环境。网关往 `<它>/messages` 发请求。
  */
 const UNRESOLVABLE_BASE = "http://unreachable.invalid/v1";
+
+/**
+ * Resolve the same host the upstream will use so the probe and the request
+ * cannot drift apart
+ */
+const PROBE_HOST = new URL(UNRESOLVABLE_BASE).hostname;
+
+/** Codes the classifier treats as unreachable, the premise of the e2e section */
+const UNREACHABLE_CODES = new Set(["ENOTFOUND", "EAI_FAIL", "ERR_INVALID_URL", "ENOTSUP"]);
+
+/**
+ * Probe the resolver instead of assuming NXDOMAIN
+ *
+ * A resolver can answer EAI_AGAIN, which the classifier correctly treats as a
+ * retryable connection failure, so the assertions below would measure the
+ * environment rather than the product
+ *
+ * The injected code keeps the satisfied path reachable on a machine whose DNS
+ * never produces NXDOMAIN, without turning the probe into a permanent skip
+ */
+async function probeDnsCode(injected?: string): Promise<string> {
+  if (injected !== undefined) return injected;
+  return await new Promise<string>((resolve) => {
+    dnsLookup(PROBE_HOST, (err) => resolve(err?.code ?? "resolved"));
+  });
+}
+
+function probeSatisfied(code: string): boolean {
+  return UNREACHABLE_CODES.has(code);
+}
 
 /**
  * 重试预算（毫秒）：给网关的子进程用。
@@ -297,6 +328,19 @@ function countOf(text: string, needle: string): number {
 }
 
 /* ------------------------------------------------------------------ *
+ * 前提探测：端到端那一节要靠真实的 NXDOMAIN
+ * ------------------------------------------------------------------ */
+
+const injectedProbeCode = process.env.FACADE_TEST_DNS_CODE;
+const probeCode = await probeDnsCode(injectedProbeCode);
+const preconditionOk = probeSatisfied(probeCode);
+
+check("注入 ENOTFOUND → 前提判为满足（防止整节被永久跳过）", probeSatisfied(await probeDnsCode("ENOTFOUND")));
+check("注入 EAI_AGAIN → 前提判为不满足", !probeSatisfied(await probeDnsCode("EAI_AGAIN")));
+
+if (preconditionOk) {
+
+/* ------------------------------------------------------------------ *
  * 场景一：单一策略、一个账号 —— 一次就够
  * ------------------------------------------------------------------ */
 
@@ -418,11 +462,22 @@ section("降级策略（两个账号）：第一个失败，立刻换第二个�
     gw.stop();
   }
 }
+} else {
+  console.log("");
+  console.log(
+    `环境不满足前提：解析 ${PROBE_HOST} 拿到 ${probeCode}，不属于 unreachable 那一类（ENOTFOUND / EAI_FAIL / ERR_INVALID_URL / ENOTSUP）；端到端那一节依赖真实的 NXDOMAIN，本次不跑，与产品行为无关`,
+  );
+  process.exitCode = 1;
+}
 
 console.log("");
 const { closeStore } = await import("../lib/store.ts");
 closeStore();
 fs.rmSync(UNIT_DIR, { recursive: true, force: true });
 
-console.log(fail === 0 ? `全部通过（${pass} 项）` : `FAIL: ${fail} 项没过，${pass} 项过了`);
+if (preconditionOk) {
+  console.log(fail === 0 ? `全部通过（${pass} 项）` : `FAIL: ${fail} 项没过，${pass} 项过了`);
+} else {
+  console.log(`离线 ${pass} 项通过；端到端未运行`);
+}
 if (fail > 0) process.exitCode = 1;

@@ -11,6 +11,8 @@
 // gmodel 与 dmodel 答得上，kmodel 与 mmodel 故意失败（500），好让 fallback
 // 有东西可退。
 //
+// A caller can add a model to failModels at runtime to fail just that model
+// without changing FAILING_MODELS that other suites share
 // 什么都不会出机器。
 
 import http from "node:http";
@@ -22,6 +24,11 @@ export interface FakeQoder {
   /** 收到过的推理请求：上游的模型名，与正文里最后一条消息。 */
   /** 收到过的推理请求：上游的模型名，与正文里最后一条消息。 */
   seen: { model: string; stream: boolean; messages: unknown[]; headers: Record<string, string | string[] | undefined> }[];
+  /**
+   * Models made to fail at runtime, on top of FAILING_MODELS
+   * Tests add a model here to force its next calls to 500, then delete it to restore
+   */
+  failModels: Set<string>;
   /** 忘掉收到过什么。 */
   reset(): void;
   /** 停下来。 */
@@ -35,6 +42,7 @@ export const FAILING_MODELS = new Set(["kmodel", "mmodel"]);
 export async function startFakeQoder(port = 0): Promise<FakeQoder> {
   // 与 FakeQoder.seen 同一个形状：上游也记下客户端发来的头。
   const seen: FakeQoder["seen"] = [];
+  const failModels = new Set<string>();
 
   const server = http.createServer(async (req, res) => {
     const chunks: Buffer[] = [];
@@ -53,7 +61,7 @@ export async function startFakeQoder(port = 0): Promise<FakeQoder> {
       headers: { ...req.headers },
     });
 
-    if (FAILING_MODELS.has(model)) {
+    if (FAILING_MODELS.has(model) || failModels.has(model)) {
       res.writeHead(500, { "content-type": "application/json" });
       res.end(
         JSON.stringify({
@@ -73,6 +81,7 @@ export async function startFakeQoder(port = 0): Promise<FakeQoder> {
   return {
     base: `http://127.0.0.1:${actual}`,
     seen,
+    failModels,
     reset() {
       seen.length = 0;
     },

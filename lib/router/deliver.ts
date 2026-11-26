@@ -8,15 +8,18 @@
 
 import { log } from "../log.ts";
 import type { Json } from "../json.ts";
+import { jsonAt, jsonObjectOf, type JsonValue } from "../dialect/json-value.ts";
+import type { Usage } from "../dialect/cache.ts";
 import crypto from "node:crypto";
 import type Koa from "koa";
 import { AuthError } from "../credential.ts";
 import { anthropicStreamToOpenAI, openaiStreamToAnthropic } from "../dialect/stream.ts";
+import { classifyUpstreamError } from "./provider-selection.ts";
 import { anthropicToOpenAIResponse, openaiToAnthropicResponse } from "../dialect/response.ts";
 import { parseLooseJson, readOpenAIChunks, readOrAbort, readSseEvents, sseData, sseEvent, SSE_DONE } from "../sse-stream.ts";
 import { businessCodeOfPayload, isBusinessErrorEnvelope, withBusinessCode } from "../upstream-status.ts";
 import { scrubForClient, scrubForLog } from "../log-scrub.ts";
-import { configNumber, markHotSetting } from "../config.ts";
+import { configFlag, configNumber, markHotSetting } from "../config.ts";
 import {
   STREAM_FIRST_FRAME_DEFAULT_MS,
   STREAM_IDLE_DEFAULT_MS,
@@ -139,21 +142,24 @@ function replyState(ctx: Koa.Context): ReplyState {
   if (!state) {
     state = { gone: false, pending: new Set(), timer: null, goneReported: false };
     replyStates.set(res, state);
+    // The listeners below read this instead: `state` is a let, so the narrowing
+    // that makes it a ReplyState here does not reach into a closure.
+    const tracked = state;
     // 连接随时可能报错，而 Node 的「事件没有监听器」就是一次未捕获异常 ——
     // 整个进程没了。所以这里常驻一个监听器：它只是把「客户端走了」记下来。
     res.on("error", () => {
-      markGone(ctx, state!);
+      markGone(ctx, tracked);
     });
     // 连接断了（客户端走了）：也是「客户端走了」。上游在想的时候没有帧在写，
     // 这时才知道客户端已经走了 —— 不然网关会一直读上游、一直计费，直到下一
     // 帧到来才发现。
     res.on("close", () => {
-      markGone(ctx, state!);
+      markGone(ctx, tracked);
     });
     // 连接可能在我们挂上监听器**之前**就断了 —— 那个事件已经发过了，谁也没
     // 听见。那就当它已经走了（2026-11-03，作者复查发现：客户端在网关挂上
     // 监听器之前断开，这一段就没人管了）。
-    if (res.destroyed) markGone(ctx, state!);
+    if (res.destroyed) markGone(ctx, tracked);
   }
   return state;
 }
@@ -360,7 +366,7 @@ function onClientGone(ctx: Koa.Context, body: ReadableStream<Uint8Array> | null 
  * middle of it. A chunk that does not parse yields nothing: the answer is
  * then passed through and the stream reports the failure itself.
  */
-function payloadIn(text: string): any | undefined {
+function payloadIn(text: string): JsonValue | undefined {
   const trimmed = text.trim();
   if (!trimmed) return undefined;
   let candidate = trimmed;
@@ -387,17 +393,19 @@ function payloadIn(text: string): any | undefined {
 function looksLikeErrorPayload(head: string): boolean {
   const parsed = payloadIn(head);
   if (!parsed || typeof parsed !== "object") return false;
+  const record = jsonObjectOf(parsed);
+  if (!record) return false;
   // Anthropic dialect: { type: "error", error: {...} }
-  if (parsed.type === "error") return true;
+  if (record.type === "error") return true;
   // OpenAI dialect: { error: {...} }
-  if (parsed.error && typeof parsed.error === "object") return true;
-  if (typeof parsed.error === "string" && parsed.error.length > 0) return true;
+  if (record.error && typeof record.error === "object") return true;
+  if (typeof record.error === "string" && record.error.length > 0) return true;
   // Business codes: the string is the name, the number is the code. A zero
   // code means no error, so only a non-zero number counts.
-  if (typeof parsed.errorCode === "string") return true;
-  if (typeof parsed.errorCode === "number" && parsed.errorCode !== 0) return true;
-  if (typeof parsed.error_code === "string") return true;
-  if (typeof parsed.error_code === "number" && parsed.error_code !== 0) return true;
+  if (typeof record.errorCode === "string") return true;
+  if (typeof record.errorCode === "number" && record.errorCode !== 0) return true;
+  if (typeof record.error_code === "string") return true;
+  if (typeof record.error_code === "number" && record.error_code !== 0) return true;
   // A top-level business code: { code: 11128, msg: "...", displayMsg: {...} }.
   // That is the shape WorkBuddy's channel check answers with (recorded in
   // test/fixtures/workbuddy-channel-check-11128.json). Without this the 200
@@ -407,7 +415,7 @@ function looksLikeErrorPayload(head: string): boolean {
   // Zero means no error (that is what the platforms answer on success), and
   // so does a body that carries an answer (choices/object): those are the
   // normal frames, not envelopes.
-  if (looksLikeBusinessErrorEnvelope(parsed)) return true;
+  if (looksLikeBusinessErrorEnvelope(record)) return true;
   return false;
 }
 
@@ -416,7 +424,7 @@ function looksLikeErrorPayload(head: string): boolean {
  *
  * An envelope has a business code that is not zero, and no answer in it.
  */
-function looksLikeBusinessErrorEnvelope(parsed: any): boolean {
+function looksLikeBusinessErrorEnvelope(parsed: unknown): boolean {
   return isBusinessErrorEnvelope(parsed);
 }
 
@@ -504,10 +512,279 @@ export { STREAM_IDLE_DEFAULT_MS };
 // than the default
 markHotSetting("ROUTER_FIRST_FRAME_MS");
 markHotSetting("ROUTER_STREAM_IDLE_MS");
+markHotSetting("ROUTER_IDLE_ERROR_RETRYABLE");
+markHotSetting("ROUTER_CONTINUE_ON_IDLE");
+markHotSetting("ROUTER_CONTINUE_MAX");
+// 工具开局那个上限也是热的：它在内容闸里每条请求读一次，面板改完下一条请求
+// 就是新的值（与 ROUTER_CONTINUE_MAX 同一套读法）。
+markHotSetting("ROUTER_TOOL_OPENING_MS");
+
+/** 续写上下文里已产出的文本最多带多少（字节）。超了取尾部：尾部才是断点。 */
+const CONTINUE_TEXT_MAX = 32 * 1024;
+
+/**
+ * ROUTER_CONTINUE_MAX 的默认值与取值范围（0 等于关闭）。
+ *
+ * 范围要导出：面板的输入框边界、setConfigValue 的提示语、这里的夹取，三处读同一份。
+ * 各写一份字面量的话，总有一天面板写着 0–5 而实际夹到 0–3。
+ */
+export const CONTINUE_MAX_DEFAULT = 2;
+export const CONTINUE_MAX_MIN = 0;
+export const CONTINUE_MAX_MAX = 5;
+
+/**
+ * 续写开关：默认关。与两个上限同一套读法，直接在答复里读，不走参数。
+ *
+ * 默认关是钉住的：生产上「静默就写 error 事件」是既有行为，续写是新能力，
+ * 不打开就一个字节都不改。
+ */
+function continueOnIdleEnabled(): boolean {
+  return configFlag("ROUTER_CONTINUE_ON_IDLE", false);
+}
+
+/**
+ * Retryable idle errors are opt-in because they change bytes on the wire; with
+ * the flag off every client keeps seeing exactly what it sees today
+ */
+function idleErrorRetryableEnabled(): boolean {
+  return configFlag("ROUTER_IDLE_ERROR_RETRYABLE", false);
+}
+
+/**
+ * Only mid-stream silence is rewritten: a first-frame timeout happens before
+ * headers are out, so the caller can still switch targets instead
+ *
+ * The tool-call silence is not rewritten either: it carries its own error type
+ * (`ToolCallSilenceError`), and the rewrite is for the mid-stream silence only.
+ * The client never saw those frames (nothing was sent yet), so the rewritten
+ * sentence would describe a silence the client never ran into.
+ */
+function retryableIdleMessage(e: unknown): string | null {
+  if (!(e instanceof StreamIdleError) || e.phase !== "mid-stream") return null;
+  if (!idleErrorRetryableEnabled() || continueOnIdleEnabled()) return null;
+  const seconds = e.idleMs / 1000;
+  return `upstream timed out after ${seconds}s mid-stream: no data received for ${seconds}s`;
+}
+
+/** Every other failure keeps its existing error frame byte for byte */
+function openAIErrorFrame(e: unknown): string | null {
+  // 提交之后的工具静默：这一类**不受** ROUTER_IDLE_ERROR_RETRYABLE 管（用户明确要它
+  // 可重试），形状与可重试的中途静默一样。
+  if (e instanceof ToolCallInFlightTimeoutError) {
+    return sseData({ error: { type: "server_error", code: "upstream_idle_timeout", message: e.message } });
+  }
+  const message = retryableIdleMessage(e);
+  if (message === null) return null;
+  return sseData({ error: { type: "server_error", code: "upstream_idle_timeout", message } });
+}
+
+let warnedIdleModeConflict = false;
+
+/**
+ * The two switches are alternatives, not a hierarchy: when both are on the
+ * stream resumes and the retryable failure shape is never used. One warning
+ * is enough because this is a configuration mistake, not a per-request event
+ */
+function noteIdleModeConflict(): void {
+  if (warnedIdleModeConflict) return;
+  if (!idleErrorRetryableEnabled() || !continueOnIdleEnabled()) return;
+  warnedIdleModeConflict = true;
+  log.warn("[DELIVER] ROUTER_CONTINUE_ON_IDLE 与 ROUTER_IDLE_ERROR_RETRYABLE 都开着，按续写处理");
+}
+
+/**
+ * 续写次数：默认 2，范围 0–5。越界夹回范围并 warn 一行（0 等于关闭）。
+ *
+ * NaN 没有可判的语义，显式回落默认并 warn —— 不能让它变成「次数无限」。
+ */
+function continueMax(): number {
+  const raw = configNumber("ROUTER_CONTINUE_MAX", CONTINUE_MAX_DEFAULT);
+  if (Number.isNaN(raw)) {
+    log.warn(`[DELIVER] 续写次数 ${raw} 不是有限数，已回落默认 ${CONTINUE_MAX_DEFAULT}`);
+    return CONTINUE_MAX_DEFAULT;
+  }
+  if (raw < CONTINUE_MAX_MIN || raw > CONTINUE_MAX_MAX) {
+    const clamped = Math.min(CONTINUE_MAX_MAX, Math.max(CONTINUE_MAX_MIN, raw));
+    log.warn(`[DELIVER] 续写次数 ${raw} 越界（${CONTINUE_MAX_MIN}-${CONTINUE_MAX_MAX}），已按 ${clamped} 生效`);
+    return clamped;
+  }
+  return raw;
+}
+
+/**
+ * 一次答复里已经产出的东西。
+ *
+ * 只记长度与「在不在途」，不记正文内容（与日志同一规矩）。续写要靠它判断
+ * 能不能接上：正文是断点，工具调用在途就拼不回来。
+ */
+interface ContinueState {
+  /** 已写出去的正文（按上游方言累加）。 */
+  text: string;
+  /** 已写出去的推理（按上游方言累加）。 */
+  reasoning: string;
+  /** 有没有进行中的工具调用：有就不续写（半截 JSON 拼不回来）。 */
+  toolInFlight: boolean;
+  /** 已经用掉几次续写。 */
+  attempts: number;
+  /** 已经写给客户端多少字节（提交之后才有数）。 */
+  clientBytes: number;
+  /** 见过哪几类帧，按首次出现的顺序（正文/思考/工具名/参数/完成）。 */
+  frameKinds: string[];
+  /** 累积到的参数字节数。 */
+  argBytes: number;
+}
+
+/**
+ * 续写要的「重发」能力：拿已产出的文本与推理，换一条新的上游流。
+ *
+ * 没传就没有续写能力 —— 调用方（只有开放平台那条路径）决定谁能续。
+ */
+export type Reopen = (partial: { text: string; reasoning: string }) => Promise<ReadableStream<Uint8Array>>;
+
+/** 已产出的文本超了就取尾部：尾部才是断点，前面的已经写出去了。 */
+function tailText(text: string): string {
+  return text.length > CONTINUE_TEXT_MAX ? text.slice(text.length - CONTINUE_TEXT_MAX) : text;
+}
+
+/**
+ * 为什么不能续写；能续写就返回 null。
+ *
+ * 每一条都是「少一条就按今天的行为失败」的判据：没有重发能力、开关没开、
+ * 次数为 0、次数用完、工具调用在途。
+ */
+function continueBlockedReason(state: ContinueState, reopen: Reopen | undefined): string | null {
+  if (!reopen) return "没有续写能力";
+  if (!continueOnIdleEnabled()) return "续写开关没开";
+  if (continueMax() <= 0) return "续写次数为 0";
+  if (state.attempts >= continueMax()) return "次数用完";
+  if (state.toolInFlight) return "工具调用在途";
+  return null;
+}
+/** 「再拿一条上游流」的结果：拿到下一条，或者不能续了（带上该收尾的错）。 */
+type ContinueOutcome =
+  | { kind: "stream"; stream: ReadableStream<Uint8Array> }
+  | { kind: "blocked"; error: unknown };
+
+/**
+ * 「再拿一条上游流」这件事：能续就给出下一条（各自过同一道安静闸），
+ * 不能续就给出该按哪个错收尾。
+ *
+ * 次数在这里加：加了才去问还能不能续，所以续写自己再失败时次数已经吃掉
+ * 一次，上限兜住，不会无限续。续写请求自己没成（没发出去、被上游拒了）
+ * 按那条错收尾，不再拿同一条请求重试。
+ */
+async function continueWith(
+  state: ContinueState,
+  reopen: Reopen | undefined,
+  error: unknown,
+  label: string,
+  dialect: UpstreamDialect,
+): Promise<ContinueOutcome> {
+  const why = continueBlockedReason(state, reopen);
+  // `!reopen` 在判据里已经覆盖，这里再写一次是给类型收窄：走到下面调用
+  // reopen 时它一定在。
+  if (why || !reopen) {
+    // 不续写的时候一定要留一句为什么：从外面只看得见「客户端收到 error 事件」，
+    // 到底是开关没开、没重发能力、次数用完还是工具调用在途，只有这里知道。
+    log.warn(
+      `[DELIVER] 静默后不续写：${why ?? "没有重发能力"}（已产出 ${state.text.length} 字，已续 ${state.attempts} 次，` +
+        `已发给客户端 ${state.clientBytes} 字节，帧序 ${frameKindLine(state)}，参数累积 ${state.argBytes} 字节）`,
+    );
+    return { kind: "blocked", error };
+  }
+  state.attempts++;
+  log.warn(`[DELIVER] 流中途静默 ${idleSpan(idleMsOf(error))}，第 ${state.attempts} 次续写（已有 ${state.text.length} 字）`);
+  try {
+    const following = await reopen({ text: tailText(state.text), reasoning: tailText(state.reasoning) });
+    return { kind: "stream", stream: withStreamIdle(following, label, {}, dialect) };
+  } catch (e) {
+    return { kind: "blocked", error: e };
+  }
+}
+
+/** 帧的种类：日志里按首次出现的顺序记下来（最多六种）。 */
+const FRAME_KINDS = ["正文", "思考", "工具名", "参数", "完成"] as const;
+
+/**
+ * 记下一帧是哪种：去重，按首次出现的顺序。
+ *
+ * 只有种类与顺序，不记内容 —— 这一层从不把正文写进日志。
+ */
+function noteFrameKind(state: ContinueState, kind: (typeof FRAME_KINDS)[number]): void {
+  if (state.frameKinds.length >= FRAME_KINDS.length) return;
+  if (state.frameKinds.includes(kind)) return;
+  state.frameKinds.push(kind);
+}
+
+/** OpenAI 方言的一帧里产出了什么（正文、推理、工具调用在途）。 */
+function trackOpenAIChunk(chunk: Json, state: ContinueState): void {
+  const delta = (chunk as { choices?: Array<{ delta?: Json }> })?.choices?.[0]?.delta;
+  if (!delta || typeof delta !== "object") return;
+  const d = delta as Json;
+  if (typeof d.content === "string" && d.content) state.text += d.content;
+  const reasoning = typeof d.reasoning_content === "string" ? d.reasoning_content : d.reasoning;
+  if (typeof reasoning === "string" && reasoning) state.reasoning += reasoning;
+  if (Array.isArray(d.tool_calls) && d.tool_calls.length > 0) state.toolInFlight = true;
+  noteFrameKinds(chunk, state);
+}
+
+/**
+ * 记下这一帧是哪种（正文/思考/工具名/参数/完成）与累积的参数字节。
+ *
+ * 与 trackOpenAIChunk 分开：帧序是给日志看的（两条投递路径都要记），而正文与工具
+ * 在途只跟续写有关。
+ */
+function noteFrameKinds(chunk: Json, state: ContinueState): void {
+  const delta = (chunk as { choices?: Array<{ delta?: Json }> })?.choices?.[0]?.delta;
+  if (delta && typeof delta === "object") {
+    const d = delta as Json;
+    if (typeof d.content === "string" && d.content) noteFrameKind(state, "正文");
+    const reasoning = typeof d.reasoning_content === "string" ? d.reasoning_content : d.reasoning;
+    if (typeof reasoning === "string" && reasoning) noteFrameKind(state, "思考");
+    if (Array.isArray(d.tool_calls)) {
+      for (const call of d.tool_calls) {
+        const fn = jsonObjectOf(jsonAt(call as JsonValue, "function"));
+        if (typeof fn?.name === "string" && fn.name) noteFrameKind(state, "工具名");
+        if (typeof fn?.arguments === "string" && fn.arguments) {
+          noteFrameKind(state, "参数");
+          state.argBytes += fn.arguments.length;
+        }
+      }
+    }
+  }
+  const finish = (chunk as { choices?: Array<{ finish_reason?: unknown }> })?.choices?.[0]?.finish_reason;
+  if (finish) noteFrameKind(state, "完成");
+}
+
+/**
+ * 帧的种类顺序，写进日志给人看：正文/思考/工具名/参数/完成。
+ */
+function frameKindLine(state: ContinueState): string {
+  return state.frameKinds.length > 0 ? state.frameKinds.join("/") : "无";
+}
+
+
+/** 一帧有多少字节（写给客户端的那些）。 */
+function frameBytes(chunk: string | Uint8Array): number {
+  return typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.length;
+}
+/** 一帧是不是「只带角色」的开场帧：续写的轮次不重发它（角色已经立过了）。 */
+function isRoleOnlyChunk(chunk: Json): boolean {
+  const delta = (chunk as { choices?: Array<{ delta?: Json }> })?.choices?.[0]?.delta;
+  if (!delta || typeof delta !== "object") return false;
+  const d = delta as Json;
+  if (d.role === undefined) return false;
+  return !d.content && !d.reasoning_content && !d.reasoning && !Array.isArray(d.tool_calls);
+}
+
 
 /** 「安静了多久」，写进句子给人看：一秒以内说毫秒，不然说秒。 */
 function idleSpan(idleMs: number): string {
   return idleMs < 1000 ? `${idleMs}ms` : `${Math.round(idleMs / 1000)}s`;
+}
+/** 出错时「静默了多久」：只有流安静那道闸给得出这个数，别的错没有。 */
+function idleMsOf(error: unknown): number {
+  return error instanceof StreamIdleError ? error.idleMs : 0;
 }
 
 /**
@@ -575,8 +852,67 @@ function isHeartbeatOnly(bytes: Uint8Array): boolean {
   });
 }
 
-/** 这次安静是等第一帧，还是流中途。两个上限不同，句子也要说清是哪一种。 */
+/**
+ * 这一块字节里有没有「真的产出」：正文、思考、收全的工具参数。
+ *
+ * 心跳、空 delta、role-only 的块都没有 —— 它们说明连接还在，不说明答复在往前走。
+ * 判据复用提交点那一套（`ToolCallTracker.observe`），所以「什么算内容」只有一份。
+ *
+ * 半帧（一条 SSE 还没拼全、JSON 解析不出来）保守地算有进度：宁可多等一秒，
+ * 也不要因为拆包把一条正常的流砍掉。
+ */
+function chunkIsProgress(bytes: Uint8Array, tracker: ToolCallTracker | null): boolean {
+  if (!tracker) return bytes.length > 0;
+  if (bytes.length === 0) return false;
+  const text = new TextDecoder().decode(bytes);
+  for (const raw of text.split(/\r?\n\r?\n/)) {
+    const data = raw
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5))
+      .join("\n")
+      .trim();
+    if (!data || data === SSE_DONE) continue;
+    let json: Json;
+    try {
+      json = parseLooseJson(data);
+    } catch {
+      return true;
+    }
+    if (tracker.observe(json)) return true;
+  }
+  return false;
+}
+
+/**
+/**
+ * Which silence this is: waiting for the first frame, or the stream going quiet
+ * mid-answer.
+ *
+ * The two are handled differently: the first-frame timeout happens before the
+ * commit point (headers not out yet, the routing layer can still switch
+ * targets), the mid-stream timeout happens after them (only an error frame can
+ * reach the client).
+ *
+ * A tool call that opened but never got its arguments is not a phase: it has
+ * its own error type (`ToolCallSilenceError`), because the upstream is healthy
+ * there — what is stuck is that one connection.
+ */
 export type StreamPhase = "first-frame" | "mid-stream";
+
+/**
+ * How this silence is put into words: two kinds, two sentences.
+ *
+ * The tool-call silence borrows the mid-stream one: the client does not need
+ * to know whether the silence came in the middle of an answer or at the start
+ * of a tool call. The log is where the two are told apart.
+ */
+function idleSentence(idleMs: number, label: string, phase: StreamPhase): string {
+  if (phase === "first-frame") {
+    return `upstream sent nothing for ${idleSpan(idleMs)} waiting for the first frame (${label})`;
+  }
+  return `upstream sent nothing for ${idleSpan(idleMs)} mid-stream (${label})`;
+}
 
 /**
  * 上游不说话了。
@@ -584,8 +920,9 @@ export type StreamPhase = "first-frame" | "mid-stream";
  * `name` 是 `TimeoutError`：`classifyUpstreamError` 认这个名字，日志里因此是
  * timeout 而不是 unknown，策略也照「上游太慢」处理（换一个账号也许答得出来）。
  *
- * `message` 是人话：它是客户端唯一能看到的那一句，所以要说清是等第一帧等到
- * 了上限，还是流开到一半停住了 —— 那两件事该做的事不一样。
+ * `message` is human words: it is the one sentence the client can see, so it
+ * has to say whether the first frame never came or the stream went quiet
+ * mid-answer.
  */
 export class StreamIdleError extends Error {
   readonly idleMs: number;
@@ -593,15 +930,65 @@ export class StreamIdleError extends Error {
   readonly phase: StreamPhase;
 
   constructor(idleMs: number, label: string, phase: StreamPhase) {
-    super(
-      phase === "first-frame"
-        ? `upstream sent nothing for ${idleSpan(idleMs)} waiting for the first frame (${label})`
-        : `upstream sent nothing for ${idleSpan(idleMs)} mid-stream (${label})`,
-    );
+    super(idleSentence(idleMs, label, phase));
     this.name = "TimeoutError";
     this.idleMs = idleMs;
     this.label = label;
     this.phase = phase;
+  }
+}
+
+/**
+ * The upstream opened a tool call and then went quiet: the tool's name arrived,
+ * its arguments did not.
+ *
+ * It is deliberately not a `StreamIdleError`: the upstream is healthy there —
+ * what is stuck is that one connection. Whether to retry it or to move to
+ * another upstream is the routing layer's call; the delivery layer only says
+ * which kind of silence this is.
+ *
+ * `name` is the discriminator (`ToolCallSilenceError`), so the routing layer
+ * can tell the two apart without reading the message.
+ *
+ * The sentence is the mid-stream one: the client does not need to know whether
+ * the silence came in the middle of an answer or at the start of a tool call.
+ * The log is where the two are told apart.
+ */
+export class ToolCallSilenceError extends Error {
+  readonly idleMs: number;
+  readonly label: string;
+
+  constructor(idleMs: number, label: string) {
+    super(idleSentence(idleMs, label, "mid-stream"));
+    this.name = "ToolCallSilenceError";
+    this.idleMs = idleMs;
+    this.label = label;
+  }
+}
+
+
+/**
+ * 提交之后：工具调用还在写，上游却安静了。
+ *
+ * 提交点已经过去（客户端已经拿到了字节），续写不可能 —— 半截 JSON 拼不回来。所以
+ * 这一次的失败只能是把话说清楚：「超时了，工具调用还在写」。客户端据此决定要不要
+ * 重发。
+ *
+ * 形状与中途静默那句话一致，但**不受** ROUTER_IDLE_ERROR_RETRYABLE 管：那一类改写
+ * 是给「中途静默」用的，这一类用户明确要它可重试。
+ *
+ * `name` 是 TimeoutError：分类器据此判成「超时」，记账那一层记 504（超时）而不是
+ * 502（上游挂了）—— 上游没坏，坏的是这一条连接。
+ */
+export class ToolCallInFlightTimeoutError extends Error {
+  readonly idleMs: number;
+  readonly label: string;
+
+  constructor(idleMs: number, label: string) {
+    super(`upstream timed out after ${idleSpan(idleMs)} mid-stream: a tool call was still being written (${label})`);
+    this.name = "TimeoutError";
+    this.idleMs = idleMs;
+    this.label = label;
   }
 }
 
@@ -639,6 +1026,7 @@ export function withStreamIdle(
   body: ReadableStream<Uint8Array>,
   label: string,
   limits: { firstFrameMs?: number; idleMs?: number } = {},
+  dialect?: UpstreamDialect,
 ): ReadableStream<Uint8Array> {
   const { firstFrameMs, idleMs } = idleGates(limits);
   if (!(firstFrameMs > 0) && !(idleMs > 0)) return body;
@@ -650,11 +1038,25 @@ export function withStreamIdle(
   const firstDeadline = firstFrameMs > 0 ? Date.now() + firstFrameMs : 0;
   // 见到过真正的帧没有：见过之后才换成中途那个滑动的窗口。
   let sawFrame = false;
+  // 中途阶段已经**累计**等了多久的安静（只算真的在等上游的时间，消费方停读不算）。
+  // 心跳、空 delta、role-only 的块都往这里加 —— 它们只证明连接还在，不证明答复在
+  // 往前走。有产出的那块一到就清零。
+  let silentMs = 0;
+  // 只含心跳/空 delta/role-only 的块数：诊断用，日志里记一行，免得下次又只能猜。
+  let quietOnlyChunks = 0;
+  const tracker = dialect ? new ToolCallTracker(dialect) : null;
   let timer: NodeJS.Timeout | null = null;
   const clearTimer = () => {
     if (!timer) return;
     clearTimeout(timer);
     timer = null;
+  };
+  /** 一条流结束时记一行：心跳很多而内容很少，就是「上游在发 ping、人没在答」。 */
+  const logQuietOnly = (): void => {
+    if (quietOnlyChunks === 0) return;
+    log.info(
+      `[DELIVER] ${label}：只有心跳/空帧的块 ${quietOnlyChunks} 个（它们不算上游在往前走）`,
+    );
   };
 
   /** 等下一帧，或者等安静到上限。 */
@@ -664,7 +1066,9 @@ export function withStreamIdle(
       const phase: StreamPhase = sawFrame ? "mid-stream" : "first-frame";
       // 首帧阶段量的是「从现在到那道死线还剩多久」，中途才是「上一帧之后静了多久」。
       const limit = phase === "first-frame" ? firstFrameMs : idleMs;
-      const waitMs = phase === "first-frame" ? firstDeadline - Date.now() : idleMs;
+      // 中途阶段只扣「已经等掉的安静」：消费方停读的时间不算，心跳也不清零。
+      const waitMs = phase === "first-frame" ? firstDeadline - Date.now() : idleMs - silentMs;
+      const startedAt = Date.now();
       const quiet = (): void => {
         // 上游那一侧停手：安静到这个地步，挂着只是白占连接与账号。
         void reader.cancel("the upstream went quiet").catch(() => {
@@ -696,7 +1100,23 @@ export function withStreamIdle(
           clearTimer();
           // 心跳与零长度的块不算「见到了第一帧」：它们说的是「还活着」，不是
           // 「开始说话了」。
-          if (!result.done && !isHeartbeatOnly(result.value)) sawFrame = true;
+          if (!result.done) {
+            const waited = Date.now() - startedAt;
+            if (isHeartbeatOnly(result.value)) {
+              // 心跳只证明连接还在：它能把阶段切成中途，但不让安静清零。
+              quietOnlyChunks++;
+              silentMs += waited;
+            } else if (!sawFrame) {
+              sawFrame = true;
+              // 阶段刚换过来：中途那个窗口从这一刻起算，之前等的不算。
+              silentMs = 0;
+            } else if (chunkIsProgress(result.value, tracker)) {
+              silentMs = 0;
+            } else {
+              // role-only、空 delta：上游说了句「我在」，同样不是往前走。
+              silentMs += waited;
+            }
+          }
           resolve(result);
         },
         (error) => {
@@ -720,6 +1140,7 @@ export function withStreamIdle(
           return;
         }
         if (result.done) {
+          logQuietOnly();
           controller.close();
           return;
         }
@@ -881,14 +1302,14 @@ export async function peekStream(
     let said = scrubForClient(text.trim(), 300);
     const parsed = payloadIn(text);
     if (parsed) {
-      const detail = parsed?.error ?? parsed;
+      const detail = jsonAt(parsed, "error") ?? parsed;
       // An empty sentence is no sentence: fall back to the raw body.
       // `msg` 是平台自己说的那句（WorkBuddy 的渠道校验就是它），`message` 是
       // 另一种写法。两个都看。
       const words =
         typeof detail === "string"
           ? detail
-          : detail?.message || detail?.msg || parsed?.message || parsed?.msg;
+          : jsonAt(detail, "message") || jsonAt(detail, "msg") || jsonAt(parsed, "message") || jsonAt(parsed, "msg");
       if (typeof words === "string" && words) said = scrubForClient(words, 300);
     }
     log.warn("[DELIVER] 上游在正文里报错：" + scrubForLog(said, 200));
@@ -923,14 +1344,668 @@ export async function peekStream(
  * The answer carries the failure inside the body (an OpenAI `error` object);
  * this turns it into the error the client sees.
  */
-export function errorFromUpstreamPayload(detail: any): AuthError {
+export function errorFromUpstreamPayload(detail: JsonValue | undefined): AuthError {
+  const type = jsonAt(detail, "type") ?? jsonAt(detail, "code") ?? "unknown";
+  const message = jsonAt(detail, "message");
   return new AuthError(
-    `upstream error (${detail?.type ?? detail?.code ?? "unknown"})`,
-    typeof detail?.message === "string"
-      ? scrubForClient(detail.message, 300)
-      : scrubForClient(JSON.stringify(detail), 300),
+    `upstream error (${type})`,
+    typeof message === "string" ? scrubForClient(message, 300) : scrubForClient(JSON.stringify(detail), 300),
     502,
   );
+}
+
+/* ---------------- 「第一块内容」这道闸 ---------------- */
+
+/** 扣住的帧最多这么多字节，超过就无条件提交（按今天的自由流继续）。 */
+const CONTENT_GATE_MAX_BYTES = 256 * 1024;
+
+/** 扣住的帧最多这么多帧，超过就无条件提交。 */
+const CONTENT_GATE_MAX_FRAMES = 1_000;
+
+/** 一个值是不是「非空的内容」：字符串要非空，数组要非空。 */
+function isNonEmptyContent(value: unknown): boolean {
+  if (typeof value === "string") return value.length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  return false;
+}
+
+/**
+ * 一段参数是不是一个完整的 JSON 值。
+ *
+ * 工具调用的参数是一段 JSON 文本，上游分片送过来。只有拼完整了客户端才能执行：
+ * 半截 JSON 客户端既跑不了也补不上 —— 所以「参数收全了」之前，这一帧不算内容。
+ */
+function isCompleteJsonArgs(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  try {
+    JSON.parse(trimmed);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 工具调用的参数按 index 累积。
+ *
+ * 上游给每个工具调用一个 index，参数分片都挂在它下面；没有 index 的按它在帧里
+ * 出现的位置编号（0,1,2…），这样同一个调用的分片落进同一份累积。
+ */
+class ToolArgumentLedger {
+  private readonly args = new Map<number, string>();
+  private total = 0;
+
+  /** 收下一段参数，返回这个工具调用的编号与累积后的全部参数。 */
+  push(index: number, fragment: string): { key: number; merged: string } {
+    const key = index;
+    const merged = (this.args.get(key) ?? "") + fragment;
+    this.args.set(key, merged);
+    this.total += fragment.length;
+    return { key, merged };
+  }
+
+  /** 累积的参数字节总数。 */
+  get bytes(): number {
+    return this.total;
+  }
+}
+
+/**
+ * 一条流里的工具调用状态。
+ *
+ * 判据只有一条：**参数收全了（能 JSON.parse）才算内容**。收全之前这一帧扣在内容
+ * 闸里，客户端一个字节都看不到 —— 半截参数对它没有用处，提交之后也拼不回来。
+ *
+ * 正文与思考不缓冲：它们到了就是到了。
+ */
+class ToolCallTracker {
+  private readonly ledger = new ToolArgumentLedger();
+  /** 参数还没收全的工具调用。 */
+  private readonly pending = new Set<number>();
+  private readonly dialect: UpstreamDialect;
+  /** 最近一帧带的是不是工具（开局帧或参数碎片）。 */
+  private toolFrameSeen = false;
+  /** 最近一帧把某个工具调用的参数收全了。 */
+  private toolArgsCompleted = false;
+  /** 不再看工具帧了（参数超了上限：此后不再扣，也不再按工具窗口计时）。 */
+  private stopped = false;
+  constructor(dialect: UpstreamDialect) {
+    this.dialect = dialect;
+  }
+
+  /**
+   * 收下一帧：这一帧是不是对用户可见的内容？
+   */
+  observe(json: Json): boolean {
+    this.toolFrameSeen = false;
+    this.toolArgsCompleted = false;
+    // 不再看工具帧的时候，这一帧什么也不参与判定。
+    if (this.stopped) return false;
+    return this.dialect === "anthropic" ? this.observeAnthropic(json) : this.observeOpenAI(json);
+  }
+
+  /** 最近一帧带的是不是工具（开局帧或参数碎片）。 */
+  get toolFrame(): boolean {
+    return this.toolFrameSeen;
+  }
+
+  /** 最近一帧把工具调用的参数收全了。 */
+  get toolArgsComplete(): boolean {
+    return this.toolArgsCompleted;
+  }
+
+  /** 有工具调用的参数没收全吗？ */
+  get inFlight(): boolean {
+    return this.pending.size > 0;
+  }
+
+  /** 累积的参数字节总数。 */
+  get argBytes(): number {
+    return this.ledger.bytes;
+  }
+
+  /**
+   * 参数超了上限：不再等它收全。
+   *
+   * 这时提交点已经过去，工具调用就当它结束了 —— 此后的静默归中途那个窗口，不然
+   * 一条超长的参数会把请求永远吊着。
+   */
+  forceComplete(): void {
+    this.pending.clear();
+  }
+
+  /**
+   * 不再看工具帧：参数超了上限，此后不再扣住，也不再按工具窗口计时 ——
+   * 静默归中途那个窗口。
+   */
+  stopTrackingTools(): void {
+    this.stopped = true;
+    this.pending.clear();
+    this.toolFrameSeen = false;
+  }
+
+  private observeOpenAI(json: Json): boolean {
+    const choices = jsonAt(json, "choices");
+    if (!Array.isArray(choices) || choices.length === 0) return false;
+    const delta = jsonObjectOf(jsonAt(choices[0] as JsonValue, "delta"));
+    if (!delta) return false;
+    if (isNonEmptyContent(delta.content)) return true;
+    if (isNonEmptyContent(delta.reasoning_content)) return true;
+    const calls = delta.tool_calls;
+    if (!Array.isArray(calls)) return false;
+    let content = false;
+    for (const [position, call] of calls.entries()) {
+      const callRecord = jsonObjectOf(call);
+      const fn = callRecord ? jsonObjectOf(callRecord.function) : null;
+      const name = typeof fn?.name === "string" ? fn.name : "";
+      const fragment = typeof fn?.arguments === "string" ? fn.arguments : "";
+      // 名字与参数都没有的条目不是工具帧（有些上游发的是别的字段）。
+      if (!name && !fragment) continue;
+      this.toolFrameSeen = true;
+      const index = typeof callRecord?.index === "number" ? callRecord.index : position;
+      const { key, merged } = this.ledger.push(index, fragment);
+      if (isCompleteJsonArgs(merged)) {
+        this.pending.delete(key);
+        // 参数收全了：这一帧就是内容，提交点落在这一帧。
+        content = true;
+        this.toolArgsCompleted = true;
+      } else {
+        this.pending.add(key);
+      }
+    }
+    return content;
+  }
+
+  private observeAnthropic(json: Json): boolean {
+    const type = jsonAt(json, "type");
+    if (type === "content_block_delta") {
+      const delta = jsonObjectOf(jsonAt(json, "delta"));
+      if (!delta) return false;
+      if (delta.type === "text_delta") return isNonEmptyContent(delta.text);
+      if (delta.type === "thinking_delta") return isNonEmptyContent(delta.thinking);
+      if (delta.type !== "input_json_delta") return false;
+      const fragment = typeof delta.partial_json === "string" ? delta.partial_json : "";
+      this.toolFrameSeen = true;
+      const { key, merged } = this.ledger.push(this.blockIndex(json), fragment);
+      if (isCompleteJsonArgs(merged)) {
+        this.pending.delete(key);
+        this.toolArgsCompleted = true;
+        return true;
+      }
+      this.pending.add(key);
+      return false;
+    }
+    if (type === "content_block_start") {
+      const block = jsonObjectOf(jsonAt(json, "content_block"));
+      if (!block || block.type !== "tool_use") return false;
+      const input = block.input;
+      // 带键的 input 本身就是内容（上游一次把参数给全了）。
+      if (input !== null && typeof input === "object" && !Array.isArray(input) && Object.keys(input).length > 0) {
+        this.toolArgsCompleted = true;
+        return true;
+      }
+      // 空 input 是开局帧：参数还在后面。
+      this.toolFrameSeen = true;
+      this.pending.add(this.blockIndex(json));
+      return false;
+    }
+    if (type === "content_block_stop") {
+      // 块结束了：参数就是它能给的那个样子（收不全也是结束了）。
+      this.pending.delete(this.blockIndex(json));
+      return true;
+    }
+    return false;
+  }
+
+  /** 内容块的下标：没有就是 0。 */
+  private blockIndex(json: Json): number {
+    const index = jsonAt(json, "index");
+    return typeof index === "number" ? index : 0;
+  }
+}
+
+/**
+ * 工具开局之后最多再等多久（毫秒）。
+ *
+ * 0 = 关着：沿用中途那个窗口，也就是今天的行为。读一次是一条请求的量 —— 热设置，
+ * 面板改完下一条请求就用新的值（与 ROUTER_CONTINUE_MAX 同一套读法）。
+ */
+function toolOpeningMs(): number {
+  const raw = configNumber("ROUTER_TOOL_OPENING_MS", 0);
+  const ms = clampStreamLimit(raw);
+  if (streamLimitWasCapped(raw)) {
+    log.warn(`[DELIVER] 工具开局上限 ${raw} 超过上限，已按 ${ms} 生效`);
+  }
+  return ms > 0 ? ms : 0;
+}
+
+/**
+ * 工具开局之后那道闸：几时开始计时、还剩多久、到点了是什么错。
+ *
+ * 只有内容闸用得上：工具帧按判据**不算内容**（参数没收全），所以它一定被扣在
+ * 闸里 —— 从它到达那一刻起，上游可能一声不吭。这道闸量的就是「上一个工具帧
+ * 之后等了多久」。
+ */
+interface ToolOpeningGate {
+  /** 这个上限（毫秒）。0 = 关着：沿用中途那个窗口，也就是今天的行为。 */
+  ms: number;
+  /** 没在计时的时候是 null；计时之后是「还剩几毫秒」（负数表示已经到点）。 */
+  remainingMs(): number | null;
+  /** 看一帧：它是不是工具帧？是的话从这一刻起开始计时。 */
+  observe(tracker: ToolCallTracker): void;
+  /** The timeout: this error (the tool opened, the arguments did not come). */
+  timeoutError(): ToolCallSilenceError;
+}
+
+function toolOpeningGate(label: string): ToolOpeningGate {
+  const ms = toolOpeningMs();
+  let deadline: number | null = null;
+  return {
+    ms,
+    remainingMs: () => (deadline === null ? null : deadline - Date.now()),
+    observe(tracker) {
+      // 关着的时候什么也不看：今天的行为一个字都不改。
+      if (!(ms > 0)) return;
+      // 锚点是**最后一个工具帧**：参数在慢慢流动（每 20ms 一片）不算静默，慢流
+      // 不该被砍。只有工具帧推这条死线。
+      if (!tracker.toolFrame) return;
+      deadline = Date.now() + ms;
+    },
+    timeoutError: () => {
+      // The log is the only place that tells the two silences apart: the client
+      // gets the same sentence as a mid-stream silence.
+      log.warn(`[DELIVER] tool_call 静默 ${idleSpan(ms)}：上游只发了工具的名字，参数还没来（${label}）`);
+      return new ToolCallSilenceError(ms, label);
+    },
+  };
+}
+
+/** 一帧原始 SSE 文本：事件名与数据 payload。 */
+interface RawSseFrame {
+  event?: string;
+  data: string;
+}
+
+/** 把一帧原始 SSE 文本拆成事件名与数据（与 readSseEvents 同一套解析）。 */
+function parseRawSseFrame(raw: string): RawSseFrame | undefined {
+  let event: string | undefined;
+  const dataLines: string[] = [];
+  for (const line of raw.split("\n")) {
+    const trimmed = line.replace(/\r$/, "");
+    if (trimmed === "") continue;
+    if (trimmed.startsWith(":")) continue;
+    if (trimmed.startsWith("event:")) {
+      event = trimmed.slice(6).trim();
+      continue;
+    }
+    if (trimmed.startsWith("data:")) {
+      dataLines.push(trimmed.slice(5).replace(/^ /, ""));
+      continue;
+    }
+    if (dataLines.length) dataLines.push(trimmed);
+  }
+  if (!dataLines.length) return undefined;
+  const data = dataLines.join("\n");
+  return event ? { event, data } : { data };
+}
+
+/** 把扣住的帧按原顺序写出去，然后接着读上游。 */
+function replayHeld(held: Uint8Array[], reader: ReadableStreamDefaultReader<Uint8Array>): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of held) controller.enqueue(chunk);
+    },
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) controller.close();
+      else controller.enqueue(value);
+    },
+    cancel(reason) {
+      reader.cancel(reason);
+    },
+  });
+}
+
+
+/**
+ * 工具帧是原子的：扣住，直到参数收全。
+ *
+ * 一个 tool_call 的参数是分片送来的。半个 tool_call 客户端既不显示也补不上 ——
+ * 所以从工具帧（开局帧或参数碎片）到达那一刻起，**从这一帧开始的所有帧**都扣在
+ * 手里，连非工具帧一起扣：扣住期间若正文帧先发出去，写出顺序就与上游顺序不同了。
+ * 参数能 JSON.parse 通过了，再按原顺序一次性写出。
+ *
+ * 写出的时机有三个：
+ *   · 参数收全；
+ *   · 累积超过 CONTENT_GATE_MAX_BYTES：立刻写出去，此后不再扣这一轮（静默归中途
+ *     那个窗口）；
+ *   · 上游正常结束（finish_reason / message_stop / 流结束）：参数没收全也原样写出，
+ *     不吞帧。
+ *
+ * 扣住期间上游安静了：走工具那个窗口（ROUTER_TOOL_OPENING_MS），到点失败 ——
+ * 客户端这时一个工具帧都没拿到（它拿到的是思考/正文与那句可重试的超时）。
+ */
+
+/**
+ * 一帧的末尾在字节流里的位置（不含那一帧）；没有完整的一帧就是 -1。
+ *
+ * 按字节找而不是按字符找：帧的字节要原样交给客户端（拆开再拼起来必须一模
+ * 一样），而一个多字节字符绝不会把分隔切在中间。分隔认 "\n\n" 与 "\r\n\r\n"
+ * 两种（有的上游用 CRLF）。
+ */
+function findFrameEnd(bytes: Uint8Array, from: number): number {
+  for (let i = from; i < bytes.length; i++) {
+    if (bytes[i] !== 0x0a) continue;
+    if (i + 1 < bytes.length && bytes[i + 1] === 0x0a) return i + 2;
+    if (i + 2 < bytes.length && bytes[i + 1] === 0x0d && bytes[i + 2] === 0x0a) return i + 3;
+  }
+  return -1;
+}
+
+/** 两段字节接起来。 */
+function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
+  if (a.length === 0) return b;
+  const out = new Uint8Array(a.length + b.length);
+  out.set(a, 0);
+  out.set(b, a.length);
+  return out;
+}
+
+/**
+ * 一帧的 JSON：解析不了就是 undefined（那一帧照原样转发，只是不参与工具判定）。
+ */
+function frameJson(frame: Uint8Array): Json | undefined {
+  const parsed = parseRawSseFrame(new TextDecoder().decode(frame));
+  if (!parsed) return undefined;
+  try {
+    return parseLooseJson(parsed.data);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 这一帧是不是「工具调用到此为止」：上游说完了。
+ *
+ * OpenAI 那边是 finish_reason，Anthropic 那边是块结束或消息结束。参数没收全也到
+ * 这里为止了 —— 扣着的帧原样写出去，不吞帧。
+ */
+function isToolCallEndFrame(json: Json, dialect: UpstreamDialect): boolean {
+  if (dialect === "anthropic") {
+    const type = jsonAt(json, "type");
+    return type === "content_block_stop" || type === "message_stop";
+  }
+  const choices = jsonAt(json, "choices");
+  if (!Array.isArray(choices)) return false;
+  const finish = jsonObjectOf(choices[0])?.finish_reason;
+  return finish !== undefined && finish !== null;
+}
+
+function withToolSilenceGuard(
+  body: ReadableStream<Uint8Array>,
+  dialect: UpstreamDialect,
+  label: string,
+): ReadableStream<Uint8Array> {
+  const windowMs = toolOpeningMs();
+  const reader = body.getReader();
+  const tracker = new ToolCallTracker(dialect);
+  // 扣住的帧：从工具帧那一帧起，往后的每一帧都在这里，按上游顺序排着。
+  const held: Uint8Array[] = [];
+  let heldBytes = 0;
+  let heldFrames = 0;
+  let holding = false;
+  // 上游的字节按帧拆：帧的字节原样保留，扣住与写出是同一批字节。
+  let parseBuf: Uint8Array = new Uint8Array(0);
+  let scanPos = 0;
+  let lastToolAt = 0;
+
+  /** 把扣住的帧按原顺序写出去。 */
+  const flushHeld = (controller: ReadableStreamDefaultController<Uint8Array>): void => {
+    if (!heldFrames) return;
+    log.info(`[DELIVER] 工具帧扣住 ${heldFrames} 帧 ${heldBytes} 字节，写出（${label}）`);
+    for (const frame of held) controller.enqueue(frame);
+    held.length = 0;
+    heldBytes = 0;
+    heldFrames = 0;
+    holding = false;
+  };
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        for (;;) {
+          // 工具在途时那道闸：到点是提交之后的工具静默（可重试）。
+          // 键关着的时候不算这一道 —— 静默归上游那道中途窗口（今天的行为）。
+          const deadline = windowMs > 0 && tracker.inFlight ? lastToolAt + windowMs : null;
+          const read = reader.read();
+          const { done, value } =
+            deadline === null
+              ? await read
+              : await within(read, Math.max(0, deadline - Date.now()), () => new ToolCallInFlightTimeoutError(windowMs, label));
+          if (done) {
+            // 上游正常结束：扣住的帧原样写出去（不吞帧）。
+            flushHeld(controller);
+            // 没收尾的半帧也出去：它已经在上游那里了，吞掉就是丢字节。
+            const rest = parseBuf.slice(scanPos);
+            if (rest.length > 0) controller.enqueue(rest);
+            controller.close();
+            return;
+          }
+          if (!value || value.length === 0) continue;
+
+          parseBuf = concatBytes(parseBuf, value);
+          let flushed = false;
+          for (;;) {
+            const end = findFrameEnd(parseBuf, scanPos);
+            if (end < 0) break;
+            const frame = parseBuf.slice(scanPos, end);
+            scanPos = end;
+
+            const json = frameJson(frame);
+            let toolFrame = false;
+            if (json !== undefined) {
+              tracker.observe(json);
+              toolFrame = tracker.toolFrame;
+              // 锚点是**最后一个工具帧**：参数在慢慢流动（每 20ms 一片）不算静默。
+              if (toolFrame) lastToolAt = Date.now();
+            }
+            if (!holding && toolFrame) holding = true;
+            if (holding) {
+              held.push(frame);
+              heldBytes += frame.length;
+              heldFrames++;
+            } else {
+              controller.enqueue(frame);
+            }
+            if (!holding) continue;
+            // 参数收全了：按原顺序一次性写出。
+            if (tracker.toolArgsComplete) {
+              flushHeld(controller);
+              flushed = true;
+              break;
+            }
+            // 上游说完了：参数没收全也写出去（不吞帧）。
+            if (json !== undefined && isToolCallEndFrame(json, dialect)) {
+              flushHeld(controller);
+              flushed = true;
+              break;
+            }
+            // 扣得太久了：立刻写出去，此后不再扣这一轮（静默归中途那个窗口）。
+            if (heldBytes > CONTENT_GATE_MAX_BYTES || tracker.argBytes > CONTENT_GATE_MAX_BYTES) {
+              tracker.stopTrackingTools();
+              flushHeld(controller);
+              flushed = true;
+              break;
+            }
+          }
+          // 已经拆过的字节不留着：它们要么给出去了，要么在扣着的那些帧里。
+          if (scanPos > 0) {
+            parseBuf = parseBuf.slice(scanPos);
+            scanPos = 0;
+          }
+          if (flushed) return;
+          if (!holding) return;
+          // 还在扣：接着读上游，直到参数收全。
+        }
+      } catch (e) {
+        // 上游那一侧要收掉：它还挂着就是在计费。
+        await cancelReader(reader);
+        throw e;
+      }
+    },
+    cancel(reason) {
+      void reader.cancel(reason);
+    },
+  });
+}
+
+/**
+ * 把上游的帧扣在手里，直到出现第一块对用户可见的内容。
+ *
+ * 头一落地（flushHeaders），路由层就换不了目标了。旧判据是「收到第一块字节」——
+ * Anthropic 的 message_start 几乎立刻就到，可它只是信封，客户端一个字内容都没收到，
+ * 路由层已经没有换目标的机会（客户端拿到的是 200 里藏一句 error）。判据改成
+ * 「收到第一块对用户可见的内容」：信封扣住，内容一到就提交（把扣住的帧按原顺序
+ * 逐字节写出去）；在那之前上游失败或静默，原样抛出，路由层自然换下一个目标。
+ *
+ * 缓冲有上限：字节数或帧数超了就无条件提交，按今天的自由流继续 —— 慢流不该被
+ * 整条扣住。
+ *
+ * A tool-opening frame (the tool's name arrived, its arguments did not) is not
+ * content by the criterion, so it is held here — from the moment it arrives the
+ * upstream may go quiet. ROUTER_TOOL_OPENING_MS measures how long to wait for
+ * the arguments: with the key on and above 0 the failure happens here (before
+ * the commit point, the client has zero bytes); with the key at 0 the
+ * mid-stream window applies, which is today's behaviour.
+ */
+async function gateUntilContent(
+  body: ReadableStream<Uint8Array>,
+  dialect: UpstreamDialect,
+  label: string,
+  signal?: AbortSignal,
+): Promise<ReadableStream<Uint8Array>> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  const held: Uint8Array[] = [];
+  let heldBytes = 0;
+  let frameCount = 0;
+  let buffer = "";
+  // 工具开局之后那道闸（键关着的时候它什么也不做）。
+  const tracker = new ToolCallTracker(dialect);
+  const opening = toolOpeningGate(label);
+
+  try {
+    for (;;) {
+      // 工具开局之后的上限：这一读最多等那么久。没在计时的时候就是一直等。
+      const waitMs = opening.remainingMs();
+      if (waitMs !== null && waitMs <= 0) {
+        // 死线已经过去了：不等下一帧，直接算超时（上游那一侧在 catch 里收掉）。
+        await cancelReader(reader);
+        throw opening.timeoutError();
+      }
+      const read = readOrAbort(reader, signal);
+      const { done, value } = waitMs === null ? await read : await within(read, waitMs, () => opening.timeoutError());
+      if (signal?.aborted) {
+        await cancelReader(reader);
+        throw new ClientGoneError();
+      }
+      if (done) break;
+      if (!value || value.length === 0) continue;
+      held.push(value);
+      heldBytes += value.length;
+      buffer += decoder.decode(value, { stream: true });
+
+      let idx: number;
+      while ((idx = buffer.indexOf("\n\n")) >= 0) {
+        const raw = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        const frame = parseRawSseFrame(raw);
+        if (!frame) continue;
+        frameCount++;
+        if (looksLikeErrorPayload(frame.data)) {
+          await cancelReader(reader);
+          throw errorFromUpstreamPayload(payloadIn(frame.data) ?? frame.data);
+        }
+        let json: Json;
+        try {
+          json = parseLooseJson(frame.data);
+        } catch {
+          continue;
+        }
+        // 工具开局帧：从这一刻起开始计时（上限关着的时候什么也不发生）。
+        const isContent = tracker.observe(json);
+        // 工具帧：从这一刻起开始计时（上限关着的时候什么也不发生）。
+        opening.observe(tracker);
+        if (isContent) {
+          return replayHeld(held, reader);
+        }
+      }
+      // 参数累积超了上限：不再等它收全，立刻提交（此后静默归中途那个窗口）。
+      if (tracker.argBytes > CONTENT_GATE_MAX_BYTES) {
+        tracker.forceComplete();
+        return replayHeld(held, reader);
+      }
+      if (heldBytes > CONTENT_GATE_MAX_BYTES || frameCount > CONTENT_GATE_MAX_FRAMES) {
+        return replayHeld(held, reader);
+      }
+    }
+  } catch (e) {
+    await cancelReader(reader);
+    throw e;
+  }
+
+  return replayHeld(held, reader);
+}
+
+/**
+ * 把已经解析好的帧扣在手里，直到出现第一块对用户可见的内容。
+ *
+ * 与 gateUntilContent 同语义：内容一到就提交，之前上游失败或静默就原样抛出。
+ * The tool-opening limit is here too (see the comment in gateUntilContent): with
+ * the key on and above 0, an opening frame that never gets its arguments fails
+ * here — before the commit point, the client has zero bytes.
+ */
+async function gateChunksUntilContent(iterator: AsyncIterator<Json>, label: string): Promise<Json[]> {
+  const held: Json[] = [];
+  let heldBytes = 0;
+  let frameCount = 0;
+  // 工具开局之后那道闸（键关着的时候它什么也不做）。
+  const tracker = new ToolCallTracker("openai");
+  const opening = toolOpeningGate(label);
+  try {
+    for (;;) {
+      // 工具开局之后的上限：这一读最多等那么久。没在计时的时候就是一直等。
+      const waitMs = opening.remainingMs();
+      if (waitMs !== null && waitMs <= 0) throw opening.timeoutError();
+      const next: IteratorResult<Json> =
+        waitMs === null
+          ? await iterator.next()
+          : await within(Promise.resolve(iterator.next()), waitMs, () => opening.timeoutError());
+      if (next.done) break;
+      held.push(next.value);
+      frameCount++;
+      heldBytes += JSON.stringify(next.value ?? null).length;
+      // 工具开局帧：从这一刻起开始计时（上限关着的时候什么也不发生）。
+      const isContent = tracker.observe(next.value);
+      opening.observe(tracker);
+      if (isContent) return held;
+      // 参数累积超了上限：不再等它收全，立刻提交（此后静默归中途那个窗口）。
+      if (tracker.argBytes > CONTENT_GATE_MAX_BYTES) {
+        tracker.forceComplete();
+        return held;
+      }
+      if (heldBytes > CONTENT_GATE_MAX_BYTES || frameCount > CONTENT_GATE_MAX_FRAMES) return held;
+    }
+  } catch (e) {
+    // 出错（含工具开局超时）：上游那一侧的迭代器收掉，别把它挂在那儿。
+    void Promise.resolve(iterator.return?.(undefined)).catch(() => {
+      /* 已经结束了 */
+    });
+    throw e;
+  }
+
+  return held;
 }
 
 /** The whole answer, for a client that did not ask for a stream. */
@@ -938,17 +2013,18 @@ export function deliverJson(
   ctx: Koa.Context,
   dialect: Dialect,
   from: UpstreamDialect,
-  json: any,
+  json: Json,
   model: string,
-  onUsage?: (usage: any) => void,
+  onUsage?: (usage: Usage) => void,
 ): void {
   if (from === "openai" && json?.error) throw errorFromUpstreamPayload(json.error);
-  const payload =
-    dialect === from
-      ? json
-      : from === "openai"
+  let payload = json;
+  if (dialect !== from) {
+    payload =
+      from === "openai"
         ? openaiToAnthropicResponse(json, model)
         : anthropicToOpenAIResponse(json, model);
+  }
   // The answer names the model the client asked for. The upstream may know it
   // by another name — a tier key, or the name behind a published model — but
   // the client asked for this one. Both dialects: an Anthropic answer that
@@ -992,7 +2068,7 @@ function countOpenAISegments(chunk: Json, counts: AnswerSegments): void {
 async function* watchFinish(
   chunks: AsyncIterable<Json>,
   onFinish?: (finish: AnswerFinish) => void,
-  onUsage?: (usage: any) => void,
+  onUsage?: (usage: Usage) => void,
 ): AsyncGenerator<Json> {
   const counts: AnswerSegments = { content: 0, thinking: 0, tool: 0 };
   let reason: string | undefined;
@@ -1007,6 +2083,42 @@ async function* watchFinish(
     onFinish({ reason: reason ?? "未给", ...counts });
   }
 }
+
+/**
+ * 把一条条上游流接成一个 OpenAI 帧的迭代：每条流出错就问「还能不能再来一条」。
+ *
+ * 续写把好几条流接成一条答复，转换器（openaiStreamToAnthropic）的内部状态
+ * ——开场帧、内容块编号、收尾帧——必须跨流留住。每条流换一个转换器会重发
+ * 开场帧、重发 content_block_start：块编号被顶掉，客户端按索引累积时前半截
+ * 正文就没了。所以转换器只建一个，喂给它的是这个「一条接一条」的迭代。
+ *
+ * 每一段各自过安静闸（在调用方套好的 withStreamIdle 里）：哪一段静默就抛
+ * 哪一段的错。不能续的时候把该收尾的错原样抛出去，由调用方按今天的方式收尾。
+ */
+async function* chainedOpenAIChunks(
+  first: ReadableStream<Uint8Array>,
+  next: (error: unknown) => Promise<ContinueOutcome>,
+  signal: AbortSignal,
+  state: ContinueState,
+): AsyncGenerator<Json> {
+  let current: ReadableStream<Uint8Array> | null = first;
+  while (current) {
+    try {
+      for await (const chunk of readOpenAIChunks(current, signal)) {
+        trackOpenAIChunk(chunk, state);
+        yield chunk;
+      }
+      current = null;
+    } catch (e) {
+      const outcome = await next(e);
+      if (outcome.kind === "blocked") {
+        throw outcome.error;
+      }
+      current = outcome.stream;
+    }
+  }
+}
+
 
 /**
  * A stream of OpenAI chunks.
@@ -1027,10 +2139,12 @@ export async function deliverOpenAIStream(
   dialect: Dialect,
   model: string,
   onFinish?: (finish: AnswerFinish) => void,
-  onUsage?: (usage: any) => void,
+  onUsage?: (usage: Usage) => void,
   onFailure?: (error: unknown) => void,
+  reopen?: Reopen,
 ): Promise<void> {
   ctx.res.setHeader("x-request-id", rid("req_"));
+  noteIdleModeConflict();
   // 客户端走了的时候，这个信号让读上游的那个循环停下来。
   const abort = new AbortController();
   // **先**把「客户端走了」这件事听上，再去等上游的第一帧。
@@ -1046,40 +2160,71 @@ export async function deliverOpenAIStream(
   try {
     // 等上游的**第一帧**也要算进「安静」，而且量的是**首帧那个上限**（比中途
     // 那个长：推理模型的第一个 token 常常要两分多钟）。
-    upstream = await peekStream(withStreamIdle(body, `model=${model}`), abort.signal);
+    upstream = await peekStream(withStreamIdle(body, `model=${model}`, {}, "openai"), abort.signal);
+    // 第一帧读到不等于答复开始：信封扣住，等第一块对用户可见的内容。内容之前
+    // 上游失败或静默，头还没发，原样抛出换目标。
+    upstream = await gateUntilContent(upstream, "openai", `model=${model}`, abort.signal);
+    // 提交之后：工具调用在途又静默 → 按工具那个窗口快速失败（可重试）。
+    upstream = withToolSilenceGuard(upstream, "openai", `model=${model}`);
   } catch (e) {
     if (e instanceof ClientGoneError) {
       reportClientGone(ctx, onFailure);
       ctx.res.end();
       return;
     }
-    // 第一帧都没读到：**头还没发出去**，所以往外抛 —— 路由层还能换一个账号
+    // 内容还没出现：**头还没发出去**，所以往外抛 —— 路由层还能换一个账号
     // 或目标，客户端最后拿到的是真实状态与上游原话。
     //
     // 以前这里把错吞成一条 error 帧（头在那之前就发了），换不了目标：生产上
     // fallback 的第三跳首帧就是 403，客户端拿到的是 200 里藏一句 error。
-    log.warn(`[DELIVER] 上游第一帧就失败了：${failureLine(e)}`);
+    log.warn(`[DELIVER] 上游在内容出现之前就失败了：${failureLine(e)}`);
     reportFailure(onFailure, e);
     // 响应从没接管过：它还是 Koa 的，调用方写的 sendError 才会落到 socket 上。
     throw e;
   }
-  // 第一帧读到了：现在才接管响应、发头。
+  // 第一块内容读到了：现在才接管响应、发头。
   takeOver(ctx);
   sseHead(ctx);
   // 看门狗断开连接时（客户端不读了）也要停上游：它还在吐字就是在计费。
   onClientGone(ctx, upstream, abort);
   if (dialect === "openai") {
-    await pipeOpenAIChunks(upstream, ctx, onFinish, onUsage, model, onFailure, abort);
+    await pipeOpenAIChunks(upstream, ctx, onFinish, onUsage, model, onFailure, abort, reopen);
     return;
   }
+  // 续写：一条答复一个转换器，多轮上游流在它下游串起来（见 chainedOpenAIChunks）
+  // ——每条流换一个转换器会重发开场帧、重发 content_block_start，块编号被顶掉。
+  const continueState: ContinueState = {
+    text: "",
+    reasoning: "",
+    toolInFlight: false,
+    attempts: 0,
+    clientBytes: 0,
+    frameKinds: [],
+    argBytes: 0,
+  };
+  let current = upstream;
+  const nextStream = async (e: unknown): Promise<ContinueOutcome> => {
+    const outcome = await continueWith(continueState, reopen, e, `model=${model}`, "openai");
+    if (outcome.kind === "stream") {
+      current = outcome.stream;
+      // 新一段也要挂上「客户端走了就停」：看门狗认的是当前这一段。
+      onClientGone(ctx, current, abort);
+    }
+    return outcome;
+  };
   try {
-    for await (const chunk of openaiStreamToAnthropic(watchFinish(readOpenAIChunks(upstream, abort.signal), onFinish, onUsage), model)) {
+    for await (const chunk of openaiStreamToAnthropic(
+      watchFinish(chainedOpenAIChunks(current, nextStream, abort.signal, continueState), onFinish, onUsage),
+      model,
+    )) {
       if (!(await writeFrame(ctx, chunk))) {
         // 客户端走了：上游也别接着算（还在计费），这一条也不该记成成功。
-        await stopUpstream(upstream, abort);
+        await stopUpstream(current, abort);
         reportClientGone(ctx, onFailure);
         break;
       }
+      // 已经写给客户端多少字节：日志里要能看出「哪一帧先到了客户端」。
+      continueState.clientBytes += frameBytes(chunk);
     }
     // 上游安静的时候客户端断开：这条请求不算成功（客户端一个字都没拿到）。
     reportClientGone(ctx, onFailure);
@@ -1088,6 +2233,10 @@ export async function deliverOpenAIStream(
     log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
     await writeFrame(ctx, errorEvent(clientMessageOf(e)));
     reportFailure(onFailure, e);
+    ctx.res.end();
+    // 同 pipeOpenAIChunks：字节不变，错抛给调用方记账（头已发，换不了目标，
+    // 调用方按失败收尾）。
+    throw e;
   }
   ctx.res.end();
 }
@@ -1112,11 +2261,12 @@ export async function deliverAnthropicStream(
   dialect: Dialect,
   model: string,
   pingMs = 0,
-  onUsage?: (usage: any) => void,
+  onUsage?: (usage: Usage) => void,
   onFailure?: (error: unknown) => void,
   onFinish?: (finish: AnswerFinish) => void,
 ): Promise<void> {
   ctx.res.setHeader("x-request-id", rid("req_"));
+  noteIdleModeConflict();
   // 客户端走了的时候，这个信号让读上游的那个循环停下来。
   const abort = new AbortController();
   // **先**把「客户端走了」这件事听上，再去等上游的第一帧：第一帧可能要等
@@ -1128,22 +2278,28 @@ export async function deliverAnthropicStream(
   // 一个计时走，源头才不会因为没人读而挂在那里（挂着就是在计费）。
   let upstream: ReadableStream<Uint8Array>;
   try {
-    // 第一帧读成功之前不写头：头一落地（flushHeaders），路由层就换不了目标，
+    // 第一块内容读到之前不写头：头一落地（flushHeaders），路由层就换不了目标，
     // 客户端拿到的是 200 里藏一句 error；而这里抛出去，它还能换下一个账号或
-    // 目标。peek 出来的流把第一块字节原样交回给下面（不丢、不重排）。
-    upstream = await peekStream(withStreamIdle(body, `model=${model}`), abort.signal);
+    // 目标。peek 出来的流把第一块字节原样交回给下面（不丢、不重排），内容闸
+    // 再把信封扣住，等第一块对用户可见的内容。
+    upstream = await peekStream(withStreamIdle(body, `model=${model}`, {}, "anthropic"), abort.signal);
+    // 信封扣住，等第一块对用户可见的内容：内容之前上游失败或静默，头还没发，
+    // 原样抛出换目标。
+    upstream = await gateUntilContent(upstream, "anthropic", `model=${model}`, abort.signal);
+    // 提交之后：工具调用在途又静默 → 按工具那个窗口快速失败（可重试）。
+    upstream = withToolSilenceGuard(upstream, "anthropic", `model=${model}`);
   } catch (e) {
     if (e instanceof ClientGoneError) {
       reportClientGone(ctx, onFailure);
       ctx.res.end();
       return;
     }
-    log.warn(`[DELIVER] 上游第一帧就失败了：${failureLine(e)}`);
+    log.warn(`[DELIVER] 上游在内容出现之前就失败了：${failureLine(e)}`);
     reportFailure(onFailure, e);
     // 响应从没接管过：它还是 Koa 的，调用方写的 sendError 才会落到 socket 上。
     throw e;
   }
-  // 第一帧读到了：现在才接管响应、发头。
+  // 第一块内容读到了：现在才接管响应、发头。
   takeOver(ctx);
   sseHead(ctx);
   if (dialect === "anthropic") {
@@ -1212,8 +2368,12 @@ export async function deliverAnthropicStream(
     }
   } catch (e) {
     log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
-    await writeFrame(ctx, errorEvent(clientMessageOf(e)));
+    await writeFrame(ctx, dialect === "openai" ? (openAIErrorFrame(e) ?? errorEvent(clientMessageOf(e))) : errorEvent(clientMessageOf(e)));
     reportFailure(onFailure, e);
+    ctx.res.end();
+    // Same contract as the OpenAI path: the bytes stay as they are, and the
+    // caller settles this answer as a failure instead of a zero-token success.
+    throw e;
   }
   ctx.res.end();
 }
@@ -1253,32 +2413,33 @@ function reportClientGone(ctx: Koa.Context, onFailure?: (error: unknown) => void
 /** A stream of OpenAI chunks that are already parsed (the legacy protocol). */
 export async function deliverOpenAIChunks(
   ctx: Koa.Context,
-  chunks: AsyncIterable<any>,
+  chunks: AsyncIterable<Json>,
   dialect: Dialect,
   model: string,
-  onUsage?: (usage: any) => void,
+  onUsage?: (usage: Usage) => void,
   onFailure?: (error: unknown) => void,
 ): Promise<void> {
   ctx.res.setHeader("x-request-id", rid("req_"));
-  // 第一帧读成功之前不写头：头一落地（flushHeaders），路由层就换不了目标。
-  // 读不到第一帧就往外抛，那一层还能换下一个账号或目标。
+  noteIdleModeConflict();
+  // 第一块内容读到之前不写头：头一落地（flushHeaders），路由层就换不了目标。
+  // 读不到内容就往外抛，那一层还能换下一个账号或目标。
   //
   // 这里也计时：已经解析好的帧那个入口原先一点上限都没有，只靠 undici 兼底 ——
   // 另两个入口都有，三个入口该是一套东西（见 withIteratorIdle）。
   const iterator = withIteratorIdle(chunks, `model=${model}`)[Symbol.asyncIterator]();
-  let first: IteratorResult<any>;
+  let held: Json[];
   try {
-    first = await iterator.next();
+    held = await gateChunksUntilContent(iterator, `model=${model}`);
   } catch (e) {
-    log.warn(`[DELIVER] 上游第一帧就失败了：${failureLine(e)}`);
+    log.warn(`[DELIVER] 上游在内容出现之前就失败了：${failureLine(e)}`);
     reportFailure(onFailure, e);
     // 响应从没接管过：它还是 Koa 的，调用方写的 sendError 才会落到 socket 上。
     throw e;
   }
-  // 第一帧读到了（或者上游一字不说就收工了，那是空答复）：现在才接管响应、发头。
+  // 第一块内容读到了（或者上游一字不说就收工了，那是空答复）：现在才接管响应、发头。
   takeOver(ctx);
   sseHead(ctx);
-  const source = restoreFirst(first, iterator);
+  const source = restoreHeld(held, iterator);
   if (dialect === "openai") {
     try {
       for await (const chunk of source) {
@@ -1294,7 +2455,7 @@ export async function deliverOpenAIChunks(
       await writeFrame(ctx, SSE_DONE);
     } catch (e) {
       log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
-      await writeFrame(ctx, errorEvent(clientMessageOf(e)));
+      await writeFrame(ctx, openAIErrorFrame(e) ?? errorEvent(clientMessageOf(e)));
       reportFailure(onFailure, e);
     }
     ctx.res.end();
@@ -1318,14 +2479,14 @@ export async function deliverOpenAIChunks(
 }
 
 /**
- * Put the frame that was already read back in front of the rest.
+ * Put the frames that were held back in front of the rest.
  *
- * 第一帧是在发头之前读的（那时还不知道该不该发一个 200），但它就是答复的第
- * 一帧：原样交给后面的循环，不能丢也不能重排。
+ * 扣住的帧是在发头之前读的（那时还不知道该不该发一个 200），但它们就是答复的
+ * 前几帧：原样交给后面的循环，不能丢也不能重排。
  */
-async function* restoreFirst<T>(first: IteratorResult<T>, rest: AsyncIterator<T>): AsyncGenerator<T> {
+async function* restoreHeld<T>(held: T[], rest: AsyncIterator<T>): AsyncGenerator<T> {
   try {
-    if (!first.done) yield first.value;
+    for (const item of held) yield item;
     for (;;) {
       const next: IteratorResult<T> = await rest.next();
       if (next.done) return;
@@ -1379,12 +2540,14 @@ function isRawDisconnectText(text: string): boolean {
  */
 function isRawConnectionFailure(e: unknown): boolean {
   const seen = new Set<unknown>();
-  let current: any = e;
+  let current: unknown = e;
   while (current && typeof current === "object" && !seen.has(current)) {
     seen.add(current);
-    if (/^UND_ERR_/.test(String(current.code ?? ""))) return true;
-    if (isRawDisconnectText(String(current.message ?? ""))) return true;
-    current = current.cause;
+    const record = jsonObjectOf(current);
+    if (!record) break;
+    if (/^UND_ERR_/.test(String(record.code ?? ""))) return true;
+    if (isRawDisconnectText(String(record.message ?? ""))) return true;
+    current = record.cause;
   }
   return false;
 }
@@ -1401,7 +2564,7 @@ function isRawConnectionFailure(e: unknown): boolean {
  */
 export function clientMessageOf(e: unknown): string {
   // 上游安静了：那句人话本来就是我们自己写的。
-  if (e instanceof StreamIdleError) return e.message;
+  if (e instanceof StreamIdleError) return retryableIdleMessage(e) ?? e.message;
   if (isRawConnectionFailure(e)) return UPSTREAM_CLOSED_EARLY;
   // 抛出来的也可以就是个字符串（`throw "socket hang up"`）：那时没有 message，
   // 按以前那样直接落到回落值就把原文丢了 —— 而原文往往是唯一的线索。
@@ -1429,14 +2592,19 @@ function failureLine(e: unknown): string {
  * stream matters then. So a minimal legal message is filled in: the numbers
  * in it are zeros, because the upstream never sent any.
  */
-export function repairMessageStart(json: any, model: string): { json: any; repaired: boolean } {
-  if (!json || typeof json !== "object" || Array.isArray(json)) return { json, repaired: false };
-  const message = json.message;
-  if (message && typeof message === "object" && !Array.isArray(message)) {
-    message.model = model;
+export function repairMessageStart(json: string, model: string): { json: string; repaired: boolean };
+export function repairMessageStart(json: Json, model: string): { json: Json; repaired: boolean };
+export function repairMessageStart(json: JsonValue, model: string): { json: JsonValue; repaired: boolean };
+export function repairMessageStart(json: JsonValue, model: string): { json: JsonValue; repaired: boolean } {
+  const record = jsonObjectOf(json);
+  if (!record || Array.isArray(json)) return { json, repaired: false };
+  const message = jsonAt(json, "message");
+  const messageRecord = jsonObjectOf(message);
+  if (messageRecord && !Array.isArray(message)) {
+    messageRecord.model = model;
     return { json, repaired: false };
   }
-  json.message = {
+  record.message = {
     id: `msg_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`,
     type: "message",
     role: "assistant",
@@ -1454,36 +2622,92 @@ async function pipeOpenAIChunks(
   body: ReadableStream<Uint8Array>,
   ctx: Koa.Context,
   onFinish?: (finish: AnswerFinish) => void,
-  onUsage?: (usage: any) => void,
+  onUsage?: (usage: Usage) => void,
   model?: string,
   onFailure?: (error: unknown) => void,
   abort?: AbortController,
+  reopen?: Reopen,
 ): Promise<void> {
+  // 续写把好几条流接成一条答复：片段计数跨轮累加，结束原因取最后一轮。
+  const continueState: ContinueState = {
+    text: "",
+    reasoning: "",
+    toolInFlight: false,
+    attempts: 0,
+    clientBytes: 0,
+    frameKinds: [],
+    argBytes: 0,
+  };
+  const counts: AnswerSegments = { content: 0, thinking: 0, tool: 0 };
+  let finishReason: string | undefined;
+  const accFinish = (finish: AnswerFinish) => {
+    counts.content += finish.content;
+    counts.thinking += finish.thinking;
+    counts.tool += finish.tool;
+    finishReason = finish.reason;
+  };
+  let upstream = body;
   try {
-    for await (const chunk of watchFinish(readOpenAIChunks(body, abort?.signal), onFinish, onUsage)) {
-      if (model && chunk && typeof chunk === "object") chunk.model = model;
-      if (!(await writeFrame(ctx, sseData(chunk)))) {
-        // 客户端走了：上游也别接着算（还在计费），这一条也不该记成成功。
-        await stopUpstream(body, abort);
+    for (;;) {
+      let roundGone = false;
+      let firstOfRound = true;
+      try {
+        for await (const chunk of watchFinish(readOpenAIChunks(upstream, abort?.signal), accFinish, onUsage)) {
+          if (model && chunk && typeof chunk === "object") chunk.model = model;
+          // 续写的轮次不重发开场帧：角色那一份已经立过了。
+          if (continueState.attempts > 0 && firstOfRound && isRoleOnlyChunk(chunk)) {
+            firstOfRound = false;
+            continue;
+          }
+          firstOfRound = false;
+          const frame = sseData(chunk);
+          if (!(await writeFrame(ctx, frame))) {
+            // 客户端走了：上游也别接着算（还在计费），这一条也不该记成成功。
+            await stopUpstream(upstream, abort);
+            reportClientGone(ctx, onFailure);
+            roundGone = true;
+            break;
+          }
+          // 已经写给客户端多少字节、见过哪几类帧：日志里要能看出「哪一帧先到了客户端」。
+          continueState.clientBytes += frameBytes(frame);
+          noteFrameKinds(chunk, continueState);
+        }
+        if (roundGone) {
+          reportClientGone(ctx, onFailure);
+          await writeFrame(ctx, SSE_DONE);
+          return;
+        }
+        // 上游的流结束了，但客户端可能早就走了（上游安静的时候它断开的）：那
+        // 这一条不是成功 —— 客户端一个字都没拿到（2026-11-03，作者复查发现）。
         reportClientGone(ctx, onFailure);
-        break;
+        if (onFinish && (finishReason || counts.content + counts.thinking + counts.tool > 0)) {
+          onFinish({ reason: finishReason ?? "未给", ...counts });
+        }
+        // 收尾帧只在最后一轮写：还要继续的轮次里 [DONE] 先扣着。
+        await writeFrame(ctx, SSE_DONE);
+        return;
+      } catch (e) {
+        const outcome = await continueWith(continueState, reopen, e, `model=${model ?? ""}`, "anthropic");
+        if (outcome.kind === "blocked") {
+          log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(outcome.error)}`);
+          await writeFrame(ctx, openAIErrorFrame(outcome.error) ?? sseData({ error: { type: "api_error", message: clientMessageOf(outcome.error) } }));
+          await writeFrame(ctx, SSE_DONE);
+          reportFailure(onFailure, outcome.error);
+          // 字节一个不变，错要抛给调用方：这条答复是失败的，不抛的话调用方
+          // 记成成功（用量表上那些 0 token 的「成功」就是这么来的）。
+          throw outcome.error;
+        }
+        upstream = outcome.stream;
+        // 回到开头
       }
     }
-    // 上游的流结束了，但客户端可能早就走了（上游安静的时候它断开的）：那
-    // 这一条不是成功 —— 客户端一个字都没拿到（2026-11-03，作者复查发现）。
-    reportClientGone(ctx, onFailure);
-    await writeFrame(ctx, SSE_DONE);
-  } catch (e) {
-    log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
-    await writeFrame(ctx, sseData({ error: { type: "api_error", message: clientMessageOf(e) } }));
-    await writeFrame(ctx, SSE_DONE);
-    reportFailure(onFailure, e);
   } finally {
     // The response has to end, or the client waits for a connection that never
     // closes.
     ctx.res.end();
   }
 }
+
 
 /**
  * 把上游的 Anthropic 流写给客户端，只改一处：message_start 里的模型名。
@@ -1566,6 +2790,10 @@ async function writeAnthropicFrames(
     log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
     await writeFrame(ctx, errorEvent(clientMessageOf(e)));
     reportFailure(onFailure, e);
+    // The error event, the cooldown and the close are already handled; the
+    // error itself must still reach the caller, which settles this answer as
+    // a failure. Left here, a cut stream is recorded as a zero-token success.
+    throw e;
   } finally {
     if (pingTimer) clearInterval(pingTimer);
     ctx.res.end();
@@ -1594,6 +2822,19 @@ function retryAfterHeaders(e: unknown): Record<string, string> {
 }
 
 /**
+ * Mark a hand-written failure as terminal for clients that read x-should-retry
+ *
+ * These answers are produced before any upstream round trip: a bad key, a model
+ * that is not published, a malformed catalog request or an unrenderable header
+ * template. Repeating the same request cannot turn any of them into a success,
+ * so the client must not spend another attempt on it. sendError decides the
+ * same question from the failure classification and owns that path alone
+ */
+export function markTerminalError(ctx: Koa.Context): void {
+  ctx.set("x-should-retry", "false");
+}
+
+/**
  * Write a failure out.
  *
  * `headers` is for the failures that carry something the client acts on — a
@@ -1614,6 +2855,12 @@ export function sendError(ctx: Koa.Context, e: unknown, headers: Record<string, 
     ctx.body = { error: { type: "api_error", message: "the client went away" } };
     return;
   }
+
+  // opencode reads this header ahead of its own error classification: a terminal
+  // failure left unmarked gets retried, and a transient one marked false does not
+  if (!Object.keys(extra).some((key) => key.toLowerCase() === "x-should-retry")) {
+    extra["x-should-retry"] = classifyUpstreamError(e).callerShouldResend ? "true" : "false";
+  }
   const status = typeof err?.status === "number" ? err.status : 500;
   if (ctx.res.headersSent) {
     ctx.res.end();
@@ -1622,13 +2869,19 @@ export function sendError(ctx: Koa.Context, e: unknown, headers: Record<string, 
   ctx.status = status;
   if (Object.keys(extra).length) ctx.set(extra);
   log.warn(`[DELIVER] 答复 ${status}：${err?.message ?? "request failed"}`);
+  // A failure that names its own type keeps it; one that names none falls back on
+  // the status (503 means the credential, 400 the request, everything else the upstream).
+  let errorType = err?.type;
+  if (errorType === undefined || errorType === null) {
+    if (status === 503) errorType = "authentication_error";
+    else if (status === 400) errorType = "invalid_request_error";
+    else errorType = "api_error";
+  }
   ctx.body = {
     error: {
       // 503 means the credential is the problem; everything else is the request
       // or the upstream failing. A failure that says otherwise says so.
-      type:
-        err?.type ??
-        (status === 503 ? "authentication_error" : status === 400 ? "invalid_request_error" : "api_error"),
+      type: errorType,
       message: err?.message ?? "request failed",
     },
     ...(err?.hint ? { hint: err.hint } : {}),

@@ -13,6 +13,7 @@
 // the account itself is the problem.
 
 import { createHash } from "node:crypto";
+import { AuthError } from "../credential.ts";
 
 /** How the candidates are used. */
 
@@ -56,11 +57,20 @@ export interface SelectionOptions<T> {
 export class SelectionStop extends Error {
   /** The error that stopped the selection. */
   readonly reason: unknown;
+  /**
+   * The status the stopped reason carries, when it carries one.
+   *
+   * Only AuthError puts the status the client should see on the error itself;
+   * a SelectionStop wrapping anything else carries nothing, and the accounting
+   * layer classifies the reason instead
+   */
+  readonly status?: number;
 
   constructor(reason: unknown) {
-    super("the selection stopped");
+    super(reason instanceof Error ? reason.message : String(reason));
     this.name = "SelectionStop";
     this.reason = reason;
+    this.status = reason instanceof AuthError ? reason.status : undefined;
   }
 }
 

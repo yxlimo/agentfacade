@@ -37,6 +37,12 @@ if (!fs.existsSync(SOURCE)) {
   process.exit(1);
 }
 
-fs.rmSync(TARGET, { recursive: true, force: true });
+if (fs.existsSync(TARGET)) {
+  for (const entry of fs.readdirSync(TARGET)) {
+    fs.rmSync(path.join(TARGET, entry), { recursive: true, force: true });
+  }
+} else {
+  fs.mkdirSync(TARGET, { recursive: true });
+}
 copyTree(SOURCE, TARGET);
 console.log(`契约的生成物已搬到 ${path.relative(WEB, TARGET)}/`);

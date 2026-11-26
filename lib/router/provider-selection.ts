@@ -162,13 +162,80 @@ export function byOrder<T>(
  * ------------------------------------------------------------------ */
 
 /**
+ * Every word the classifier can say about a failure
+ *
+ * The union is closed on purpose: a new word must get a resend verdict below
+ */
+export type UpstreamFailureKind =
+  | "refused"
+  | "queued"
+  | "model"
+  | "quota"
+  | "rate-limit"
+  | "no-balance"
+  | "credential"
+  | "timeout"
+  | "server"
+  | "request"
+  | "unreachable"
+  | "connection"
+  | "pre-commit-silence"
+  | "unknown";
+
+/** The words in the union, so a verdict key missing at runtime can be caught */
+export const FAILURE_KINDS = [
+  "refused",
+  "queued",
+  "model",
+  "quota",
+  "rate-limit",
+  "no-balance",
+  "credential",
+  "timeout",
+  "server",
+  "request",
+  "unreachable",
+  "connection",
+  "pre-commit-silence",
+  "unknown",
+] as const satisfies readonly UpstreamFailureKind[];
+
+type MissingFailureKind = Exclude<UpstreamFailureKind, (typeof FAILURE_KINDS)[number]>;
+const allKindsListed: [MissingFailureKind] extends [never] ? true : never = true;
+const finiteKindUnion: string extends UpstreamFailureKind ? never : true = true;
+void allKindsListed;
+void finiteKindUnion;
+
+/**
+ * Whether the caller should resend the whole request
+ *
+ * A different question from retrySameAccountNow: a rate-limited account cannot take
+ * another attempt right now, but the caller coming back later may well succeed
+ */
+export const CALLER_RESEND_BY_KIND: Record<UpstreamFailureKind, boolean> = {
+  server: true,
+  connection: true,
+  timeout: true,
+  "rate-limit": true,
+  "pre-commit-silence": true,
+  refused: false,
+  credential: false,
+  quota: false,
+  "no-balance": false,
+  model: false,
+  request: false,
+  queued: false,
+  unreachable: false,
+  unknown: false,
+};
+/**
  * The codes that mean the account cannot serve the request.
  *
  * MiniMax's open platform puts its own code in the answer — sometimes in a
  * 200, in `base_resp.status_code` — so the HTTP status alone does not say
  * whether the account is out of credit or the request is wrong.
  */
-const ACCOUNT_CODES: Record<number, string> = {
+const ACCOUNT_CODES: Record<number, UpstreamFailureKind> = {
   1002: "rate-limit", // 请求频率超限
   1004: "credential", // 未授权
   1008: "quota", // 余额不足
@@ -181,7 +248,7 @@ const ACCOUNT_CODES: Record<number, string> = {
 };
 
 /** The codes that mean the request itself is wrong: another account fails too. */
-const REQUEST_CODES: Record<number, string> = {
+const REQUEST_CODES: Record<number, UpstreamFailureKind> = {
   2013: "request", // 参数错误
   2022: "request", // 模型不存在或无权使用
   // WorkBuddy 的渠道校验：请求不是官方客户端发来的。它认的是**模拟端的
@@ -192,7 +259,7 @@ const REQUEST_CODES: Record<number, string> = {
 };
 
 /** The codes the other platforms use, in their own words. */
-const NAMED_CODES: Record<string, { degradable: boolean; kind: string }> = {
+const NAMED_CODES: Record<string, { degradable: boolean; kind: UpstreamFailureKind }> = {
   quota_exceeded: { degradable: true, kind: "quota" }, // 墨点不够
   rate_limit_exceeded: { degradable: true, kind: "rate-limit" }, // 超 RPM/TPM
   insufficient_balance: { degradable: true, kind: "no-balance" },
@@ -236,18 +303,32 @@ export interface UpstreamFailure {
   /** The status the upstream sent, when it sent one. */
   status: number | null;
   /** A short word for the log. */
-  kind: string;
+  kind: UpstreamFailureKind;
   /**
-   * Does an immediate retry on the same account make sense?
+   * Router's question: does an immediate retry on the same account make sense?
    *
-   * `retryable` only answers whether trying this account again right now is
+   * `retrySameAccountNow` only answers whether trying this account again right now is
    * worth it — it does not answer whether to come back after a wait
    * (rate-limit windows, cooldowns and the client's own timeout decision each
    * have their own path)
    */
-  retryable: boolean;
+  retrySameAccountNow: boolean;
+
+  /**
+   * Caller's question: should the caller resend the whole request?
+   * This is the x-should-retry header, not the router's same-account retry
+   */
+  callerShouldResend: boolean;
 }
 
+function classifiedFailure(
+  kind: UpstreamFailureKind,
+  status: number | null,
+  degradable: boolean,
+  retrySameAccountNow: boolean,
+): UpstreamFailure {
+  return { degradable, status, kind, retrySameAccountNow, callerShouldResend: CALLER_RESEND_BY_KIND[kind] };
+}
 /**
  * Is this failure the candidate's fault?
  *
@@ -258,6 +339,20 @@ export interface UpstreamFailure {
  */
 export function isDegradableUpstreamError(error: unknown): boolean {
   return classifyUpstreamError(error).degradable;
+}
+
+/**
+ * Should this failure be resent to the same upstream, as-is?
+ *
+ * One place decides: the classification. A silence before the answer starts is the
+ * only failure that gets this treatment — the upstream is healthy, that one
+ * connection is stuck (a slow model, not a broken platform), so the same request
+ * goes out again on the same upstream. Switching upstream would pay for the same
+ * prompt twice and would replace a tool call that is already open.
+ */
+export function isSameUpstreamResend(error: unknown): boolean {
+  const failure = classifyUpstreamError(error);
+  return failure.kind === "pre-commit-silence" && failure.retrySameAccountNow;
 }
 
 /**
@@ -281,7 +376,7 @@ export function classifyUpstreamError(error: unknown): UpstreamFailure {
   // criterion: an HTML gateway page can arrive with any status, so deciding
   // here by status would misclassify the next vendor's page.
   if (error instanceof GatewayPageError) {
-    return { degradable: true, status: error.upstreamStatus, kind: "refused", retryable: false };
+    return classifiedFailure("refused", error.upstreamStatus, true, false);
   }
   // The upstream parked the model in a queue and waiting it out did not help.
   //
@@ -293,33 +388,45 @@ export function classifyUpstreamError(error: unknown): UpstreamFailure {
   // No status: the queue answer arrives inside a 200 stream, so the upstream
   // never sent one. The 429 the client finally sees is the gateway's own
   // answer, not the upstream's.
-  if (isQueued(error)) return { degradable: true, status: null, kind: "queued", retryable: false };
+  if (isQueued(error)) return classifiedFailure("queued", null, true, false);
+  // 提交点之前就静默了：上游一个字节都没答出来 —— 要么等首字等到超时，
+  // 要么开了 tool_call、参数还没来就停了。
+  // 上游本身是健康的 —— 卡住的是那一条连接（模型负载高），不是账号或平台。
+  // 所以它不可降级（换一个上游既要把同一段上下文重新算一遍，也会把已经开始的
+  // 工具调用换掉），但值得立刻重发：同一条请求、同一个上游，通常这一次就过了。
+  // 也没有状态码：上游根本没回过状态。
+  //
+  // 外面看不到这个 degradable：重发那一层（resendSameUpstream）把预算用完的它换成
+  // 504 的超时，那时这一轮的总时限也到了，不会再去换目标。所以「绝不换上游」在真实
+  // 链路上是靠预算限住的，degradable 这一格是契约的一部分（别的调用点抛到外层时的
+  // 判决），用例在分类那一节钉住它的值。
+  if (isPreCommitSilence(error)) return classifiedFailure("pre-commit-silence", null, false, true);
   // The platform's own code says more than the status does.
   const code = businessCodeOf(error);
   // 「这个免费模型被限流」：换账号没用（限的是模型），也不该把整个账号下线
   // （别的模型还好好的）。所以它既不降级也不冷却 —— 与分组拒绝同一类。
-  if (isFreeModelRateLimit(error)) return { degradable: false, status, kind: "model", retryable: false };
+  if (isFreeModelRateLimit(error)) return classifiedFailure("model", status, false, false);
   const byCode = code === null ? null : classifyBusinessCode(code);
-  if (byCode) return { degradable: byCode.degradable, status, kind: byCode.kind, retryable: false };
+  if (byCode) return classifiedFailure(byCode.kind, status, byCode.degradable, false);
   // 「模型不在这个 key 的分组里」：信封里没解出这个码时，正文里写着也算。
   // 状态码这时是 403 —— 按凭据被拒处理会把整个账号冷却掉，而账号没有坏。
-  if (isModelGroupDenied(error)) return { degradable: false, status, kind: "model", retryable: false };
+  if (isModelGroupDenied(error)) return classifiedFailure("model", status, false, false);
   if (status !== null) {
-    if (status === 401 || status === 403) return { degradable: true, status, kind: "credential", retryable: false };
-    if (status === 402) return { degradable: true, status, kind: "no-balance", retryable: false };
-    if (status === 429) return { degradable: true, status, kind: "rate-limit", retryable: false };
-    if (status === 408) return { degradable: true, status, kind: "timeout", retryable: false };
-    if (status >= 500) return { degradable: true, status, kind: "server", retryable: true };
+    if (status === 401 || status === 403) return classifiedFailure("credential", status, true, false);
+    if (status === 402) return classifiedFailure("no-balance", status, true, false);
+    if (status === 429) return classifiedFailure("rate-limit", status, true, false);
+    if (status === 408) return classifiedFailure("timeout", status, true, false);
+    if (status >= 500) return classifiedFailure("server", status, true, true);
     // 400, 404, 413 and the rest: the request itself.
-    return { degradable: false, status, kind: "request", retryable: false };
+    return classifiedFailure("request", status, false, false);
   }
   // The network failure keeps its own name: "the host does not resolve" is a
   // different problem from "the connection broke", and the two are handled
-  // differently (see the retryable field above and
+  // differently (see the retrySameAccountNow field above and
   // cooldownForFailure in account-cooldown.ts).
   const network = networkReason(error);
-  if (network) return { degradable: true, status: null, kind: network, retryable: network === "connection" };
-  return { degradable: false, status: null, kind: "unknown", retryable: false };
+  if (network) return classifiedFailure(network, null, true, network === "connection");
+  return classifiedFailure("unknown", null, false, false);
 }
 
 /** The failure in one line: the kind and the status, for the log. */
@@ -333,7 +440,7 @@ export function describeUpstreamError(error: unknown): string {
 }
 
 /** What the platform's own code means. */
-function classifyBusinessCode(code: number | string): { degradable: boolean; kind: string } | null {
+function classifyBusinessCode(code: number | string): { degradable: boolean; kind: UpstreamFailureKind } | null {
   if (typeof code === "number") {
     const account = ACCOUNT_CODES[code];
     if (account) return { degradable: true, kind: account };
@@ -416,6 +523,33 @@ function isQueued(error: unknown): boolean {
 }
 
 /**
+/**
+ * Silence before the answer starts: the upstream has produced nothing a client
+ * could show yet.
+ *
+ * Two shapes, one meaning. The first-frame timeout (StreamIdleError with phase
+ * "first-frame") means the upstream took too long to start answering; the
+ * tool-call silence means it opened a tool call and stopped before the
+ * arguments arrived. Both say "this model is slow right now", not "this
+ * account cannot serve" — the upstream is healthy, one connection is stuck.
+ *
+ * The names are the discriminators, the same way the rest of this file reads
+ * other layers' errors: the delivery layer says which silence this is, the
+ * routing layer decides what to do with it. Importing the classes here would
+ * be a cycle (deliver.ts imports this file), and the duck-typed check keeps
+ * the two layers decoupled.
+ */
+function isPreCommitSilence(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const { name, phase } = error as { name?: unknown; phase?: unknown };
+  const named = String(name ?? "");
+  if (named === "ToolCallSilenceError") return true;
+  // StreamIdleError is named "TimeoutError" (it reads like a timeout to
+  // everything above), and its phase says which of the two silences it is.
+  return named === "TimeoutError" && phase === "first-frame";
+}
+
+/**
  * undici gives up on a quiet upstream: no headers, or no body for a while.
  *
  * The socket was fine and then stopped answering, so this is "the upstream is
@@ -455,6 +589,16 @@ const NETWORK_CONNECTION_CODES = new Set([
 ]);
 
 /**
+ * The cause chain can hold anyone's error, so nothing on a link is known up front
+ */
+interface CauseStep {
+  code?: unknown;
+  name?: unknown;
+  message?: unknown;
+  cause?: unknown;
+}
+
+/**
  * The network failure behind an error, if that is what it is.
  *
  * A connection that failed, a socket that hung up, a timeout that ran out —
@@ -484,18 +628,19 @@ const NETWORK_CONNECTION_CODES = new Set([
  * "unreachable" outranks "connection": when one link in the chain says the
  * host does not resolve, waiting will not change it.
  */
-function networkReason(error: unknown): string | null {
+function networkReason(error: unknown): UpstreamFailureKind | null {
   const seen = new Set<unknown>();
   const codes: string[] = [];
   const names: string[] = [];
   const messages: string[] = [];
-  let current: any = error;
-  while (current && typeof current === "object" && !seen.has(current)) {
+  let current: unknown = error;
+  while (current !== null && typeof current === "object" && !seen.has(current)) {
+    const step = current as CauseStep;
     seen.add(current);
-    codes.push(String(current.code ?? ""));
-    names.push(String(current.name ?? ""));
-    messages.push(String(current.message ?? "").toLowerCase());
-    current = current.cause;
+    codes.push(String(step.code ?? ""));
+    names.push(String(step.name ?? ""));
+    messages.push(String(step.message ?? "").toLowerCase());
+    current = step.cause;
   }
   if (codes.some((code) => NETWORK_TIMEOUT_CODES.has(code)) || names.some((name) => NETWORK_TIMEOUT_NAMES.has(name))) {
     return "timeout";
@@ -522,15 +667,16 @@ export function networkDetailOf(error: unknown): string {
   const seen = new Set<unknown>();
   let withCode = "";
   let last = "";
-  let current: any = error;
-  while (current && typeof current === "object" && !seen.has(current)) {
+  let current: unknown = error;
+  while (current !== null && typeof current === "object" && !seen.has(current)) {
+    const step = current as CauseStep;
     seen.add(current);
-    const code = String(current.code ?? "");
-    const message = String(current.message ?? "");
+    const code = String(step.code ?? "");
+    const message = String(step.message ?? "");
     const said = [code, message].filter(Boolean).join(" ");
     if (said) last = said;
     if (code && said) withCode = said;
-    current = current.cause;
+    current = step.cause;
   }
   return withCode || last;
 }

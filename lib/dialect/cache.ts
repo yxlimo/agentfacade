@@ -12,7 +12,21 @@
 // 记成 6815 个输入令牌。记账层早就是按 Anthropic 的算法写的，所以这里按它
 // 的算法改。
 
-import type { Json } from "../json.ts";
+/** Upstream token counters as reported by either dialect */
+export interface Usage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  reasoning_tokens?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+  prompt_cache_hit_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number; reasoning_tokens?: number };
+  completion_tokens_details?: { reasoning_tokens?: number };
+  output_tokens_details?: { thinking_tokens?: number };
+}
 
 /** 一个数，不是数就当 0。 */
 function num(value: unknown): number {
@@ -36,7 +50,7 @@ function num(value: unknown): number {
  *
  * 用 `??` 的话这里会拿到那个 0 —— 缓存率看着像全miss，其实命中了 99.8%。
  */
-export function cachedInputOfOpenAI(usage: any): number {
+export function cachedInputOfOpenAI(usage: Usage | undefined): number {
   const values = [
     usage?.prompt_tokens_details?.cached_tokens,
     usage?.prompt_cache_hit_tokens,
@@ -57,7 +71,7 @@ export function cachedInputOfOpenAI(usage: any): number {
  * 写进缓存的那部分（cache_creation）不算「没命中」——它是这次刚写进去的，
  * 读缓存的那些才是命中。两个字段一起报，客户端才能算命中率。
  */
-export function anthropicUsageOf(openaiUsage: any, outputTokens: number): Json {
+export function anthropicUsageOf(openaiUsage: Usage | undefined, outputTokens: number): Usage {
   const prompt = num(openaiUsage?.prompt_tokens);
   const cached = cachedInputOfOpenAI(openaiUsage);
   const written = num(openaiUsage?.cache_creation_input_tokens);
@@ -79,7 +93,7 @@ export function anthropicUsageOf(openaiUsage: any, outputTokens: number): Json {
  * Anthropic → OpenAI → Anthropic 转一圈回来，这部分就从「写进去」变成了
  * 「没命中」，命中率算出来不对。
  */
-export function openAIUsageOf(anthropicUsage: any): Json {
+export function openAIUsageOf(anthropicUsage: Usage | undefined): Usage {
   const input = num(anthropicUsage?.input_tokens);
   const read = num(anthropicUsage?.cache_read_input_tokens);
   const write = num(anthropicUsage?.cache_creation_input_tokens);

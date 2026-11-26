@@ -3,11 +3,66 @@ name: be-admin-models
 description: 面板后端的「模型与目录」面：发布模型、模型元数据/计费覆盖、模型目录与上游拉取（lib/admin/service/{models}.ts、lib/admin/models.ts、lib/catalog-*.ts、lib/model-overrides.ts）。
 inheritSkills: false
 inheritProjectContext: true
-tools: read, grep, find, ls, bash, write, replace, replace_match, insert, copy, move, undo_last_change
-# 不写 extensions：后台子代理要加载环境扩展（pi-agentfacade 注册的 provider
-# agentfacade 就是从这里来的），写成空数组会把 provider 一起关掉，模型解析不到。
 thinking: medium
-systemPromptMode: replace
+systemPromptMode: append
+# 权限写在这里，派单只给 agent + model + task（见 skill pi-subagents-extend）。
+extend:
+  permissions:
+    scope: ["."]
+    write:
+      - lib/admin/service/models.ts
+      - lib/admin/service/model-view.ts
+      - lib/admin/models.ts
+      - lib/model-overrides.ts
+      - lib/model-traits.json
+      - lib/model-traits-tool.json
+      - lib/common-model-traits.ts
+      - lib/catalog-models.ts
+      - lib/catalog-billing.ts
+      - lib/catalog.ts
+      - lib/model-catalog.ts
+      - lib/aggregate.ts
+      - test/**
+      - tests/**
+      - .e2e
+      - mise.toml
+      - .pi/worklogs
+    budgets:
+      deny: 5
+      writeDeny: 2
+    bash:
+      allow:
+        - ls
+        - cat
+        - rg
+        - git status
+        - git diff
+        - git log
+        - git show
+        - git add
+        - git rev-parse
+        - git branch
+        - mise run
+        - node
+      deny:
+        - git commit
+        - git push
+        - git rebase
+        - git merge
+        - git reset
+        - git clean
+        - git checkout
+        - git restore
+        - git switch
+        - rm -rf
+        - mise run deploy
+        - mise run proto
+        - podman
+        - docker
+        - systemctl
+        - gh
+  worktree:
+    enabled: true
 ---
 
 仓库对**子代理**的通用约定见根目录 `CONVENTIONS.md`；`AGENTS.md` 里被 `main-agent-only` 标记的段落不适用于本角色。

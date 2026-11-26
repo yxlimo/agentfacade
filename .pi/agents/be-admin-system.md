@@ -3,11 +3,71 @@ name: be-admin-system
 description: 面板后端的「系统与运营」面：系统状态/重启/日志、设置项、用量与余额视图、每日签到与额度领取（lib/admin/service/{system,shared,usage,balance,benefits,zcode}.ts、lib/admin/{config,log,usage,benefits,zcode-claim}.ts）。
 inheritSkills: false
 inheritProjectContext: true
-tools: read, grep, find, ls, bash, write, replace, replace_match, insert, copy, move, undo_last_change
-# 不写 extensions：后台子代理要加载环境扩展（pi-agentfacade 注册的 provider
-# agentfacade 就是从这里来的），写成空数组会把 provider 一起关掉，模型解析不到。
 thinking: medium
-systemPromptMode: replace
+systemPromptMode: append
+# 权限写在这里，派单只给 agent + model + task（见 skill pi-subagents-extend）。
+extend:
+  permissions:
+    scope: ["."]
+    write:
+      - lib/admin/service/system.ts
+      - lib/admin/service/shared.ts
+      - lib/admin/service/usage.ts
+      - lib/admin/service/balance.ts
+      - lib/admin/service/benefits.ts
+      - lib/admin/service/zcode.ts
+      - lib/admin/service/quota-view.ts
+      - lib/admin/config.ts
+      - lib/admin/log.ts
+      - lib/admin/usage.ts
+      - lib/admin/benefits.ts
+      - lib/admin/zcode-claim.ts
+      - lib/config.ts
+      - lib/benefits.ts
+      - lib/zcode/claim.ts
+      - lib/zcode/marketing.ts
+      - lib/zcode/credits.ts
+      - test/**
+      - tests/**
+      - .e2e
+      - mise.toml
+      - .pi/worklogs
+    budgets:
+      deny: 5
+      writeDeny: 2
+    bash:
+      allow:
+        - ls
+        - cat
+        - rg
+        - git status
+        - git diff
+        - git log
+        - git show
+        - git add
+        - git rev-parse
+        - git branch
+        - mise run
+        - node
+      deny:
+        - git commit
+        - git push
+        - git rebase
+        - git merge
+        - git reset
+        - git clean
+        - git checkout
+        - git restore
+        - git switch
+        - rm -rf
+        - mise run deploy
+        - mise run proto
+        - podman
+        - docker
+        - systemctl
+        - gh
+  worktree:
+    enabled: true
 ---
 
 仓库对**子代理**的通用约定见根目录 `CONVENTIONS.md`；`AGENTS.md` 里被 `main-agent-only` 标记的段落不适用于本角色。

@@ -25,8 +25,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import {
   Table,
   TableBody,
@@ -37,10 +35,35 @@ import {
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useConfig, useSetConfig } from '@/features/config/api'
-import type { ConfigItem } from '@/gen/agentfacade/admin/v1/admin_pb'
+import {
+  ConfigValueField,
+  validateDraft,
+  type EditingItem,
+  type ValueProblem,
+} from '@/features/config/value-field'
+import {
+  displayMilliseconds,
+  durationLanguage,
+  isMilliseconds,
+  msToSecondsText,
+  secondsToMsText,
+} from '@/features/config/units'
+import {
+  ConfigKind,
+  ConfigUnit,
+  type ConfigItem,
+} from '@/gen/agentfacade/admin/v1/admin_pb'
 
 type SourceKey = 'database' | 'environment' | 'default'
 type GroupKey = 'general' | 'gateway' | 'benefits' | 'qoder'
+
+/**
+ * 布尔项说给人听的词：与编辑弹窗里的下拉同一套。
+ *
+ * 用同一个来源（configPage.booleanOn / booleanOff）译文，值列和下拉才不会
+ * 各说各的 —— 同一个页面两套口径，用户看不出这是同一件事。
+ */
+type BooleanLabels = { on: string; off: string }
 
 /**
  * tab 的顺序。
@@ -94,14 +117,14 @@ function hasValue(item: ConfigItem): boolean {
 /**
  * 这一项叫什么。
  *
- * 契约里给了 label（自然语言的名字）。没有 label 就用 description 的第一句，
- * 实在没有才退回键名 —— 键名是给机器看的，不当主要显示。
+ * 契约里给了 label（自然语言的名字）。没有 label 就用 description 的第一句。
+ * 连名字都没有的（服务端既没给名字也没给说明）返回空 —— 键名是给机器看的，
+ * 不摆到界面上，只留在 title 里。
  */
 function itemTitle(item: ConfigItem): string {
   if (item.label.trim()) return item.label.trim()
   const firstSentence = item.description.split(/[。\n]/)[0]?.trim()
-  if (firstSentence) return firstSentence
-  return item.key
+  return firstSentence ?? ''
 }
 
 /**
@@ -118,22 +141,61 @@ function itemDescription(item: ConfigItem): string {
   return description.slice(first.length).replace(/^[。\s]+/, '').trim()
 }
 
-/** 标题用的是键名的时候，就不用再在下面重复一遍了。 */
-function showKey(item: ConfigItem): boolean {
-  return itemTitle(item) !== item.key
+/**
+ * 一个值显示给人看的形状：人能读的那一档。
+ *
+ * 布尔项说成「开启」「关闭」，与编辑弹窗里的下拉是同一套词 —— 同一个页面
+ * 两套口径（值列 true、下拉「开启」），用户看不出这是同一件事。
+ * 毫秒的项：传输层是毫秒，面板上是秒 —— 显示与填写都是秒，换算在 units.ts 里做。
+ * 认不出的布尔与脏值原样透出，别替服务端编话。空值说成「—」。
+ */
+function displayText(
+  value: string,
+  kind: ConfigKind,
+  unit: ConfigUnit,
+  labels: BooleanLabels,
+  language: ReturnType<typeof durationLanguage>
+): string {
+  if (!value) return '—'
+  if (kind === ConfigKind.BOOLEAN) {
+    if (value === 'true') return labels.on
+    if (value === 'false') return labels.off
+    return value
+  }
+  if (!isMilliseconds(unit)) return value
+  return displayMilliseconds(value, language)
+}
+
+/**
+ * 弹窗里的初值。
+ *
+ * 毫秒的项换成秒，换算不做四舍五入：初值必须是库里那个数，面板不替用户定。
+ * 布尔没有值时按关闭起手；敏感项的值读不出来，一律从空开始。
+ */
+function initialDraft(item: ConfigItem): string {
+  if (item.secret) return ''
+  if (isMilliseconds(item.unit)) return msToSecondsText(item.value)
+  const value = item.value.trim()
+  if (item.kind === ConfigKind.BOOLEAN) return value === '' ? 'false' : value
+  return item.value
+}
+
+/** 发给服务端的值：毫秒的项换回毫秒，其余原样。传输单位不变。 */
+function toWireValue(item: EditingItem, draft: string): string {
+  if (isMilliseconds(item.unit)) return secondsToMsText(draft)
+  return draft
 }
 
 export function ConfigPage() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const language = durationLanguage(i18n.language)
   const config = useConfig()
   const setConfig = useSetConfig()
-  const [editing, setEditing] = useState<{
-    key: string
-    title: string
-    description: string
-    secret: boolean
-  } | null>(null)
+  // 正在改的这一项：契约给的面板要用的那几项。
+  const [editing, setEditing] = useState<EditingItem | null>(null)
   const [draft, setDraft] = useState('')
+  // 填错了什么：面板层拦住，不发请求。
+  const [problem, setProblem] = useState<ValueProblem | null>(null)
   const [busy, setBusy] = useState(false)
   // 打开配置页停在「常规」那一组。
   const [tab, setTab] = useState('general')
@@ -154,11 +216,16 @@ export function ConfigPage() {
     // 接在后面。
     const known = GROUP_ORDER.filter((group) => map.has(group))
     const extra = [...map.keys()].filter((group) => !GROUP_ORDER.includes(group))
-    return [...known, ...extra].map((group) => ({
-      key: group,
-      label: groupKey(group) ? t(groupKey(group)!) : group,
-      items: map.get(group) ?? [],
-    }))
+    return [...known, ...extra].map((group) => {
+      const key = groupKey(group)
+      return {
+        key: group,
+        // 认不出的分组不把组键摆到界面上：说成「其它」，组键只放 title 里。
+        label: t(key ?? 'configPage.unknownGroup'),
+        title: key ? undefined : group,
+        items: map.get(group) ?? [],
+      }
+    })
   }, [config.data, t])
 
   // 选中的那一组没了（比如重取之后分组变了），退回第一组。
@@ -179,6 +246,12 @@ export function ConfigPage() {
   const effectText = t(
     pendingRestart ? 'configPage.effectRestart' : 'configPage.effectLive'
   )
+
+  // 值列与弹窗说同一套词：布尔项是「开启」「关闭」，不是裸的 true/false。
+  const booleanLabels: BooleanLabels = {
+    on: t('configPage.booleanOn'),
+    off: t('configPage.booleanOff'),
+  }
 
   const save = async (key: string, value: string, clear: boolean) => {
     setBusy(true)
@@ -211,7 +284,11 @@ export function ConfigPage() {
         <Tabs value={activeTab} onValueChange={setTab}>
           <TabsList className='w-full justify-start overflow-x-auto'>
             {groups.map((group) => (
-              <TabsTrigger key={group.key} value={group.key}>
+              <TabsTrigger
+                key={group.key}
+                value={group.key}
+                title={group.title}
+              >
                 {group.label}
                 <span className='text-xs text-muted-foreground'>
                   ({group.items.length})
@@ -224,7 +301,9 @@ export function ConfigPage() {
             <TabsContent key={group.key} value={group.key}>
               <Card>
                 <CardHeader>
-                  <CardTitle className='text-base'>{group.label}</CardTitle>
+                  <CardTitle className='text-base' title={group.title}>
+                    {group.label}
+                  </CardTitle>
                   <CardDescription>{effectText}</CardDescription>
                 </CardHeader>
                 <CardContent className='px-0'>
@@ -244,15 +323,10 @@ export function ConfigPage() {
                         <TableRow key={item.key}>
                           <TableCell>
                             <div className='grid gap-0.5'>
-                              {/* 主要显示是给人看的名字，键名放次要位置。 */}
-                              <span className='font-medium'>
-                                {itemTitle(item)}
+                              {/* 显示的是给人看的名字；键名只留在 title 里，悬停能看见。 */}
+                              <span className='font-medium' title={item.key}>
+                                {itemTitle(item) || t('configPage.unknown')}
                               </span>
-                              {showKey(item) ? (
-                                <span className='font-mono text-xs text-muted-foreground'>
-                                  {item.key}
-                                </span>
-                              ) : null}
                               {itemDescription(item) ? (
                                 <span className='text-xs text-muted-foreground'>
                                   {itemDescription(item)}
@@ -272,14 +346,20 @@ export function ConfigPage() {
                               </span>
                             ) : (
                               <span className='font-mono text-xs'>
-                                {item.value || '—'}
+                                {displayText(item.value, item.kind, item.unit, booleanLabels, language)}
                               </span>
                             )}
                             {item.fallback &&
                             item.fallback !== item.value ? (
                               <div className='text-xs text-muted-foreground'>
                                 {t('configPage.fallback', {
-                                  value: item.fallback,
+                                  value: displayText(
+                                    item.fallback,
+                                    item.kind,
+                                    item.unit,
+                                    booleanLabels,
+                                    language
+                                  ),
                                 })}
                               </div>
                             ) : null}
@@ -288,16 +368,31 @@ export function ConfigPage() {
                               // 面板写了、但环境变量在用：这份在库里等着。
                               <div className='text-xs text-muted-foreground'>
                                 {t('configPage.override', {
-                                  value: item.overrideValue,
+                                  value: displayText(
+                                    item.overrideValue,
+                                    item.kind,
+                                    item.unit,
+                                    booleanLabels,
+                                    language
+                                  ),
                                 })}
                               </div>
                             ) : null}
                           </TableCell>
                           <TableCell>
-                            <Badge variant='outline'>
+                            {/* 来源走词典；闭集之外的来源说「未知」，原始名放 title，
+                                不把英文 token 摆到界面上。 */}
+                            <Badge
+                              variant='outline'
+                              title={
+                                sourceKey(item.source)
+                                  ? undefined
+                                  : item.source || undefined
+                              }
+                            >
                               {sourceKey(item.source)
                                 ? t(sourceKey(item.source)!)
-                                : (item.source || t('configPage.unknown'))}
+                                : t('configPage.unknown')}
                             </Badge>
                           </TableCell>
                           <TableCell className='text-right'>
@@ -308,12 +403,18 @@ export function ConfigPage() {
                                 onClick={() => {
                                   setEditing({
                                     key: item.key,
-                                    title: itemTitle(item),
+                                    title: itemTitle(item) || t('configPage.unknown'),
                                     description: item.description,
                                     secret: item.secret,
+                                    kind: item.kind,
+                                    unit: item.unit,
+                                    hasMin: item.hasMin,
+                                    minValue: item.minValue,
+                                    hasMax: item.hasMax,
+                                    maxValue: item.maxValue,
                                   })
-                                  // 敏感项的值读不出来，输入框一律从空开始。
-                                  setDraft(item.secret ? '' : item.value)
+                                  setDraft(initialDraft(item))
+                                  setProblem(null)
                                 }}
                               >
                                 <Save />
@@ -354,32 +455,32 @@ export function ConfigPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle className='flex items-center gap-2'>
+            {/* 键名只留在 title 里：弹窗说的也是人话。 */}
+            <DialogTitle className='flex items-center gap-2' title={editing?.key}>
               {editing?.secret ? <KeyRound className='size-4' /> : null}
               {editing?.title ?? t('configPage.editTitle')}
             </DialogTitle>
-            <DialogDescription>
-              <span className='font-mono text-xs'>{editing?.key}</span>
-              {editing?.description ? ` —— ${editing.description}` : ''}
-            </DialogDescription>
+            <DialogDescription>{editing?.description ?? ''}</DialogDescription>
           </DialogHeader>
-          <div className='grid gap-2'>
-            <Label htmlFor='config-value'>{t('configPage.newValue')}</Label>
-            <Input
-              id='config-value'
+          {editing ? (
+            <ConfigValueField
+              item={editing}
               value={draft}
-              autoFocus
-              type={editing?.secret ? 'password' : 'text'}
-              onChange={(event) => setDraft(event.target.value)}
+              problem={problem}
+              onChange={(next) => {
+                setDraft(next)
+                // 改了就重新判一次：旧的错处提示留着是骗人。
+                setProblem(null)
+              }}
             />
-            <p className='text-xs text-muted-foreground'>
-              {editing?.secret
-                ? t('configPage.secretHint')
-                : pendingRestart
-                  ? t('configPage.secretRestartHint')
-                  : t('configPage.liveHint')}
-            </p>
-          </div>
+          ) : null}
+          <p className='text-xs text-muted-foreground'>
+            {editing?.secret
+              ? t('configPage.secretHint')
+              : pendingRestart
+                ? t('configPage.secretRestartHint')
+                : t('configPage.liveHint')}
+          </p>
           <DialogFooter>
             <Button
               variant='outline'
@@ -400,7 +501,15 @@ export function ConfigPage() {
                   setEditing(null)
                   return
                 }
-                void save(editing.key, draft, false)
+                // 填错了在面板层拦住：服务端会把数字项的脏值静默落回默认值，
+                // 用户看不到自己填错了。
+                const found = validateDraft(editing, draft)
+                if (found) {
+                  setProblem(found)
+                  return
+                }
+                setProblem(null)
+                void save(editing.key, toWireValue(editing, draft), false)
               }}
             >
               {t('configPage.save')}

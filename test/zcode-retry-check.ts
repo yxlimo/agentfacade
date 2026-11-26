@@ -11,7 +11,7 @@
 //   2. classifyUpstreamError says request/false for a JSON 405 and server/true
 //      for a JSON 500 — one criterion, two faces;
 //   3. underPolicy sends a request-classified failure once, no retry;
-//   4. refused and credential are not immediately retryable either;
+//   4. refused and credential also have retrySameAccountNow false;
 //   5. 401/402/429 land on their own paths once the real status is kept.
 
 import fs from "node:fs";
@@ -95,9 +95,9 @@ function ask(): Promise<{ response: Response; session: unknown }> {
 }
 
 /* ------------------------------------------------------------------ *
- * 1. A JSON 405: real status kept, request and not retryable
+ * 1. A JSON 405: real status kept, request and retrySameAccountNow false
  * ------------------------------------------------------------------ */
-section("JSON 405: upstream status 405, request, retryable false, client 502");
+section("JSON 405: upstream status 405, request, retrySameAccountNow false, client 502");
 
 let error405: any;
 {
@@ -109,7 +109,7 @@ let error405: any;
   check("upstream status is 405", upstreamStatusOf(error405) === 405, String(upstreamStatusOf(error405)));
   const failure = classifyUpstreamError(error405);
   check("kind is request", failure.kind === "request", failure.kind);
-  check("retryable is false", failure.retryable === false, String(failure.retryable));
+  check("retrySameAccountNow is false", failure.retrySameAccountNow === false, String(failure.retrySameAccountNow));
   check("one upstream attempt", fake.requests.length === before + 1, `${fake.requests.length - before}`);
 }
 
@@ -147,7 +147,7 @@ section("underPolicy: a request-classified failure is sent once");
 /* ------------------------------------------------------------------ *
  * 3. A JSON 500: the same criterion's other face
  * ------------------------------------------------------------------ */
-section("JSON 500: server, retryable true (same criterion, other face)");
+section("JSON 500: server, retrySameAccountNow true (same criterion, other face)");
 
 {
   status = 500;
@@ -158,23 +158,23 @@ section("JSON 500: server, retryable true (same criterion, other face)");
   check("upstream status is 500", upstreamStatusOf(error500) === 500, String(upstreamStatusOf(error500)));
   const failure = classifyUpstreamError(error500);
   check("kind is server", failure.kind === "server", failure.kind);
-  check("retryable is true", failure.retryable === true, String(failure.retryable));
+  check("retrySameAccountNow is true", failure.retrySameAccountNow === true, String(failure.retrySameAccountNow));
   check("one upstream attempt", fake.requests.length === before + 1, `${fake.requests.length - before}`);
 }
 
 /* ------------------------------------------------------------------ *
- * 4. Other kinds are not immediately retryable either
+ * 4. Other kinds have retrySameAccountNow false too
  * ------------------------------------------------------------------ */
-section("refused and credential: retryable false, each on its own path");
+section("refused and credential: retrySameAccountNow false, each on its own path");
 
 {
   const refused = classifyUpstreamError(new GatewayPageError(405, "<html>denied</html>"));
   check("refused kind", refused.kind === "refused", refused.kind);
-  check("refused retryable false", refused.retryable === false, String(refused.retryable));
+  check("refused retrySameAccountNow false", refused.retrySameAccountNow === false, String(refused.retrySameAccountNow));
 
   const credential = classifyUpstreamError(new AuthError("rejected", "hint", 401));
   check("credential kind", credential.kind === "credential", credential.kind);
-  check("credential retryable false", credential.retryable === false, String(credential.retryable));
+  check("credential retrySameAccountNow false", credential.retrySameAccountNow === false, String(credential.retrySameAccountNow));
 }
 
 /* ------------------------------------------------------------------ *
@@ -194,7 +194,7 @@ section("401/402/429: real status lands on credential/no-balance/rate-limit");
     check(`${c.code}: upstream status kept`, upstreamStatusOf(error) === c.code, String(upstreamStatusOf(error)));
     const failure = classifyUpstreamError(error);
     check(`${c.code}: kind is ${c.kind}`, failure.kind === c.kind, failure.kind);
-    check(`${c.code}: retryable false`, failure.retryable === false, String(failure.retryable));
+    check(`${c.code}: retrySameAccountNow false`, failure.retrySameAccountNow === false, String(failure.retrySameAccountNow));
   }
 }
 

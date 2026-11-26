@@ -9,7 +9,7 @@ import { log } from "../../log.ts";
 import { AuthError } from "../../credential.ts";
 import type { WorkBuddyModel } from "../../workbuddy/models.ts";
 import { TokenRhythmNoBalanceError } from "../../tokenrhythm/transport.ts";
-import { byOrder, classifyUpstreamError, describeUpstreamError, isDegradableUpstreamError, isNoBalanceFailure, networkDetailOf, selectProvider } from "../provider-selection.ts";
+import { byOrder, classifyUpstreamError, describeUpstreamError, isDegradableUpstreamError, isNoBalanceFailure, isSameUpstreamResend, networkDetailOf, selectProvider } from "../provider-selection.ts";
 import { byWeight } from "../selection.ts";
 import {
   businessCodeOf,
@@ -22,6 +22,7 @@ import {
   withUpstreamAnswer,
   withUpstreamBody,
   withUpstreamStatus,
+  withGatewayOwnStatus,
 } from "../../upstream-status.ts";
 import { clearCooldown, setCooldown } from "../../cooldown.ts";
 import { scrubForClient, scrubForLog } from "../../log-scrub.ts";
@@ -305,8 +306,66 @@ export function transientRetryPlan(): { delaysMs: readonly number[]; repeatLastM
 }
 
 /**
+ * Resend the same request to the same upstream, as-is.
+ *
+ * The tool-call silence says "that one connection is stuck": the upstream is healthy
+ * (see ToolCallSilenceError in lib/router/deliver.ts). Switching upstream would
+ * replace the tool call that is already open, and switching account would move the
+ * session the client asked for — so the same request goes out again, to the same
+ * upstream, unchanged.
+ *
+ * The verdict is one place only: the classification (isSameUpstreamResend in
+ * lib/router/provider-selection.ts). The budget is the cell the account retries use
+ * (ROUTER_RETRY_BUDGET_MS): no new setting.
+ */
+export async function resendSameUpstream<T>(
+  what: string,
+  run: () => Promise<T>,
+  opts: RetryBudget = {},
+): Promise<T> {
+  const budgetMs = opts.budgetMs ?? attemptBudgetMs();
+  const clock = opts.now ?? Date.now;
+  const nap = opts.sleep ?? sleep;
+  // The deadline covers the upstream's own time too: one tool-opening silence can
+  // eat the whole budget
+  const deadline = clock() + budgetMs;
+  let retries = 0;
+  for (;;) {
+    try {
+      return await run();
+    } catch (e) {
+      if (!isSameUpstreamResend(e)) throw e;
+      const delay = retryDelayMs(retries);
+      if (clock() + delay > deadline) {
+        log.info(`[ROUTE] ${what} ${describedForLog(e)}, no time left for a ${delay}ms resend`);
+        throw asResendTimeout(e);
+      }
+      retries += 1;
+      log.info(
+        `[ROUTE] ${what} ${describedForLog(e)}, resending the same request in ${delay}ms (resend ${retries})`,
+      );
+      await nap(delay);
+    }
+  }
+}
+
+/**
+ * The budget is gone: the client gets a timeout it may retry.
+ *
+ * 504 is the gateway's own answer (the upstream never sent one), so it is marked as
+ * such — the classifier must not read it as something the upstream said (see
+ * lib/upstream-status.ts)
+ */
+function asResendTimeout(error: unknown): Error {
+  const err: Error & { status?: unknown } =
+    error instanceof Error ? error : new Error("the resend budget ran out");
+  if (typeof err.status !== "number") err.status = 504;
+  return withGatewayOwnStatus(err);
+}
+
+/**
  * 「同一个账号上立刻再试一次」只有一份判据：classifyUpstreamError 的
- * `retryable`（见 lib/router/provider-selection.ts）。不再另列一张表 ——
+ * `retrySameAccountNow`（见 lib/router/provider-selection.ts）。不再另列一张表 ——
  * 两张表总有不一致的一天，而那天的重试决定是说不清的。
  *
  * 它说是 true 的只有 5xx（server）与连接断掉（connection）：「这一次没成事」，
@@ -321,7 +380,7 @@ export function transientRetryPlan(): { delaysMs: readonly number[]; repeatLastM
  *   - rate-limit 走等窗口那条路（等的是分钟级的窗口，不是几十毫秒）；
  *   - refused：上游回的是 HTML 网关错误页，不是它的 API —— 同一个端点再问一次
  *     还是那一页，不是抖动。一次就结束，让记账那一层记冷却、让策略换目标；重试
- *     它只会把客户端挂到总时限（refused 的 retryable 是 false）。
+ *     它只会把客户端挂到总时限（refused 的 retrySameAccountNow 是 false）。
  *     quota / no-balance / credential 是账号真的接不了，再试一次也是一样的答复；
  *     request 是请求本身的问题，换谁都一样；unknown 说不清是什么，不猜。
  */
@@ -329,7 +388,7 @@ function isTransientFailure(error: unknown): boolean {
   // 客户端已经走了：再打一次上游只是白花钱，答复也没人要，而且那次尝试的
   // 失败还会被记成账号的账（见 onAttempt 里 ClientGoneError 那一条）。
   if (error instanceof ClientGoneError) return false;
-  return classifyUpstreamError(error).retryable;
+  return classifyUpstreamError(error).retrySameAccountNow;
 }
 
 /** 这个失败是「等太久了」吗。 */

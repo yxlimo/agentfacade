@@ -40,3 +40,8 @@ install_one() {
 
 install_one .
 install_one web
+
+# 构建产物目录先建出来。子代理的沙箱只能授权**已经存在**的路径：写范围里写了
+# `web/.gen` 而它不存在时，那条授权被跳过（Landlock 授权的是 inode），于是第一次
+# 构建就死在 `EACCES: /…/web/.gen`。空目录先摆好，授权就落得下来。
+mkdir -p web/.gen web/.tanstack web/dist .e2e/tmp .e2e/logs .e2e/results

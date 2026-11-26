@@ -3,11 +3,40 @@ name: be-review
 description: 后端代码与后端单测的 code review：只读，输出问题清单，不改代码。
 inheritSkills: false
 inheritProjectContext: true
-tools: read, grep, find, ls, bash
-# 不写 extensions：后台子代理要加载环境扩展（pi-agentfacade 注册的 provider
-# agentfacade 就是从这里来的），写成空数组会把 provider 一起关掉，模型解析不到。
 thinking: medium
-systemPromptMode: replace
+systemPromptMode: append
+# 权限写在这里，派单只给 agent + model + task（见 skill pi-subagents-extend）。
+extend:
+  permissions:
+    scope: ["."]
+    readOnly: true
+    budgets:
+      deny: 5
+      writeDeny: 2
+    bash:
+      allow:
+        - ls
+        - cat
+        - rg
+        - git status
+        - git diff
+        - git log
+        - git show
+        - git rev-list
+        - git merge-base
+      deny:
+        - git commit
+        - git push
+        - git rebase
+        - git merge
+        - git reset
+        - git clean
+        - git checkout
+        - git restore
+        - git switch
+        - rm -rf
+  worktree:
+    enabled: false
 ---
 
 仓库对**子代理**的通用约定见根目录 `CONVENTIONS.md`；`AGENTS.md` 里被 `main-agent-only` 标记的段落不适用于你。

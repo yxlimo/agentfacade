@@ -233,21 +233,24 @@ check("Qoder 全球区现在是关着的", before.upstreams?.find((u: any) => u.
 
 const configBefore = await admin("ListConfig");
 const keys = (configBefore.items ?? []).map((i: any) => i.key);
-// 面板上这十四个：网关自己的三个、三个超时旋钮、定时任务与快照、签到、Qoder 的
+// 面板上这十八个：网关自己的三个、四个超时旋钮、流中途静默超时的自动续写与可重试报错、定时任务与快照、签到、Qoder 的
 // 排队重试与「排队时不等待」、上游级熔断的开关、balance 策略的自定义会话头。
 // 这些键的个数是面板的契约：多一个或少一个，说明 USER_FACING 那边动了。
-check("面板上是这十四个设置", (configBefore.items ?? []).length === 14, JSON.stringify(keys));
+check("面板上是这十八个设置", (configBefore.items ?? []).length === 18, JSON.stringify(keys));
 check("自定义会话头在面板上", keys.includes("SESSION_HEADER"), JSON.stringify(keys));
 check(
   "公布的是网关自己能改的那几个",
   ["REQUIRE_API_KEY", "ADMIN_CORS_ORIGINS"].every((k) => keys.includes(k)),
   JSON.stringify(keys),
 );
-// 三个超时旋钮以前只能改部署的环境变量，现在在面板上（改完不用重启：它们是热的）。
+// 四个超时旋钮以前只能改部署的环境变量，现在在面板上（改完不用重启：它们是热的）。
 for (const key of [
   "ROUTER_FIRST_FRAME_MS",
   "ROUTER_STREAM_IDLE_MS",
+  "ROUTER_TOOL_OPENING_MS",
   "ROUTER_RETRY_BUDGET_MS",
+  "ROUTER_CONTINUE_ON_IDLE",
+  "ROUTER_CONTINUE_MAX",
   "PERIODIC_ENABLED",
   "HEALTH_CACHE_MS",
   "BENEFITS_DISABLED",

@@ -35,6 +35,7 @@ import { platformAvailabilities, platformAvailability, type PlatformAvailability
 import { fetchWorkBuddyCatalog } from "../workbuddy/transport.ts";
 import { regionOf, type WorkBuddyRegion } from "../workbuddy/auth.ts";
 
+import { markTerminalError } from "./deliver.ts";
 // WorkBuddy's models are addressed by prefix only: several of them (glm-5.3,
 // kimi-k2.8-preview) carry the same name as a Qoder model, so a bare name
 // The catalogue itself lives in the database (lib/workbuddy/catalog-store.ts):
@@ -206,6 +207,7 @@ export function serveModels(ctx: Koa.Context): void {
   const dialect = dialectOf(ctx);
   if (!dialect) {
     const asked = String(ctx.query.dialect ?? "").trim();
+    markTerminalError(ctx);
     ctx.status = 400;
     ctx.body = {
       error: {
@@ -231,6 +233,7 @@ export function serveModels(ctx: Koa.Context): void {
   // publishes. With nothing in the database there is no list to give.
   const entries = aggregateEntries(availabilities);
   if (!entries.length) {
+    markTerminalError(ctx);
     ctx.status = 404;
     ctx.body = {
       error: { type: "invalid_request_error", message: "no published models" },

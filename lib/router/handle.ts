@@ -18,17 +18,18 @@ import { configFlag, configNumber } from "../config.ts";
 import { AuthError } from "../credential.ts";
 import { allPlatforms, platformOfAny } from "../platforms.ts";
 import { upstreamStatusOf } from "../upstream-status.ts";
-import { kindOf } from "../provider-kinds.ts";
+import { kindOf, type ProviderKind } from "../provider-kinds.ts";
 import { recordAggregateUsage } from "../aggregate.ts";
 import type { AggregateEntry } from "./catalog.ts";
 import { select, SelectionStop, byWeight, sessionTargetOrder } from "./selection.ts";
 import { extractSessionKey, sessionKeyFingerprint, sessionHeaderNames } from "../session-id.ts";
-import { classifyUpstreamError, describeUpstreamError } from "./provider-selection.ts";
+import { classifyUpstreamError, describeUpstreamError, isSameUpstreamResend } from "./provider-selection.ts";
 import { recordUsage, maxTotals, usageTotals } from "../usage.ts";
 import { detectAgent, detectSession, type SessionInfo } from "../agent.ts";
 import { resolveForwardedHeaders } from "../admin/platform-header-injection.ts";
 import { workbuddyCatalog } from "../admin/upstreams.ts";
 import { toMinimax, toZcode, toQoder, toWorkBuddy, type UpstreamContext } from "./upstreams/index.ts";
+import { resendSameUpstream } from "./upstreams/policy.ts";
 import {
   routeInGroup,
   publishedModelUnavailable,
@@ -43,7 +44,7 @@ import { platformAvailabilities, type PlatformAvailability, type PlatformState }
 import { noteUpstreamFailure } from "../upstream-failures.ts";
 import { checkBreaker, noteBreakerOutcome, type BreakerVerdict } from "../upstream-breaker.ts";
 import { cooldownStamp } from "./account-cooldown.ts";
-import { ClientGoneError, sendError, withRetryAfter } from "./deliver.ts";
+import { ClientGoneError, markTerminalError, sendError, withRetryAfter } from "./deliver.ts";
 
 const TOKENRHYTHM_MAX_ATTEMPTS = configNumber("TOKENRHYTHM_MAX_ATTEMPTS", 3);
 // 上游排队时等多久（毫秒）：上游自己说了秒数就用它的，没说就用这个。等几次不是
@@ -244,13 +245,16 @@ async function handleAggregate(
   try {
     await select({
       strategy: entry.strategy,
-      candidates,
+      // HRW order is the entire point of balance: passing publish order degrades it into priority
+      candidates: ordered,
       // 客户端走了不是上游的错：不能再打下一个目标。
       //
       // 别的错都往下走（这是根路由一贯的做法）：换一个上游也许能答得出来。
       // 但客户端走了 —— 连接都断了，换谁都一样没人要；而且下一个目标还会
       // 再占一个账号、再花一份上游的钱（那个上游不知道客户端已经不要了）。
-      degradable: (error) => !(error instanceof ClientGoneError),
+      // 工具开局静默不换目标：上游是好的，卡住的是那一条连接，已经原样重发过了
+      // （见 resendSameUpstream）。换一个上游会把已经开始的工具调用换掉。
+      degradable: (error) => !(error instanceof ClientGoneError) && !isSameUpstreamResend(error),
       // Why the traffic went somewhere else: the target that failed, why it
       // failed, and which one takes the request now.
       onAttempt: (candidate, error) => {
@@ -457,6 +461,7 @@ const CLIENT_KIND_WORDS: Record<string, string> = {
   server: "上游出错",
   model: "这个账号用不了这个模型",
   request: "请求本身有问题",
+  "pre-commit-silence": "上游没答完",
   unknown: "原因不明",
 };
 
@@ -583,6 +588,7 @@ export async function handle(
  * 模型」会去改模型名，而模型名是对的。
  */
 function unknownModel(ctx: Koa.Context, wanted: string): void {
+  markTerminalError(ctx);
   ctx.status = 404;
   ctx.body = {
     error: { type: "invalid_request_error", message: `unknown model "${wanted}"` },
@@ -626,6 +632,7 @@ async function callUpstream(
       body,
     );
     if (!injected.ok) {
+      markTerminalError(ctx);
       ctx.status = 400;
       ctx.body = { error: { type: "invalid_request_error", message: injected.message } };
       return;
@@ -633,35 +640,12 @@ async function callUpstream(
     uctx.forwardedHeaders = injected.headers;
   }
   try {
-    switch (kind?.kind) {
-      case "qoder":
-        await toQoder(uctx, body, route, dialect, stream, ctx);
-        break;
-      case "workbuddy":
-        await toWorkBuddy(uctx, body, route, dialect, stream, ctx);
-        break;
-      // MiniMax Code 有自己的 case：它没有登记 dispatch（登记的是它的种类
-      // 模板，不是转发）。漏了它，default 会把它当成「还没接的上游」。
-      case "minimax":
-        await toMinimax(uctx, body, route, dialect, stream, ctx);
-        break;
-      case "zcode":
-        await toZcode(uctx, body, route, dialect, stream, ctx);
-        break;
-      default:
-        // 没有 case 的 kind 只能靠它自己登记的 dispatch（见
-        // lib/router/compatible-platform.ts）。没有 dispatch 就是这个上游还没
-        // 接 —— 不能猜：猜错了就是把请求按别的方言、别的鉴权发到别的 host 去。
-        if (kind?.dispatch) {
-          await kind.dispatch(uctx, body, route, dialect, stream, ctx);
-          break;
-        }
-        throw new AuthError(
-          `upstream kind "${kind?.kind ?? "unknown"}" has no dispatch`,
-          `这个上游还没接：${kind?.kind ?? "未知"}。`,
-          500,
-        );
-    }
+    // The tool-call silence is the one failure that is retried here: the upstream is
+    // healthy, that one connection is stuck, so the same request goes out again to
+    // the same upstream, unchanged (see resendSameUpstream)
+    await resendSameUpstream(`${route.platform}/${route.model}`, () =>
+      dispatchUpstream(uctx, body, route, dialect, stream, ctx, kind),
+    );
     recordRequestUsage(body, route, agent, session, uctx, ctx.status || 200, started, "", kind?.label ?? route.platform);
     // 这次到底怎么结束的，留一条给判定（lib/admin/platform-state.ts）：上游排队
     // 不冷却账号，别的证据一个都不动，只有「最近几次请求的结果」能看出一个平台
@@ -670,15 +654,26 @@ async function callUpstream(
     // 平台级熔断也记一笔：成功就是「这个平台现在发得出去」。
     noteBreakerOutcome(route.platform, "ok");
   } catch (e) {
-    const err = e as AuthError;
+    // 答复已经写出去之后停下来的错，是 SelectionStop 包着的那个原因：壳本身
+    // 没有身份，它只说明「没法再换目标了」，记账要按原因来。
+    const stopped = e instanceof SelectionStop;
+    const reason = stopped ? e.reason : e;
+    const err = reason as AuthError;
     // 客户端走了：答复那一层给客户端的是 499，用量表也记 499，不要记成 500
     // —— 500 是「上游挂了」，而上游没坏，只是没人要了。
-    // 客户端走了记 499；上游自己给了状态码就用它的；都没有才是 500。
+    // 客户端走了记 499；上游自己给了状态码就用它的；都没有才是按分类定。
     let status = 500;
-    if (e instanceof ClientGoneError) {
+    if (reason instanceof ClientGoneError) {
       status = 499;
+    } else if (stopped && typeof e.status === "number") {
+      // SelectionStop 只把 AuthError 的状态码带出来：那是客户端该看到的那个。
+      status = e.status;
     } else if (typeof err?.status === "number") {
       status = err.status;
+    } else {
+      // 答复是发出去之后断的：500 说的是「网关自己出错」，而这里是上游没答完。
+      // 超时是 504，其余上游失败是 502。
+      status = classifyUpstreamError(reason).kind === "timeout" ? 504 : 502;
     }
     recordRequestUsage(
       body,
@@ -688,16 +683,63 @@ async function callUpstream(
       uctx,
       status,
       started,
-      err?.message ?? String(e),
+      err?.message ?? String(reason),
       kind?.label ?? route.platform,
     );
     // 失败分类（queued / rate-limit / …）就是判定要的那一格，不再自己判一遍。
-    const failureKind = classifyUpstreamError(e).kind;
+    // 分类的对象是原因：壳不是上游的任何一类失败。
+    const failureKind = classifyUpstreamError(reason).kind;
     noteUpstreamFailure(route.platform, failureKind);
     // 平台级熔断记的是同一格：可熔断的失败（排队、网络错、5xx）攒够次数就
     // 开闸，不该熔断的（请求本身的问题、账号的事）它自己会忽略。
     noteBreakerOutcome(route.platform, failureKind);
     throw e;
+  }
+}
+
+/**
+ * Hand the request to the adapter of the platform's kind.
+ *
+ * It is a function of its own so the caller can run it again: the tool-call silence
+ * is retried on the same upstream, with the same request (see resendSameUpstream)
+ */
+async function dispatchUpstream(
+  uctx: UpstreamContext,
+  body: Json,
+  route: Route,
+  dialect: Dialect,
+  stream: boolean,
+  ctx: Koa.Context,
+  kind: ProviderKind | null,
+): Promise<void> {
+  switch (kind?.kind) {
+    case "qoder":
+      await toQoder(uctx, body, route, dialect, stream, ctx);
+      break;
+    case "workbuddy":
+      await toWorkBuddy(uctx, body, route, dialect, stream, ctx);
+      break;
+    // MiniMax Code 有自己的 case：它没有登记 dispatch（登记的是它的种类
+    // 模板，不是转发）。漏了它，default 会把它当成「还没接的上游」。
+    case "minimax":
+      await toMinimax(uctx, body, route, dialect, stream, ctx);
+      break;
+    case "zcode":
+      await toZcode(uctx, body, route, dialect, stream, ctx);
+      break;
+    default:
+      // 没有 case 的 kind 只能靠它自己登记的 dispatch（见
+      // lib/router/compatible-platform.ts）。没有 dispatch 就是这个上游还没
+      // 接 —— 不能猜：猜错了就是把请求按别的方言、别的鉴权发到别的 host 去。
+      if (kind?.dispatch) {
+        await kind.dispatch(uctx, body, route, dialect, stream, ctx);
+        break;
+      }
+      throw new AuthError(
+        `upstream kind "${kind?.kind ?? "unknown"}" has no dispatch`,
+        `这个上游还没接：${kind?.kind ?? "未知"}。`,
+        500,
+      );
   }
 }
 /**

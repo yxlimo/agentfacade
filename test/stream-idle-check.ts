@@ -51,6 +51,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "stream-idle-"));
 process.env.FACADE_DATA_DIR = tmp;
@@ -74,7 +75,10 @@ const {
   STREAM_FIRST_FRAME_DEFAULT_MS,
 } = await import("../lib/router/deliver.ts");
 const { AuthError } = await import("../lib/credential.ts");
-
+// 面板那条路：写进库 + 重新读一遍。工具开局那个上限是热设置，靠它改。
+const { configOverride, reloadConfig } = await import("../lib/config.ts");
+// 抓日志用：客户端那句话统一了，日志里还得能分辨是哪一种静默。
+const { captureLog } = await import("./log-capture.ts");
 /** 上游没把话说完就断了：客户端看到的那一句。 */
 const CLOSED_EARLY = "upstream closed the connection before the answer finished";
 
@@ -294,6 +298,8 @@ async function serve(opts: {
   iterable?: AsyncIterable<any>;
   entry: "openai" | "anthropic" | "chunks";
   dialect: "openai" | "anthropic";
+  /** 客户端每收到一帧就叫它（看帧是什么时候到的）。 */
+  onFrame?: (frame: string, at: number) => void;
 }): Promise<ServeResult> {
   const started = Date.now();
   let handlerError: string | null = null;
@@ -348,7 +354,9 @@ async function serve(opts: {
           text += c.toString();
           let i: number;
           while ((i = text.indexOf("\n\n")) >= 0) {
-            received.push(text.slice(0, i));
+            const frame = text.slice(0, i);
+            received.push(frame);
+            opts.onFrame?.(frame, Date.now());
             text = text.slice(i + 2);
           }
         });
@@ -385,8 +393,16 @@ type Script =
   | { first: "silent" }
   /** 上游一个字不说就收工了：空答复。 */
   | { first: "empty" }
+  /** 只发信封（没有内容），然后闭嘴。 */
+  | { first: "envelope-stall" }
+  /** 发了内容，然后闭嘴。 */
+  | { first: "content-stall"; text: string }
+  /** 只发心跳，然后闭嘴。 */
+  | { first: "ping-stall" }
   /** 正常答复。 */
-  | { first: "answer"; text: string };
+  | { first: "answer"; text: string }
+  /** 原样给出的上游帧，然后闭嘴：用来造工具调用的开局帧。 */
+  | { first: "raw-frames-stall"; frames: string[] };
 
 /** 按剧本内容造一个假上游的流。 */
 function streamFor(script: Script): ReadableStream<Uint8Array> {
@@ -399,8 +415,80 @@ function streamFor(script: Script): ReadableStream<Uint8Array> {
       return upstream([], { after: "stall" });
     case "empty":
       return upstream([]);
+    case "envelope-stall":
+      return upstream(
+        [
+          `data: ${JSON.stringify({
+            id: "c1",
+            object: "chat.completion.chunk",
+            model: "fake-model",
+            choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }],
+          })}\n\n`,
+        ],
+        { after: "stall" },
+      );
+    case "content-stall":
+      return upstream([openaiFrame(script.text)], { after: "stall" });
+    case "ping-stall":
+      return scriptedUpstream(
+        [
+          { waitMs: 0, text: ": ping\n\n" },
+          { waitMs: 0, text: 'event: ping\ndata: {"type":"ping"}\n\n' },
+        ],
+        "stall",
+      );
+    case "raw-frames-stall":
+      return upstream(script.frames, { after: "stall" });
     case "answer":
       return upstream([openaiFrame(script.text), "data: [DONE]\n\n"]);
+  }
+}
+
+/** 按剧本造一个 Anthropic 方言的假上游流（给 anthropic 入口的路由测试用）。 */
+function anthropicStreamFor(script: Script): ReadableStream<Uint8Array> {
+  switch (script.first) {
+    case "error-frame":
+      return upstream([`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: script.words } })}\n\n`]);
+    case "raw":
+      return upstream([], { after: "raw" });
+    case "silent":
+      return upstream([], { after: "stall" });
+    case "empty":
+      return upstream([]);
+    case "envelope-stall":
+      return upstream([messageStart(), 'event: ping\ndata: {"type":"ping"}\n\n'], { after: "stall" });
+    case "content-stall":
+      return upstream(
+        [
+          messageStart(),
+          anthropicFrame("content_block_delta", {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text: script.text },
+          }),
+        ],
+        { after: "stall" },
+      );
+    case "ping-stall":
+      return scriptedUpstream(
+        [
+          { waitMs: 0, text: ": ping\n\n" },
+          { waitMs: 0, text: 'event: ping\ndata: {"type":"ping"}\n\n' },
+        ],
+        "stall",
+      );
+    case "raw-frames-stall":
+      return upstream(script.frames, { after: "stall" });
+    case "answer":
+      return upstream([
+        messageStart(),
+        anthropicFrame("content_block_delta", {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: script.text },
+        }),
+        anthropicFrame("message_stop", { type: "message_stop" }),
+      ]);
   }
 }
 
@@ -419,7 +507,7 @@ interface RouterResult extends ServeResult {
  * 这正是 lib/router/handle.ts 做的事：头没发出去就换下一个目标；全都失败就
  * 用真实状态码答（`sendError`），头发出去过的话就没得换了。
  */
-async function serveAsRouter(scripts: Script[], entry: "stream" | "chunks" = "stream"): Promise<RouterResult> {
+async function serveAsRouter(scripts: Script[], entry: "stream" | "chunks" | "anthropic" = "stream"): Promise<RouterResult> {
   const started = Date.now();
   let flushes = 0;
   let attempts = 0;
@@ -444,6 +532,8 @@ async function serveAsRouter(scripts: Script[], entry: "stream" | "chunks" = "st
         try {
           if (entry === "chunks") {
             await deliverOpenAIChunks(ctx, chunksFor(script), "openai", "fake-model", undefined, () => {});
+          } else if (entry === "anthropic") {
+            await deliverAnthropicStream(ctx, anthropicStreamFor(script), "anthropic", "fake-model", 0, undefined, () => {});
           } else {
             await deliverOpenAIStream(ctx, streamFor(script), "openai", "fake-model", undefined, undefined, () => {});
           }
@@ -517,6 +607,20 @@ async function* chunksFor(script: Script): AsyncGenerator<any> {
       return;
     case "empty":
       return;
+    case "envelope-stall":
+      yield { id: "c1", object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" } }] };
+      await new Promise<void>(() => {});
+      return;
+    case "content-stall":
+      yield { id: "c1", object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: script.text } }] };
+      await new Promise<void>(() => {});
+      return;
+    case "ping-stall":
+      yield { id: "c1", object: "chat.completion.chunk", choices: [{ index: 0, delta: {} }] };
+      await new Promise<void>(() => {});
+      return;
+    case "raw-frames-stall":
+      return;
     case "answer":
       yield { id: "c1", object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: script.text } }] };
       yield {
@@ -537,18 +641,19 @@ section("上游说了一帧就安静（Anthropic 入口）");
 {
   let cancelled = false;
   const r = await serve({
-    source: upstream([messageStart()], { after: "stall", onCancel: () => (cancelled = true) }),
+    source: upstream([anthropicFrame("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "hello" } })], { after: "stall", onCancel: () => (cancelled = true) }),
     entry: "anthropic",
     dialect: "anthropic",
   });
   const text = r.received.join("\n\n");
   const said = errorMessageOf(r.received);
-  check("客户端收到了第一帧", text.includes("message_start"), text.slice(0, 120));
+  check("客户端收到了内容帧", text.includes("hello"), text.slice(0, 120));
   check("客户端收到了一条 error 事件", text.includes("event: error"), text.slice(0, 200));
   check("那句话说清了是流中途安静下来的", /upstream sent nothing for 150ms mid-stream/.test(said), said);
   check("那句话带上了是哪个模型", said.includes("model=fake-model"), said);
   check("那句话里没有 terminated", !/terminated/i.test(text), said);
-  check("网关没有抛错", r.handlerError === null, r.handlerError ?? "");
+  check("记账回调拿到的就是那条静默超时", r.failure?.name === "TimeoutError" && String(r.failure?.message).includes("sent nothing for 150ms mid-stream"), `${r.failure?.name}: ${String(r.failure?.message)}`);
+  check("记账回调报错不影响客户端收到的字节", r.received.filter((f) => f.includes('"error"')).length === 1 && !/terminated/i.test(text), text.slice(0, 200));
   check("头只发了一次", r.flushes === 1, `${r.flushes} 次`);
   check("网关在中途上限之后很快就收工了", r.handlerMs < 5_000, `用了 ${r.handlerMs}ms`);
   check("上游那一侧被取消了", cancelled, "上游还挂着");
@@ -573,7 +678,8 @@ section("上游说了一帧就安静（OpenAI 入口）");
   check("客户端收到了一条 error 帧", said !== "", text.slice(0, 200));
   check("那句话说清了是流中途安静下来的", /upstream sent nothing for 150ms mid-stream/.test(said), said);
   check("那句话里没有 terminated", !/terminated/i.test(text), said);
-  check("网关没有抛错", r.handlerError === null, r.handlerError ?? "");
+  check("网关把那条静默超时抛出来了", r.handlerError !== null && r.thrown?.name === "TimeoutError" && String(r.thrown?.message).includes("sent nothing for 150ms mid-stream"), `${r.thrown?.name}: ${r.handlerError ?? ""}`);
+  check("抛错不影响客户端收到的字节", r.received.filter((f) => f.includes('"error"')).length === 1 && !/terminated/i.test(text), text.slice(0, 200));
   check("头只发了一次", r.flushes === 1, `${r.flushes} 次`);
   check("网关在中途上限之后很快就收工了", r.handlerMs < 5_000, `用了 ${r.handlerMs}ms`);
   check("上游那一侧被取消了", cancelled, "上游还挂着");
@@ -591,7 +697,7 @@ section("上游说了一帧就安静（OpenAI 入口）");
 section("上游中途断了（Node 自己那句话）");
 
 for (const [entry, dialect, first] of [
-  ["anthropic", "anthropic", messageStart()],
+  ["anthropic", "anthropic", anthropicFrame("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "hello" } })],
   ["openai", "openai", openaiFrame("hello")],
 ] as const) {
   const r = await serve({
@@ -1054,6 +1160,242 @@ section("空答复：不是失败");
 }
 
 /* ------------------------------------------------------------------ *
+ * 3f. 「第一块内容」这道闸：换目标的判据从第一块字节改成第一块内容
+ * ------------------------------------------------------------------ */
+
+// 以前头在收到第一块字节时就发了 —— Anthropic 的 message_start 几乎立刻就到，
+// 可它只是信封，客户端一个字内容都没收到，路由层已经没有换目标的机会。现在
+// 信封扣住，等第一块对用户可见的内容；内容之前上游失败或静默，原样抛出换目标。
+
+section("A. 首个目标只发信封就闭嘴：换目标");
+
+{
+  const r = await serveAsRouter(
+    [
+      { first: "envelope-stall" },
+      { first: "answer", text: "第二个目标的答复" },
+    ],
+    "anthropic",
+  );
+  const text = r.received.join("\n\n");
+  check("客户端拿到 200", r.status === 200, `HTTP ${r.status}`);
+  check("两个目标都试过了", r.attempts === 2, `${r.attempts} 次`);
+  check("客户端拿到的是第二个目标的答复", text.includes("第二个目标的答复"), text.slice(0, 200));
+  const starts = r.received.filter((frame) => frame.startsWith("event: message_start"));
+  check("客户端只收到一份 message_start", starts.length === 1, `${starts.length} 份`);
+  check("没有 error 事件", errorMessageOf(r.received) === "", errorMessageOf(r.received));
+  check("头只写了一次", r.flushes === 1, `${r.flushes} 次`);
+  check("第一个目标确实被读了（报的是中途超时）", r.errors[0] instanceof StreamIdleError, String(r.errors[0]?.name ?? r.errors[0]));
+}
+
+section("B. 首个目标发了内容再闭嘴：不换目标");
+
+{
+  const r = await serveAsRouter([{ first: "content-stall", text: "第一句话" }], "anthropic");
+  const text = r.received.join("\n\n");
+  check("客户端拿到了内容", text.includes("第一句话"), text.slice(0, 200));
+  check("客户端收到了一条 error 事件", text.includes("event: error"), text.slice(0, 200));
+  check("没有换目标（只试了一次）", r.attempts === 1, `${r.attempts} 次`);
+  check("头只写了一次", r.flushes === 1, `${r.flushes} 次`);
+}
+
+section("C. OpenAI：role-only 的 delta 不算内容");
+
+{
+  // role-only 再闭嘴 → 换目标
+  const r1 = await serveAsRouter([
+    { first: "envelope-stall" },
+    { first: "answer", text: "第二个目标的答复" },
+  ]);
+  const text1 = r1.received.join("\n\n");
+  check("[role-only] 换目标了", r1.attempts === 2, `${r1.attempts} 次`);
+  check("[role-only] 客户端拿到的是第二个目标的答复", text1.includes("第二个目标的答复"), text1.slice(0, 200));
+  check("[role-only] 没有 error 帧", errorMessageOf(r1.received) === "", errorMessageOf(r1.received));
+  check("[role-only] 头只写了一次", r1.flushes === 1, `${r1.flushes} 次`);
+
+  // 发了 content delta 再闭嘴 → 不换目标
+  const r2 = await serveAsRouter([{ first: "content-stall", text: "第一句话" }]);
+  const text2 = r2.received.join("\n\n");
+  check("[content] 没有换目标", r2.attempts === 1, `${r2.attempts} 次`);
+  check("[content] 客户端拿到了内容", text2.includes("第一句话"), text2.slice(0, 200));
+  check("[content] 客户端收到了 error 帧", errorMessageOf(r2.received) !== "", errorMessageOf(r2.received));
+}
+
+section("D. 扣住的信封在内容到来时逐字节写出去");
+
+{
+  const source = upstream([
+    anthropicFrame("message_start", {
+      type: "message_start",
+      message: {
+        id: "msg_upstream",
+        type: "message",
+        role: "assistant",
+        model: "upstream-model",
+        content: [],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: 5, output_tokens: 0 },
+      },
+    }),
+    'event: ping\ndata: {"type":"ping"}\n\n',
+    anthropicFrame("content_block_delta", {
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "text_delta", text: "正文内容" },
+    }),
+    anthropicFrame("message_stop", { type: "message_stop" }),
+  ]);
+  const r = await serve({ source, entry: "anthropic", dialect: "anthropic" });
+  const text = r.received.join("\n\n");
+  check("message_start 的 model 名改成了客户端问的那个", text.includes('"model":"fake-model"'), text.slice(0, 200));
+  check("上游的模型名没有漏出去", !text.includes("upstream-model"), text.slice(0, 200));
+  const startIdx = text.indexOf("message_start");
+  const pingIdx = text.indexOf('"type":"ping"');
+  const contentIdx = text.indexOf("正文内容");
+  check("message_start 在 ping 之前", startIdx >= 0 && pingIdx >= 0 && startIdx < pingIdx, `start=${startIdx} ping=${pingIdx}`);
+  check("ping 在内容之前", pingIdx >= 0 && contentIdx >= 0 && pingIdx < contentIdx, `ping=${pingIdx} content=${contentIdx}`);
+  check("内容在 message_stop 之前", contentIdx >= 0 && text.indexOf("message_stop") > contentIdx, `content=${contentIdx}`);
+  check("网关没有抛错", r.handlerError === null, r.handlerError ?? "");
+  check("没有 error 事件", errorMessageOf(r.received) === "", errorMessageOf(r.received));
+}
+
+section("E. 只有心跳一直发：不算内容，仍可换目标");
+
+{
+  const r = await serveAsRouter(
+    [
+      { first: "ping-stall" },
+      { first: "answer", text: "第二个目标的答复" },
+    ],
+    "anthropic",
+  );
+  const text = r.received.join("\n\n");
+  check("换目标了", r.attempts === 2, `${r.attempts} 次`);
+  check("客户端拿到的是第二个目标的答复", text.includes("第二个目标的答复"), text.slice(0, 200));
+  check("没有 error 事件", errorMessageOf(r.received) === "", errorMessageOf(r.received));
+  check("头只写了一次", r.flushes === 1, `${r.flushes} 次`);
+}
+
+/* ------------------------------------------------------------------ *
+ * E2. 中途只有心跳：上游一直在发 ping，答复不往前走
+ * ------------------------------------------------------------------ */
+
+// 这条是「44 分钟、0 token」那个现象的最小复现：上游每分钟吐一条 `event: ping`
+// （Anthropic 方言的心跳，不是 SSE 注释行），正文一个字不出。心跳说的是「连接还
+// 在」，不是「答复在往前走」，所以它不许把中途那个窗口往后推。
+section("E2. 中途只有心跳：到窗口就报静默，不许被 ping 续命");
+
+{
+  const enc = new TextEncoder();
+  const content = `data: {"choices":[{"delta":{"content":"ok"}}]}\n\n`;
+  const ping = `event: ping\ndata: {"type":"ping"}\n\n`;
+  let cancelled = false;
+  let sentContent = false;
+  const source = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (!sentContent) {
+        sentContent = true;
+        controller.enqueue(enc.encode(content));
+        return;
+      }
+      // 从那以后只有心跳：每 30ms 一条，永远不停。
+      await new Promise<void>((resolve) => setTimeout(resolve, 30));
+      controller.enqueue(enc.encode(ping));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+
+  const gated = withStreamIdle(source, "model=ping-storm", { firstFrameMs: 5000, idleMs: 150 }, "openai");
+  const started = Date.now();
+  let error: unknown = null;
+  let bytes = 0;
+  const reader = gated.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.length;
+    }
+  } catch (e) {
+    error = e;
+  }
+  const span = Date.now() - started;
+
+  check("没有正常结束（静默到点）", error !== null, "流自己结束了");
+  check(
+    "报的是中途静默",
+    error instanceof StreamIdleError && error.phase === "mid-stream",
+    String((error as Error | null)?.message ?? error),
+  );
+  check("很快就到点（不是被心跳一直续命）", span < 2000, `${span}ms`);
+  check("上游被取消了", cancelled);
+  // 心跳帧不是内容：既然静默被判定为「没在往前走」，那它一次也不该被当成进度。
+  // 具体字节数取决于到点那一刻已经流过几条 ping，所以只钉「没有刷出一大堆」。
+  check("只流过正文和几条心跳就被砍了", bytes > 0 && bytes < 600, `${bytes} 字节`);
+}
+
+{
+  // 对照组：同样慢，但每一块都是真内容（thinking），就不该被砍。
+  const enc = new TextEncoder();
+  const thinking = (text: string): string =>
+    `data: {"choices":[{"delta":{"reasoning_content":"${text}"}}]}\n\n`;
+  let n = 0;
+  const source = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (n >= 6) {
+        controller.close();
+        return;
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 40));
+      controller.enqueue(enc.encode(thinking(`想法${n++}`)));
+    },
+  });
+  const gated = withStreamIdle(source, "model=thinking-drip", { firstFrameMs: 5000, idleMs: 150 }, "openai");
+  let error: unknown = null;
+  let chunks = 0;
+  const reader = gated.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) chunks++;
+    }
+  } catch (e) {
+    error = e;
+  }
+  check("[对照组] 思考一直在滴就不算静默", error === null, String((error as Error | null)?.message ?? ""));
+  check("[对照组] 六块都到了", chunks === 6, `${chunks} 块`);
+}
+
+{
+  // 对照组：role-only 与空 delta 也不算往前走（它们是「我在」，不是内容）。
+  const enc = new TextEncoder();
+  const roleOnly = `data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n`;
+  const emptyDelta = `data: {"choices":[{"delta":{}}]}\n\n`;
+  let n = 0;
+  const source = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 30));
+      controller.enqueue(enc.encode(n++ % 2 === 0 ? roleOnly : emptyDelta));
+    },
+  });
+  const gated = withStreamIdle(source, "model=role-only", { firstFrameMs: 5000, idleMs: 150 }, "openai");
+  let error: unknown = null;
+  const reader = gated.getReader();
+  try {
+    for (;;) {
+      const { done } = await reader.read();
+      if (done) break;
+    }
+  } catch (e) {
+    error = e;
+  }
+  check("role-only 与空 delta 也算静默", error instanceof StreamIdleError && error.phase === "mid-stream", String(error));
+}
+/* ------------------------------------------------------------------ *
  * 4. clientMessageOf 的判别力
  * ------------------------------------------------------------------ */
 
@@ -1259,6 +1601,754 @@ process.exit(0);
   check("控制组（首帧）：往外抛了（能换目标）", first.report?.threw === "TimeoutError", String(first.report?.threw));
   check("控制组（首帧）：上游被取消了", first.report?.cancelled === true, String(first.report?.cancelled));
 }
+
+section("流中途静默之后：用量表要记失败，不能记成 200 的成功");
+
+// 这一条走完整的路由与记账链：开放平台指向本机假上游，上游吐一帧就再也不说话。
+// 与前面几段直接调 deliver 不同，这里要看的是 callUpstream 写进 usage_event 的那一行。
+/** 这个假上游一共被叫了几次：第二次走「工具在途」的剧本。 */
+let idleRequests = 0;
+const idleUpstream = http.createServer((req, res) => {
+  if (!req.url?.endsWith("/chat/completions")) {
+    res.writeHead(404, { "content-type": "application/json" });
+    res.end("{}");
+    return;
+  }
+  // 请求正文要读掉：不然 'end' 不会来。
+  req.resume();
+  req.on("end", () => {
+    // 第二次请求走另一种剧本：正文之后再来一个工具开局帧，参数一个字节都不来。
+    idleRequests++;
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.write(
+      `data: ${JSON.stringify({
+        id: "chatcmpl-idle",
+        object: "chat.completion.chunk",
+        choices: [{ index: 0, delta: { role: "assistant", content: "hello" } }],
+      })}\n\n`,
+    );
+    if (idleRequests > 1) {
+      res.write(
+        `data: ${JSON.stringify({
+          id: "chatcmpl-idle",
+          object: "chat.completion.chunk",
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [{ index: 0, id: "call_idle", type: "function", function: { name: "read", arguments: "" } }],
+              },
+            },
+          ],
+        })}\n\n`,
+      );
+    }
+    // 故意不 res.end()：剩余的字节由中途那个上限收尾。
+  });
+});
+await new Promise<void>((resolve) => idleUpstream.listen(0, "127.0.0.1", resolve));
+const idlePort = (idleUpstream.address() as { port: number }).port;
+
+const { createOpenPlatform, syncPlatformModels } = await import("../lib/open-platforms.ts");
+const { addAccount } = await import("../lib/providers.ts");
+const { writeOpenPlatformKey } = await import("../lib/open-platform-credentials.ts");
+const { handle } = await import("../lib/router/handle.ts");
+const { closeStore } = await import("../lib/store.ts");
+
+const idleModel = "idle-open-model";
+const madePlatform = createOpenPlatform({
+  id: "idle-open",
+  label: "Idle Fake",
+  baseUrl: `http://127.0.0.1:${idlePort}/v1`,
+});
+check("假开放平台建好了", madePlatform.ok === true, madePlatform.message);
+syncPlatformModels("idle-open", [idleModel]);
+const madeAccount = addAccount({ platform: "idle-open" });
+check("假账号建好了", madeAccount.ok === true && typeof madeAccount.id === "string", madeAccount.message);
+if (madeAccount.ok && madeAccount.id) writeOpenPlatformKey(madeAccount.id, "sk-idle-fake"); // privacy:allow — 编造的样例
+
+/** 每次请求收工时叫一个：等它的人各自挂一个。 */
+const routeWaiters: Array<() => void> = [];
+const routeServer = http.createServer(async (_req, res) => {
+  const ctx = fakeCtx(res) as Parameters<typeof handle>[0];
+  ctx.request = {
+    body: {
+      model: idleModel,
+      stream: true,
+      messages: [{ role: "user", content: "hello" }],
+    },
+    headers: {},
+  } as Parameters<typeof handle>[0]["request"];
+  try {
+    await handle(ctx, "openai", "idle-open");
+  } finally {
+    routeWaiters.shift()?.();
+  }
+});
+await new Promise<void>((resolve) => routeServer.listen(0, "127.0.0.1", resolve));
+const routePort = (routeServer.address() as { port: number }).port;
+const clientDone = new Promise<void>((resolve) => {
+  const req = http.request({ port: routePort, host: "127.0.0.1", path: "/", method: "POST" }, (r) => {
+    r.resume();
+    r.on("end", resolve);
+    r.on("close", resolve);
+    r.on("error", resolve);
+  });
+  req.on("error", resolve);
+  req.end("{}");
+});
+const firstRouteDone = new Promise<void>((resolve) => routeWaiters.push(resolve));
+await Promise.race([firstRouteDone, new Promise<void>((resolve) => setTimeout(resolve, 5_000))]);
+await Promise.race([clientDone, new Promise<void>((resolve) => setTimeout(resolve, 1_000))]);
+
+const usageDb = new DatabaseSync(path.join(tmp, "agentfacade.db"), { readOnly: true });
+type IdleUsageRow = {
+  ok: number;
+  status: number;
+  error: string;
+  upstream_id: string;
+  agent_model: string;
+};
+const usageRows = usageDb
+  .prepare(
+    "SELECT ok, status, error, upstream_id, agent_model FROM usage_event " +
+      "WHERE upstream_id = ? AND agent_model = ? ORDER BY id DESC",
+  )
+  .all("idle-open", idleModel) as IdleUsageRow[];
+const tableHead =
+  usageRows.length === 1
+    ? []
+    : (usageDb.prepare("SELECT * FROM usage_event ORDER BY id DESC LIMIT 5").all() as Record<string, unknown>[]);
+usageDb.close();
+check(
+  "用量表里恰好一条属于这次请求的记录",
+  usageRows.length === 1,
+  JSON.stringify({ matched: usageRows, tableHead }),
+);
+const usageRow = usageRows[0];
+check("这条没记成成功", usageRow?.ok === 0, String(usageRow?.ok));
+check("状态是 504（超时），不是 500", usageRow?.status === 504, String(usageRow?.status));
+check("原因说清了是流中途静默", String(usageRow?.error).includes("sent nothing"), String(usageRow?.error));
+check("原因不是选路停下来的壳", !String(usageRow?.error).includes("the selection stopped"), String(usageRow?.error));
+
+// 同一条链上的另一种失败：正文已经到客户端（提交点过去了），工具调用在途又静默。
+// 记账那一行必须是「失败 + 504」：可重试的超时，不是「上游挂了」。
+setToolOpeningMs(60);
+{
+  const secondRouteDone = new Promise<void>((resolve) => routeWaiters.push(resolve));
+  const secondClientDone = new Promise<void>((resolve) => {
+    const req = http.request({ port: routePort, host: "127.0.0.1", path: "/", method: "POST" }, (r) => {
+      r.resume();
+      r.on("end", resolve);
+      r.on("close", resolve);
+      r.on("error", resolve);
+    });
+    req.on("error", resolve);
+    req.end("{}");
+  });
+  await Promise.race([secondRouteDone, new Promise<void>((resolve) => setTimeout(resolve, 5_000))]);
+  await Promise.race([secondClientDone, new Promise<void>((resolve) => setTimeout(resolve, 1_000))]);
+
+  const toolDb = new DatabaseSync(path.join(tmp, "agentfacade.db"), { readOnly: true });
+  const toolRows = toolDb
+    .prepare("SELECT ok, status, error FROM usage_event WHERE upstream_id = ? AND agent_model = ? ORDER BY id DESC")
+    .all("idle-open", idleModel) as IdleUsageRow[];
+  toolDb.close();
+  const toolRow = toolRows[0];
+  check("工具在途静默也记了一条（连上前面那条共两条）", toolRows.length === 2, `${toolRows.length} 条`);
+  check("工具在途静默没记成成功", toolRow?.ok === 0, String(toolRow?.ok));
+  check("工具在途静默记的是 504（超时），不是 500", toolRow?.status === 504, String(toolRow?.status));
+  check(
+    "工具在途静默的原因说清了是工具还在写",
+    String(toolRow?.error).includes("tool call was still being written"),
+    String(toolRow?.error),
+  );
+  setToolOpeningMs(0);
+}
+
+routeServer.closeAllConnections?.();
+routeServer.close();
+idleUpstream.closeAllConnections?.();
+idleUpstream.close();
+
+section("F. 工具调用的开局帧不算内容");
+
+/** 一条 OpenAI 的 SSE 帧；帧里的 delta 由调用方给。 */
+function openaiSseFrame(delta: Record<string, unknown>, finish: string | null = null): string {
+  return (
+    "data: " +
+    JSON.stringify({
+      id: "c1",
+      object: "chat.completion.chunk",
+      model: "fake-model",
+      choices: [{ index: 0, delta, finish_reason: finish }],
+    }) +
+    "\n\n"
+  );
+}
+
+/** 一条 Anthropic 的 tool_use 开局块。 */
+function anthropicToolStart(input: Record<string, unknown>): string {
+  return anthropicFrame("content_block_start", {
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "tool_use", id: "toolu_1", name: "read", input },
+  });
+}
+
+/** 收帧时分隔符已经被切掉了，比较前也把它从期望帧上摘掉。 */
+const withoutSep = (frame: string) => frame.replace(/\n\n$/, "");
+const roleOnly = openaiSseFrame({ role: "assistant" });
+const toolOpening = (args: string) =>
+  openaiSseFrame({
+    role: "assistant",
+    tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "read", arguments: args } }],
+  });
+
+{
+  // a. OpenAI：开局帧之后长时间静默 —— 提交点没到，上层还能换目标
+  const r = await serveAsRouter([
+    { first: "raw-frames-stall", frames: [roleOnly + toolOpening("")] },
+    { first: "answer", text: "第二个目标的答复" },
+  ]);
+  const text = r.received.join("\n\n");
+  check("[a OpenAI 开局帧静默] 换目标了", r.attempts === 2, `${r.attempts} 次`);
+  check("[a OpenAI 开局帧静默] 客户端没拿到半个工具调用", !text.includes("call_1") && !text.includes("tool_calls"), text.slice(0, 200));
+  check("[a OpenAI 开局帧静默] 拿到第二个目标的答复", text.includes("第二个目标的答复"), text.slice(0, 200));
+  check("[a OpenAI 开局帧静默] 没有 error 帧", errorMessageOf(r.received) === "", errorMessageOf(r.received));
+  check(
+    "[a OpenAI 开局帧静默] 静默错误发生在提交点之前",
+    r.flushes === 1 && r.errors[0]?.name === "TimeoutError" && String(r.errors[0]?.message).includes("mid-stream"),
+    `${r.flushes} 次 flush; ${r.errors[0]?.name}: ${String(r.errors[0]?.message)}`,
+  );
+
+  // b. 对照组：参数立刻到达，帧照常流到客户端
+  const withArgs = toolOpening('{"path":"a.txt"}');
+  const r2 = await serve({
+    source: upstream([roleOnly, withArgs, "data: [DONE]\n\n"]),
+    entry: "openai",
+    dialect: "openai",
+  });
+  check("[b OpenAI 有参数] 立刻提交且没抛错", r2.flushes === 1 && r2.handlerError === null, `${r2.flushes} 次; ${r2.handlerError ?? ""}`);
+  check("[b OpenAI 有参数] 工具帧原样到客户端", r2.received.includes(withoutSep(withArgs)), r2.received.join("\n\n").slice(0, 300));
+  check("[b OpenAI 有参数] 工具帧在前 [DONE] 在后", r2.received.indexOf(withoutSep(withArgs)) >= 0 && r2.received.indexOf("data: [DONE]") === r2.received.length - 1, r2.received.join("\n\n").slice(0, 300));
+  check("[b OpenAI 有参数] 没有 error 帧", errorMessageOf(r2.received) === "", errorMessageOf(r2.received));
+
+  // c. Anthropic：tool_use 开局块的 input 是空对象 —— 同样不算内容
+  const r3 = await serveAsRouter(
+    [
+      { first: "raw-frames-stall", frames: [messageStart(), anthropicToolStart({})] },
+      { first: "answer", text: "第二个目标的答复" },
+    ],
+    "anthropic",
+  );
+  const text3 = r3.received.join("\n\n");
+  check("[c Anthropic 空 input 静默] 换目标了", r3.attempts === 2, `${r3.attempts} 次`);
+  check("[c Anthropic 空 input 静默] 客户端没拿到半个工具块", !text3.includes("toolu_1") && !text3.includes("tool_use"), text3.slice(0, 200));
+  check("[c Anthropic 空 input 静默] 拿到第二个目标的答复", text3.includes("第二个目标的答复"), text3.slice(0, 200));
+  check("[c Anthropic 空 input 静默] 没有 error 事件", errorMessageOf(r3.received) === "", errorMessageOf(r3.received));
+  check(
+    "[c Anthropic 空 input 静默] 静默错误发生在提交点之前",
+    r3.flushes === 1 && r3.errors[0]?.name === "TimeoutError" && String(r3.errors[0]?.message).includes("mid-stream"),
+    `${r3.flushes} 次; ${r3.errors[0]?.name}: ${String(r3.errors[0]?.message)}`,
+  );
+
+  // d. 对照组：input 带键，开局块本身就有内容
+  const toolStart = anthropicToolStart({ path: "a.txt" });
+  const stopBlock = anthropicFrame("content_block_stop", { type: "content_block_stop", index: 0 });
+  const msgStop = anthropicFrame("message_stop", { type: "message_stop" });
+  const r4 = await serve({
+    source: upstream([messageStart(), toolStart, stopBlock, msgStop]),
+    entry: "anthropic",
+    dialect: "anthropic",
+  });
+  check("[d Anthropic 有 input] 立刻提交且没抛错", r4.flushes === 1 && r4.handlerError === null, `${r4.flushes} 次; ${r4.handlerError ?? ""}`);
+  check("[d Anthropic 有 input] 工具块原样到客户端", r4.received.includes(withoutSep(toolStart)), r4.received.join("\n\n").slice(0, 300));
+  check(
+    "[d Anthropic 有 input] 顺序是工具块 → 块结束 → 消息结束",
+    r4.received.indexOf(withoutSep(toolStart)) < r4.received.indexOf(withoutSep(stopBlock)) && r4.received.indexOf(withoutSep(stopBlock)) < r4.received.indexOf(withoutSep(msgStop)),
+    r4.received.join("\n\n").slice(0, 300),
+  );
+  check("[d Anthropic 有 input] 没有 error 事件", errorMessageOf(r4.received) === "", errorMessageOf(r4.received));
+
+  // e. 只有工具调用、没有正文的答复：扣住的帧也要一帧不少地送出去
+  const argsFrame = openaiSseFrame({ tool_calls: [{ index: 0, function: { arguments: '{"path":"a.txt"}' } }] });
+  const finishFrame = openaiSseFrame({}, "tool_calls");
+  const done = "data: [DONE]\n\n";
+  const expectedFrames = [roleOnly, toolOpening(""), argsFrame, finishFrame, done];
+  const r5 = await serve({ source: upstream(expectedFrames), entry: "openai", dialect: "openai" });
+  check("[e 纯工具调用] 帧一帧不少且顺序一致", JSON.stringify(r5.received) === JSON.stringify(expectedFrames.map(withoutSep)), r5.received.join("\n\n").slice(0, 400));
+  check("[e 纯工具调用] 没有重复帧", new Set(r5.received).size === r5.received.length, r5.received.join("\n\n").slice(0, 400));
+  check("[e 纯工具调用] 没有 error 帧", errorMessageOf(r5.received) === "", errorMessageOf(r5.received));
+  check("[e 纯工具调用] 头只写一次并正常收工", r5.flushes === 1 && r5.handlerError === null, `${r5.flushes} 次; ${r5.handlerError ?? ""}`);
+}
+
+
+/* ------------------------------------------------------------------ *
+ * G. 工具开局之后等参数的那个上限（ROUTER_TOOL_OPENING_MS）
+ * ------------------------------------------------------------------ */
+
+// 工具开了个头、参数还没来的时候，上游可能一声不吭几百秒。中途那个窗口是给
+// 「正文说到一半停住」的，对这种情况太宽容。工具开局帧按判据**不算内容**，所以
+// 它一定被扣在内容闸里 —— 那里才是计时的地方：到点时提交点还没到，客户端一个字节
+// 都没拿到。
+//
+// The failure is its own type (`ToolCallSilenceError`): the upstream is healthy,
+// this one connection is stuck. Whether to retry it or to move to another upstream
+// is the routing layer's call — this layer only hands the error out.
+//
+// 键默认 0 = 关着，也就是今天的行为（沿用中途那个窗口）。开着的时候，工具开局帧
+// 之后最多再等这么久。
+
+/** 面板那条路：写进库 + 重新读一遍（热设置，下一条请求就是新的值）。 */
+function setToolOpeningMs(value: number): void {
+  configOverride("ROUTER_TOOL_OPENING_MS", String(value));
+  reloadConfig();
+}
+
+section("G. 工具开局之后等参数的上限");
+
+// a. 键开着：开局帧之后静默 → 抛 ToolCallSilenceError（头未发，客户端零字节）
+{
+  setToolOpeningMs(60);
+  const r = await serveAsRouter([
+    { first: "raw-frames-stall", frames: [roleOnly + toolOpening("")] },
+    { first: "answer", text: "第二个目标的答复" },
+  ]);
+  const text = r.received.join("\n\n");
+  const first = r.errors[0];
+  // 换不换目标是路由层自己的决定（这里那个假路由器换了），这一层只把错交出去。
+  check("[a 工具开局超时] 路由层自己决定换不换目标（这里换了）", r.attempts === 2, `${r.attempts} 次`);
+  check("[a 工具开局超时] 客户端没拿到半个工具调用", !text.includes("call_1") && !text.includes("tool_calls"), text.slice(0, 200));
+  check("[a 工具开局超时] 拿到第二个目标的答复", text.includes("第二个目标的答复"), text.slice(0, 200));
+  check("[a 工具开局超时] 没有 error 帧", errorMessageOf(r.received) === "", errorMessageOf(r.received));
+  check("[a 工具开局超时] 抛的是 ToolCallSilenceError", first?.name === "ToolCallSilenceError", String(first?.name));
+  check("[a 工具开局超时] 不是 StreamIdleError（它有自己的类型）", !(first instanceof StreamIdleError), String(first?.name));
+  check("[a 工具开局超时] 用的是这个键的毫秒数", first?.idleMs === 60, String(first?.idleMs));
+  check("[a 工具开局超时] 头只写了一次（第二个目标的）", r.flushes === 1, `${r.flushes} 次`);
+  // 上游那一侧要收掉：它还挂着就是在计费。
+  let cancelled = false;
+  const r1 = await serve({
+    source: upstream([roleOnly + toolOpening("")], { after: "stall", onCancel: () => (cancelled = true) }),
+    entry: "openai",
+    dialect: "openai",
+  });
+  check("[a 工具开局超时] 上游那一侧被取消了", cancelled, "上游还挂着");
+  check("[a 工具开局超时] 客户端一个字节都没拿到", r1.received.length === 0 && r1.flushes === 0, `${r1.received.length} 帧 / ${r1.flushes} 次 flush`);
+  check("[a 工具开局超时] 抛出去的是 ToolCallSilenceError", r1.thrown?.name === "ToolCallSilenceError", String(r1.thrown?.name));
+}
+
+// b. 键 = 0：沿用今天的行为（还是中途那个窗口、那个错）
+{
+  setToolOpeningMs(0);
+  const r = await serveAsRouter([
+    { first: "raw-frames-stall", frames: [roleOnly + toolOpening("")] },
+    { first: "answer", text: "第二个目标的答复" },
+  ]);
+  const first = r.errors[0];
+  check("[b 键关着] 路由层自己决定换不换目标（这里换了）", r.attempts === 2, `${r.attempts} 次`);
+  check("[b 键关着] 报的是中途静默", first?.phase === "mid-stream", String(first?.phase));
+  check("[b 键关着] 还是那个 StreamIdleError（老行为没变）", first instanceof StreamIdleError && first?.name === "TimeoutError", String(first?.name));
+  check("[b 键关着] 不是 ToolCallSilenceError", first?.name !== "ToolCallSilenceError", String(first?.name));
+  check("[b 键关着] 用的是中途那个上限", first?.idleMs === IDLE_MS, String(first?.idleMs));
+  check("[b 键关着] 那句话里没有工具开局", !/tool opening/.test(String(first?.message)), String(first?.message));
+}
+
+// c. 参数及时到达：不误杀，帧照常流到客户端
+{
+  setToolOpeningMs(60);
+  const withArgs = toolOpening('{"path":"a.txt"}');
+  const r = await serve({
+    source: upstream([roleOnly + toolOpening(""), withArgs + "data: [DONE]\n\n"]),
+    entry: "openai",
+    dialect: "openai",
+  });
+  const text = r.received.join("\n\n");
+  check("[c 参数及时到] 网关没有抛错", r.handlerError === null, r.handlerError ?? "");
+  check("[c 参数及时到] 头只写了一次", r.flushes === 1, `${r.flushes} 次`);
+  check("[c 参数及时到] 开局帧与参数帧都到了客户端", text.includes("call_1") && text.includes("path"), text.slice(0, 300));
+  check("[c 参数及时到] 没有 error 帧", errorMessageOf(r.received) === "", errorMessageOf(r.received));
+}
+
+// d. 正文先到（已提交），之后再来工具开局帧 + 静默：按工具那个窗口快速失败（可重试）
+{
+  setToolOpeningMs(60);
+  const r = await serve({
+    source: upstream([roleOnly + openaiFrame("hi"), toolOpening("")], { after: "stall" }),
+    entry: "openai",
+    dialect: "openai",
+  });
+  const text = r.received.join("\n\n");
+  check("[d 提交点之后] 客户端拿到了正文", text.includes("hi"), text.slice(0, 200));
+  check("[d 提交点之后] 客户端没拿到那个开局帧（工具帧扣到参数收全为止）", !text.includes("call_1"), text.slice(0, 300));
+  check("[d 提交点之后] 报的是提交之后的工具静默（可重试的超时）", r.failure?.name === "TimeoutError" && /a tool call was still being written/.test(String(r.failure?.message)), `${r.failure?.name}: ${String(r.failure?.message)}`);
+  check("[d 提交点之后] 不是 ToolCallSilenceError（那是提交点之前那一类）", r.failure?.name !== "ToolCallSilenceError", String(r.failure?.name));
+  check("[d 提交点之后] 用的是工具那个上限", r.failure?.idleMs === 60, String(r.failure?.idleMs));
+  check("[d 提交点之后] 客户端收到的是可重试的那句", /timed out/.test(errorMessageOf(r.received)), errorMessageOf(r.received));
+}
+
+// e. 毫秒数取得对：闸真的按配置等，不是写死
+{
+  setToolOpeningMs(40);
+  const quick = await serveAsRouter([
+    { first: "raw-frames-stall", frames: [roleOnly + toolOpening("")] },
+    { first: "answer", text: "第二个目标的答复" },
+  ]);
+  setToolOpeningMs(90);
+  const slow = await serveAsRouter([
+    { first: "raw-frames-stall", frames: [roleOnly + toolOpening("")] },
+    { first: "answer", text: "第二个目标的答复" },
+  ]);
+  check("[e 毫秒数] 短的那个按 40ms 报", quick.errors[0]?.idleMs === 40, String(quick.errors[0]?.idleMs));
+  check("[e 毫秒数] 长的那个按 90ms 报", slow.errors[0]?.idleMs === 90, String(slow.errors[0]?.idleMs));
+  check(
+    "[e 毫秒数] 两个抛的都是工具调用静默",
+    quick.errors[0]?.name === "ToolCallSilenceError" && slow.errors[0]?.name === "ToolCallSilenceError",
+    `${quick.errors[0]?.name} / ${slow.errors[0]?.name}`,
+  );
+  check("[e 毫秒数] 真的等了（短的至少 40ms）", quick.handlerMs >= 40, `${quick.handlerMs}ms`);
+  check("[e 毫秒数] 长的等得更久（至少多 30ms）", slow.handlerMs - quick.handlerMs >= 30, `${quick.handlerMs}ms → ${slow.handlerMs}ms`);
+  setToolOpeningMs(0);
+}
+
+// f. 客户端那句话统一到「静默」：不再有 tool opening 字样；日志里能分辨是 tool_call
+{
+  setToolOpeningMs(60);
+  const captured = captureLog({ methods: ["warn"] });
+  const r = await serve({
+    source: upstream([roleOnly + toolOpening("")], { after: "stall" }),
+    entry: "openai",
+    dialect: "openai",
+  });
+  captured.restore();
+  const said = String(r.thrown?.message ?? "");
+  // 键关着时同一场景走的是中途那道闸：拿它那句来比（只比形状，时长当然不同）。
+  setToolOpeningMs(0);
+  const capturedMid = captureLog({ methods: ["warn"] });
+  const mid = await serve({
+    source: upstream([roleOnly + toolOpening("")], { after: "stall" }),
+    entry: "openai",
+    dialect: "openai",
+  });
+  capturedMid.restore();
+  const saidMid = String(mid.thrown?.message ?? "");
+  const shape = (s: string): string => s.replace(/\d+(ms|s)\b/, "N");
+  check("[f 文案] 客户端那句话与中途静默同一句形状", shape(said) === shape(saidMid), `${said} vs ${saidMid}`);
+  check("[f 文案] 不再出现 tool opening 字样", !/tool opening/i.test(said), said);
+  check("[f 日志] 日志里能分辨是 tool_call", /tool_call/.test(captured.all.join("\n")), captured.all.join("\n").slice(0, 300));
+  check("[f 日志] 中途静默那一次没有 tool_call 字样", !/tool_call/.test(capturedMid.all.join("\n")), capturedMid.all.join("\n").slice(0, 300));
+  setToolOpeningMs(60);
+}
+
+// f2. 「可重试的静默超时」那个开关开着时，工具调用静默也不改写成中途静默那句：
+// 改写只给中途静默用（那时头已经发出去了，客户端只能拿到一条 error 帧）。工具
+// 调用静默发生在提交点之前，客户端拿到的是真实状态与那句话本身。
+{
+  setToolOpeningMs(60);
+  configOverride("ROUTER_IDLE_ERROR_RETRYABLE", "true");
+  reloadConfig();
+  const r = await serveAsRouter([{ first: "raw-frames-stall", frames: [roleOnly + toolOpening("")] }]);
+  const body = r.received.join("\n\n") || r.text;
+  check("[f 可重试开关] 客户端拿到的是那句统一的静默", /upstream sent nothing for 60ms mid-stream/.test(body), body.slice(0, 300));
+  check("[f 可重试开关] 没有被改写成中途静默那句", !/upstream timed out after/.test(body), body.slice(0, 300));
+  configOverride("ROUTER_IDLE_ERROR_RETRYABLE", "false");
+  reloadConfig();
+  setToolOpeningMs(0);
+}
+/* ------------------------------------------------------------------ *
+ * H. tool_call 是原子的：参数没收全之前，那一帧不算内容
+ * ------------------------------------------------------------------ */
+
+// 参数没收完就静默：它落在提交点之前 —— 客户端零字节，路由层原样重发同一个上游
+// （那一条路已经存在，见 G 节）。参数收全了：提交点落在「参数完整」那一帧，客户端
+// 第一次见到字节就是完整的工具调用。
+//
+// 「完整」的判据只有一条：累积起来的 arguments 能 JSON.parse 通过。
+
+section("H. tool_call 原子化");
+
+/** 一段参数分片（拼起来是一个完整的 JSON 对象）。 */
+const argPieces = ['{"path":', '"a.txt"', "}"];
+const argFrames = argPieces.map((piece) => openaiSseFrame({ tool_calls: [{ index: 0, function: { arguments: piece } }] }));
+
+// a. 参数分片慢速流动：慢不等于静默，不该被砍
+{
+  setToolOpeningMs(60);
+  const frames = [roleOnly + toolOpening(""), ...argFrames];
+  const r = await serve({ source: upstream(frames, { gapMs: 20 }), entry: "openai", dialect: "openai" });
+  const text = r.received.join("\n\n");
+  check("[a 慢速流动] 网关没有抛错（没当成静默）", r.handlerError === null, r.handlerError ?? "");
+  check("[a 慢速流动] 头只写了一次", r.flushes === 1, `${r.flushes} 次`);
+  check("[a 慢速流动] 客户端拿到了完整的工具调用", text.includes("call_1") && text.includes("a.txt"), text.slice(0, 300));
+  check("[a 慢速流动] 没有 error 帧", errorMessageOf(r.received) === "", errorMessageOf(r.received));
+}
+
+// b. 参数发一半就静默：提交点之前 —— 客户端零字节，上游被取消
+{
+  setToolOpeningMs(60);
+  let cancelled = false;
+  const r = await serve({
+    source: upstream([roleOnly + toolOpening(""), argFrames[0]], { after: "stall", onCancel: () => (cancelled = true) }),
+    entry: "openai",
+    dialect: "openai",
+  });
+  check("[b 参数半途静默] 抛的是 ToolCallSilenceError", r.thrown?.name === "ToolCallSilenceError", String(r.thrown?.name));
+  check("[b 参数半途静默] 客户端一个字节都没拿到", r.received.length === 0 && r.flushes === 0, `${r.received.length} 帧 / ${r.flushes} 次 flush`);
+  check("[b 参数半途静默] 上游那一侧被取消了", cancelled, "上游还挂着");
+  check("[b 参数半途静默] 没有 error 帧（头没发，路由层能换目标）", errorMessageOf(r.received) === "", errorMessageOf(r.received));
+}
+
+// c. 参数收完整：提交 —— 客户端拿到完整的工具调用，只 flush 一次
+{
+  setToolOpeningMs(60);
+  const frames = [roleOnly + toolOpening(""), ...argFrames];
+  const r = await serve({ source: upstream(frames), entry: "openai", dialect: "openai" });
+  const text = r.received.join("\n\n");
+  check("[c 参数收全] 立刻提交且没抛错", r.flushes === 1 && r.handlerError === null, `${r.flushes} 次; ${r.handlerError ?? ""}`);
+  check("[c 参数收全] 客户端拿到了完整的工具调用", text.includes("call_1") && text.includes("a.txt"), text.slice(0, 400));
+  check("[c 参数收全] 只 flush 一次", r.flushes === 1, `${r.flushes} 次`);
+  check("[c 参数收全] 没有 error 帧", errorMessageOf(r.received) === "", errorMessageOf(r.received));
+}
+
+// d. 参数累积超过上限（256 KiB）：照样提交，此后静默归中途那个窗口
+{
+  setToolOpeningMs(60);
+  const huge = `"${"a".repeat(300 * 1024)}"`;
+  const r = await serve({
+    source: upstream([roleOnly + toolOpening(""), openaiSseFrame({ tool_calls: [{ index: 0, function: { arguments: huge } }] })], {
+      after: "stall",
+    }),
+    entry: "openai",
+    dialect: "openai",
+  });
+  const text = r.received.join("\n\n");
+  check("[d 参数超上限] 提交了（头写了一次）", r.flushes === 1, `${r.flushes} 次`);
+  check("[d 参数超上限] 那一帧没有静默丢掉", text.length > 300 * 1024, `${text.length} 字节`);
+  check(
+    "[d 参数超上限] 此后的静默归中途那个窗口",
+    r.failure?.idleMs === IDLE_MS && !/tool call was still being written/.test(String(r.failure?.message)),
+    `${r.failure?.idleMs}: ${String(r.failure?.message)}`,
+  );
+}
+
+// e. Anthropic：input_json_delta 同样按「参数收全」算
+{
+  setToolOpeningMs(60);
+  const anthropicArg = (piece: string) =>
+    anthropicFrame("content_block_delta", {
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "input_json_delta", partial_json: piece },
+    });
+  let cancelled = false;
+  const half = await serve({
+    source: upstream([messageStart(), anthropicToolStart({}), anthropicArg('{"path":')], {
+      after: "stall",
+      onCancel: () => (cancelled = true),
+    }),
+    entry: "anthropic",
+    dialect: "anthropic",
+  });
+  check("[e Anthropic 半途静默] 抛的是 ToolCallSilenceError", half.thrown?.name === "ToolCallSilenceError", String(half.thrown?.name));
+  check("[e Anthropic 半途静默] 客户端一个字节都没拿到", half.received.length === 0 && half.flushes === 0, `${half.received.length} 帧 / ${half.flushes} 次 flush`);
+  check("[e Anthropic 半途静默] 上游那一侧被取消了", cancelled, "上游还挂着");
+
+  const whole = await serve({
+    source: upstream([
+      messageStart(),
+      anthropicToolStart({}),
+      anthropicArg('{"path":"a.txt"}'),
+      anthropicFrame("content_block_stop", { type: "content_block_stop", index: 0 }),
+    ]),
+    entry: "anthropic",
+    dialect: "anthropic",
+  });
+  const text = whole.received.join("\n\n");
+  check("[e Anthropic 收全] 立刻提交且没抛错", whole.flushes === 1 && whole.handlerError === null, `${whole.flushes} 次; ${whole.handlerError ?? ""}`);
+  check("[e Anthropic 收全] 工具块原样到客户端", text.includes("toolu_1") && text.includes("a.txt"), text.slice(0, 300));
+  check("[e Anthropic 收全] 没有 error 事件", errorMessageOf(whole.received) === "", errorMessageOf(whole.received));
+}
+
+// f. 已提交（思考先发出去）之后 tool 在途又静默：按工具那个窗口快速失败，可重试
+{
+  setToolOpeningMs(60);
+  const thinking = openaiSseFrame({ reasoning_content: "在想" });
+  const started = Date.now();
+  const openai = await serve({
+    source: upstream([roleOnly + thinking, toolOpening("")], { after: "stall" }),
+    entry: "openai",
+    dialect: "openai",
+  });
+  const elapsed = Date.now() - started;
+  const said = errorMessageOf(openai.received);
+  check("[f 提交后工具静默] 客户端拿到了思考（提交点已经过去）", openai.received.join("\n\n").includes("在想"), "");
+  check("[f 提交后工具静默] 报的是超时", openai.failure?.name === "TimeoutError", String(openai.failure?.name));
+  check("[f 提交后工具静默] 用的是工具那个上限（60ms），不是中途那个", openai.failure?.idleMs === 60, String(openai.failure?.idleMs));
+  check("[f 提交后工具静默] 很快就失败了（没等满中途那个窗口）", elapsed < IDLE_MS, `${elapsed}ms`);
+  check("[f 提交后工具静默] 客户端那句话是可重试的形状", /timed out/.test(said), said);
+  check("[f 提交后工具静默] openai 方言的 code 是 upstream_idle_timeout", openai.received.some((f) => f.includes("upstream_idle_timeout")), openai.received.join("\n\n").slice(0, 300));
+
+  const anthropic = await serve({
+    source: upstream([roleOnly + thinking, toolOpening("")], { after: "stall" }),
+    entry: "openai",
+    dialect: "anthropic",
+  });
+  const anthropicSaid = errorMessageOf(anthropic.received);
+  check("[f 提交后工具静默] anthropic 方言是 error 事件", anthropic.received.some((f) => f.includes("event: error")), anthropic.received.join("\n\n").slice(0, 300));
+  check("[f 提交后工具静默] anthropic 方言那句话也是可重试的形状", /timed out/.test(anthropicSaid), anthropicSaid);
+}
+
+// g. 「不续写」那一行日志要说得清：发了多少字节、帧序、参数累积
+{
+  setToolOpeningMs(60);
+  const captured = captureLog({ methods: ["warn"] });
+  await serve({
+    source: upstream([roleOnly + openaiFrame("hi"), toolOpening("")], { after: "stall" }),
+    entry: "openai",
+    dialect: "openai",
+  });
+  captured.restore();
+  const line = captured.all.find((entry) => entry.includes("静默后不续写")) ?? "";
+  check("[g 日志] 有「静默后不续写」那一行", line !== "", captured.all.join("\n").slice(0, 300));
+  check("[g 日志] 那行里有「已发给客户端 N 字节」", /已发给客户端 \d+ 字节/.test(line), line.slice(0, 300));
+  check("[g 日志] 那个字节数不是 0（正文已经到客户端了）", /已发给客户端 [1-9]\d* 字节/.test(line), line.slice(0, 300));
+  check("[g 日志] 那行里有帧序", /帧序 [^）]+/.test(line), line.slice(0, 300));
+  check("[g 日志] 帧序里没有工具名（那个工具帧被扣住，没到客户端）", /帧序 正文，/.test(line) && !line.includes("工具名"), line.slice(0, 300));
+  check("[g 日志] 参数累积那一格在", /参数累积 \d+ 字节/.test(line), line.slice(0, 300));
+}
+
+/* ------------------------------------------------------------------ *
+ * I. 工具帧一律扣住：不管提交点在哪儿
+ * ------------------------------------------------------------------ */
+
+// 口径只有一条：工具帧（开局帧或参数碎片）一律扣住，直到参数收全。半个 tool_call
+// 客户端本来就不显示 —— 扣住不亏。提交点之前由内容闸扣（客户端零字节），提交点之后
+// 由那道守卫扣（客户端拿到思考/正文，但一个工具帧都没有）。
+section("I. 工具帧一律扣住");
+
+// a. 提交之后才开始的工具调用：参数收全之前，客户端一个工具帧都拿不到
+{
+  setToolOpeningMs(60);
+  const thinking = openaiSseFrame({ reasoning_content: "在想" });
+  const frames = [thinking, toolOpening(""), ...argFrames];
+  const arrivals: { frame: string; at: number }[] = [];
+  const started = Date.now();
+  const r = await serve({
+    source: upstream(frames, { gapMs: 20 }),
+    entry: "openai",
+    dialect: "openai",
+    onFrame: (frame, at) => arrivals.push({ frame, at }),
+  });
+  const text = r.received.join("\n\n");
+  check("[a 扣住] 网关没有抛错", r.handlerError === null, r.handlerError ?? "");
+  check("[a 扣住] 客户端拿到了完整的工具调用", text.includes("call_1") && text.includes("a.txt"), text.slice(0, 300));
+  check("[a 扣住] 帧数与上游一致（另加一个 [DONE]）", r.received.length === frames.length + 1, `${r.received.length} 帧`);
+  check("[a 扣住] 没有 error 帧", errorMessageOf(r.received) === "", errorMessageOf(r.received));
+  const openingAt = arrivals.find((a) => a.frame.includes("call_1"))?.at ?? -1;
+  // 参数是最后一片才收全的（上游每 20ms 一片）：开局帧不可能比那早到。
+  check("[a 扣住] 开局帧没有早于参数收全到客户端", openingAt - started >= 60, `开局帧在第 ${openingAt - started}ms 到达`);
+  const thinkingAt = arrivals.find((a) => a.frame.includes("在想"))?.at ?? -1;
+  check("[a 扣住] 思考帧先到了（提交点已经过去）", thinkingAt >= 0 && thinkingAt < openingAt, `思考 ${thinkingAt - started}ms / 开局 ${openingAt - started}ms`);
+}
+
+// b. 参数发一半就静默：按 tool 窗口快速失败，客户端零个工具帧
+{
+  setToolOpeningMs(60);
+  const thinking = openaiSseFrame({ reasoning_content: "在想" });
+  const r = await serve({
+    source: upstream([thinking, toolOpening(""), argFrames[0]], { after: "stall" }),
+    entry: "openai",
+    dialect: "openai",
+  });
+  const text = r.received.join("\n\n");
+  check("[b 半途静默] 客户端拿到了思考", text.includes("在想"), text.slice(0, 200));
+  check("[b 半途静默] 客户端一个工具帧都没拿到", !text.includes("call_1") && !text.includes("tool_calls"), text.slice(0, 300));
+  check(
+    "[b 半途静默] 报的是提交之后的工具静默（可重试）",
+    r.failure?.name === "TimeoutError" && /a tool call was still being written/.test(String(r.failure?.message)),
+    `${r.failure?.name}: ${String(r.failure?.message)}`,
+  );
+  check("[b 半途静默] 用的是工具那个窗口", r.failure?.idleMs === 60, String(r.failure?.idleMs));
+  check("[b 半途静默] 客户端那句话是可重试的形状", /timed out/.test(errorMessageOf(r.received)), errorMessageOf(r.received));
+}
+
+// c. 客户端拿到的字节序列与上游逐字节一致
+{
+  setToolOpeningMs(60);
+  const frames = [roleOnly, toolOpening(""), ...argFrames];
+  const r = await serve({ source: upstream(frames), entry: "openai", dialect: "openai" });
+  const expected = [...frames.map(withoutSep), "data: [DONE]"];
+  check("[c 逐字节] 帧数与上游一致", r.received.length === expected.length, `${r.received.length} / ${expected.length}`);
+  check("[c 逐字节] 每一帧的字节与上游一致（顺序也一致）", JSON.stringify(r.received) === JSON.stringify(expected), r.received.join("\n\n").slice(0, 400));
+}
+
+// d. 累积超过上限：立刻写出，不卡住（此后静默归中途那个窗口）
+{
+  setToolOpeningMs(60);
+  const thinking = openaiSseFrame({ reasoning_content: "在想" });
+  // 参数是一段没写完的 JSON：它永远不会「收全」，只能靠上限把它放出去。
+  const huge = openaiSseFrame({ tool_calls: [{ index: 0, function: { arguments: `"${"a".repeat(300 * 1024)}` } }] });
+  const r = await serve({
+    source: upstream([thinking, toolOpening(""), huge], { after: "stall" }),
+    entry: "openai",
+    dialect: "openai",
+  });
+  const text = r.received.join("\n\n");
+  check("[d 超上限] 扣住的帧立刻写出来了", text.includes("call_1") && text.length > 300 * 1024, `${text.length} 字节`);
+  check(
+    "[d 超上限] 此后的静默归中途那个窗口",
+    r.failure?.idleMs === IDLE_MS && !/tool call was still being written/.test(String(r.failure?.message)),
+    `${r.failure?.idleMs}: ${String(r.failure?.message)}`,
+  );
+}
+
+// e. 上游正常结束但参数没收全：扣住的帧照样写出（不吞）
+{
+  setToolOpeningMs(60);
+  const thinking = openaiSseFrame({ reasoning_content: "在想" });
+  const r = await serve({
+    source: upstream([thinking, toolOpening(""), argFrames[0]]),
+    entry: "openai",
+    dialect: "openai",
+  });
+  const text = r.received.join("\n\n");
+  check("[e 正常结束] 扣住的帧照样到了客户端", text.includes("call_1") && text.includes("path"), text.slice(0, 300));
+  check("[e 正常结束] 没有 error 帧", errorMessageOf(r.received) === "", errorMessageOf(r.received));
+  check("[e 正常结束] 网关没有抛错", r.handlerError === null, r.handlerError ?? "");
+}
+
+// f. 对照组：没有工具调用的流，逐帧即时到达（正常流量不许被扣住）
+{
+  setToolOpeningMs(60);
+  const frames = Array.from({ length: 8 }, (_, i) => openaiSseFrame({ content: `w${i}` }));
+  const arrivals: { frame: string; at: number }[] = [];
+  const r = await serve({
+    source: upstream(frames, { gapMs: 20 }),
+    entry: "openai",
+    dialect: "openai",
+    onFrame: (frame, at) => arrivals.push({ frame, at }),
+  });
+  const span = arrivals.length > 1 ? arrivals[arrivals.length - 1].at - arrivals[0].at : 0;
+  check("[f 对照组] 每一帧都到了", r.received.length === frames.length + 1, `${r.received.length} 帧`);
+  check("[f 对照组] 帧是逐帧到的（不是攒到最后一起到）", span >= 80, `跨度 ${span}ms`);
+  check("[f 对照组] 没有 error 帧", errorMessageOf(r.received) === "", errorMessageOf(r.received));
+}
+
+// g. 日志：扣了多少帧/多少字节，写出时一行
+{
+  setToolOpeningMs(60);
+  const captured = captureLog({ methods: ["info"] });
+  await serve({ source: upstream([roleOnly, toolOpening(""), ...argFrames]), entry: "openai", dialect: "openai" });
+  captured.restore();
+  const line = captured.all.find((entry) => entry.includes("工具帧扣住")) ?? "";
+  check("[g 日志] 有一行说扣住了多少帧多少字节", /工具帧扣住 \d+ 帧 \d+ 字节/.test(line), captured.all.join("\n").slice(0, 300));
+  check("[g 日志] 帧数与字节数不是 0", /工具帧扣住 [1-9]\d* 帧 [1-9]\d* 字节/.test(line), line.slice(0, 300));
+}
+
+setToolOpeningMs(0);
+
+closeStore();
+fs.rmSync(tmp, { recursive: true, force: true });
 
 /* ------------------------------------------------------------------ */
 

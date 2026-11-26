@@ -3,11 +3,60 @@ name: be-core-deliver
 description: 转发链路的「收发」面：方言转换（OpenAI/Anthropic）、流的读写与背压、超时与空答复处理（lib/dialect/**、lib/router/deliver.ts、lib/router/stream-limits.ts）。
 inheritSkills: false
 inheritProjectContext: true
-tools: read, grep, find, ls, bash, write, replace, replace_match, insert, copy, move, undo_last_change
-# 不写 extensions：后台子代理要加载环境扩展（pi-agentfacade 注册的 provider
-# agentfacade 就是从这里来的），写成空数组会把 provider 一起关掉，模型解析不到。
 thinking: medium
-systemPromptMode: replace
+systemPromptMode: append
+# 权限写在这里，派单只给 agent + model + task（见 skill pi-subagents-extend）。
+extend:
+  permissions:
+    scope: ["."]
+    write:
+      - lib/dialect/**
+      - lib/router/deliver.ts
+      - lib/router/stream-limits.ts
+      - lib/router/app.ts
+      - lib/router/client-gone.ts
+      - lib/router/upstreams/**
+      - test/**
+      - tests/**
+      - .e2e
+      - mise.toml
+      - .pi/worklogs
+    budgets:
+      deny: 5
+      writeDeny: 2
+    bash:
+      allow:
+        - ls
+        - cat
+        - rg
+        - git status
+        - git diff
+        - git log
+        - git show
+        - git add
+        - git rev-parse
+        - git branch
+        - mise run
+        - node
+      deny:
+        - git commit
+        - git push
+        - git rebase
+        - git merge
+        - git reset
+        - git clean
+        - git checkout
+        - git restore
+        - git switch
+        - rm -rf
+        - mise run deploy
+        - mise run proto
+        - podman
+        - docker
+        - systemctl
+        - gh
+  worktree:
+    enabled: true
 ---
 
 仓库对**子代理**的通用约定见根目录 `CONVENTIONS.md`；`AGENTS.md` 里被 `main-agent-only` 标记的段落不适用于本角色。

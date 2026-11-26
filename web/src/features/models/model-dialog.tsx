@@ -76,14 +76,25 @@ type ModelDraft = {
   toolCall: TriState
   effortOptions: string
   /**
-   * 目标的先后。列表里的位置就是权重，草稿里不存权重数字：
-   * 拖动一改位置，权重跟着重新算。
+   * 目标的先后与权重。
+   *
+   * single / fallback 下位次就是优先级：权重不存草稿，拖动一改位置，保存时按新的
+   * 位次重算。balance 下权重是份额（越大分到的会话越多），由用户手填，与位次无关
+   * ——顺序那套仍然保留，它决定的是「先问谁」，不是份额。
+   *
+   * 两种策略下同一个字段含义不同，所以草稿里存的是「可空的权重」：`null` 就是
+   * 「按位次推导」，切回 single / fallback 时一律回到 null，balance 填的份额不跨
+   * 策略留着。
    */
   targets: {
     /** 草稿内的行标识：排序的 FLIP 过渡靠它对号，不发给后端。 */
     uid: string
     groupName: string
     upstreamModel: string
+    /** 手填的权重（balance 下是份额）；null = 按位次推导。 */
+    weight: number | null
+    /** 权重那格的原文：空、小数、负号都得能摆出来，才能提示是哪一种错。 */
+    weightText: string
   }[]
 }
 
@@ -92,18 +103,65 @@ function emptyTarget() {
     groupName: '',
     upstreamModel: '',
     uid: newUid(),
+    // 新行还没有权重：balance 下等位次定了面板自己填（切策略或这一行填全时），
+    // single / fallback 下压根没有这一格。
+    weight: null,
+    weightText: '',
   }
 }
 
 /**
- * 位次即权重：第 index 个目标（共 total 个）的权重。
+ * 位次推导出来的权重：第 index 个目标（共 total 个）。
  *
- * 后端按权重从大到小试目标 —— 读表时 `ORDER BY ... weight DESC`，保存时也按
- * 权重从大到小排序，proto 里写的是「权重：大的先试」。所以排在最上面的那个
- * 拿最大的权重，往下依次小一个：顺序就是先后，不再手填数字。
+ * single / fallback 下位次就是优先级，权重一律这么算 —— 后端按权重从大到小试目标
+ * （读表 `ORDER BY ... weight DESC`，保存时也按权重从大到小排），proto 里写的是
+ * 「权重：大的先试」。所以排在最上面的拿最大的权重，往下依次小一个。
+ *
+ * balance 下它只是个缺省：那里权重是份额，由用户手填，位次只决定「先问谁」。
  */
 export function targetWeight(index: number, total: number): number {
   return total - index
+}
+
+/**
+ * 保存时这一行用哪个权重。
+ *
+ * balance 下权重是份额，用草稿里填的那个（7 就是 7，与位次无关）；草稿里是 null
+ * （还没填）就退回位次 —— null 本来就是「按位次推导」的意思。single / fallback 下
+ * 位次就是优先级，一律由位次推导，草稿里填过什么都不算数（那两个策略下没有这一格）。
+ */
+export function resolvedWeight(
+  target: { weight: number | null },
+  index: number,
+  filledCount: number,
+  strategy: string
+): number {
+  if (strategy === 'balance') {
+    return target.weight ?? targetWeight(index, filledCount)
+  }
+  return targetWeight(index, filledCount)
+}
+
+/**
+ * balance 下权重那格填的原文哪里不对；没问题返回 null。
+ *
+ * 空、小数、0、负数都拦下：后端拿 `weight > 0` 过滤，权重 0 等于把这一行丢掉，
+ * 小数则根本存不进 int32。三句提示是同一件事（不是大于 0 的整数），所以这里只在
+ * 「有没有毛病」上分。
+ */
+function weightProblem(text: string): string | null {
+  const trimmed = text.trim()
+  const value = Number(trimmed)
+  if (trimmed === '' || !Number.isInteger(value) || value < 1) {
+    return i18n.t('models.weightInvalid')
+  }
+  return null
+}
+
+/** 权重那格的原文 → 数字；不合法就是 null（草稿里 null 表示「按位次推导」）。 */
+function parsedWeight(text: string): number | null {
+  if (weightProblem(text) !== null) return null
+  return Number(text.trim())
 }
 
 /** 一行的目标填全了没有。 */
@@ -182,11 +240,20 @@ export function toDraft(model: PublishedModel | undefined): ModelDraft {
     effortOptions: model.effortOptions.join(', '),
     // 服务端回的目标已经按权重从大到小排好，读进来就是界面上要显示的先后。
     // 目标上的 enabled 不读了：面板没有这个开关，保存时一律写开。
-    targets: model.targets.map((target) => ({
-      groupName: target.groupName,
-      upstreamModel: target.upstreamModel,
-      uid: newUid(),
-    })),
+    //
+    // balance 下权重是份额，原样读进草稿（库里是 7 就还是 7）：用户填过的份额不能
+    // 一开一关就丢掉。single / fallback 下权重由位次推导，草稿里留 null —— 那时候
+    // 服务端那串是优先级，摆进 balance 的输入框会被当成份额，是另一回事。
+    targets: model.targets.map((target) => {
+      const filledWeight = model.strategy === 'balance' ? target.weight : null
+      return {
+        groupName: target.groupName,
+        upstreamModel: target.upstreamModel,
+        uid: newUid(),
+        weight: filledWeight,
+        weightText: filledWeight === null ? '' : String(filledWeight),
+      }
+    }),
   }
 }
 
@@ -222,15 +289,15 @@ export function fromDraft(draft: ModelDraft): PublishedModel {
       .split(',')
       .map((item) => item.trim())
       .filter(Boolean),
-    // 位次即权重：按草稿里的先后填，第一个最大。single 也一样填 —— 只有一个
-    // 目标时顺序没有意义，权重仍然是它自己那一个。
+    // single / fallback 下位次即权重：按草稿里的先后填，第一个最大（只有一个目标时
+    // 顺序没有意义，权重仍然是它自己那一个）。balance 下用草稿里填的份额。
     targets: draft.targets
       .filter(targetFilled)
       .map((target, index, all): PublishedTarget => ({
         ...create(PublishedTargetSchema),
         groupName: target.groupName.trim(),
         upstreamModel: target.upstreamModel.trim(),
-        weight: targetWeight(index, all.length),
+        weight: resolvedWeight(target, index, all.length, draft.strategy),
         // 目标上没有开关了：想不去这个目标就把它删掉。后端还按这一列判
         // 「这个目标参不参与选路」，所以一律写开。
         enabled: true,
@@ -279,13 +346,66 @@ export function ModelDialog({
     index: number,
     part: Partial<ModelDraft['targets'][number]>
   ) =>
+    setDraft((prev) => {
+      const targets = prev.targets.map((target, i) =>
+        i === index ? { ...target, ...part } : target
+      )
+      // balance 下这一行刚填全、还没有权重：当场按位次填上（与切到 balance 时同一
+      // 条规则），免得用户填完平台组与模型 id 之后还被一个空的权重格挡着保存。
+      if (prev.strategy !== 'balance') return { ...prev, targets }
+      const row = targets[index]
+      if (row.weight !== null || !targetFilled(row)) return { ...prev, targets }
+      const filled = targets.filter(targetFilled)
+      const derived = targetWeight(filled.indexOf(row), filled.length)
+      return {
+        ...prev,
+        targets: targets.map((target, i) =>
+          i === index
+            ? { ...target, weight: derived, weightText: String(derived) }
+            : target
+        ),
+      }
+    })
+
+
+  /**
+   * 换策略：同一个「权重」字段在两个策略下是两回事，草稿跟着换。
+   *
+   * 切到 balance 的那一刻把当前位次推导出来的值填进草稿（两行 → 2、1），不要一上来
+   * 全是空或 0：那里权重是份额，用户要能直接改，而「按位次」是个合理的起点。
+   *
+   * 切回 single / fallback 时权重一律回到 null（按位次推导）：把 balance 填的份额留着
+   * 会莫名其妙 —— 那边是份额，这边是优先级。
+   */
+  const changeStrategy = (value: string) =>
+    setDraft((prev) => {
+      const filled = prev.targets.filter(targetFilled)
+      return {
+        ...prev,
+        strategy: value,
+        targets: prev.targets.map((target) => {
+          if (value !== 'balance') {
+            return { ...target, weight: null, weightText: '' }
+          }
+          if (target.weight !== null) return target
+          const position = filled.indexOf(target)
+          if (position < 0) return target
+          const derived = targetWeight(position, filled.length)
+          return { ...target, weight: derived, weightText: String(derived) }
+        }),
+      }
+    })
+
+  /** 改某一行的权重：原文进草稿，能解析成大于 0 的整数就记下数字。 */
+  const patchWeight = (index: number, text: string) =>
     setDraft((prev) => ({
       ...prev,
       targets: prev.targets.map((target, i) =>
-        i === index ? { ...target, ...part } : target
+        i === index
+          ? { ...target, weightText: text, weight: parsedWeight(text) }
+          : target
       ),
     }))
-
   /** 把第 from 行挪到第 to 位。越界或原地不动时不动。 */
   const moveTarget = (from: number, to: number) =>
     setDraft((prev) => {
@@ -316,6 +436,17 @@ export function ModelDialog({
   // upstream_model)），所以在这里就拦住，不发请求。
   const duplicated = duplicateTargets(draft.targets)
 
+  // balance 下每一行填全了的目标都得有份量：空、小数、0、负数都在这里拦住。
+  // 只判填全了的行 —— 没填全的行本来就发不出去，不该先为权重红起来。
+  const weightProblems = new Map<number, string>()
+  if (draft.strategy === 'balance') {
+    draft.targets.forEach((target, index) => {
+      if (!targetFilled(target)) return
+      const problem = weightProblem(target.weightText)
+      if (problem !== null) weightProblems.set(index, problem)
+    })
+  }
+
   /**
    * 这一行能选的上游模型里，哪些已经被别的行占着了。
    * 只有同一个平台才有意义：判重是组合，不是单个模型 id。
@@ -337,8 +468,10 @@ export function ModelDialog({
   // 哪个分组里有没填的必填项：分组标题上标红，切过去给行内提示。
   const basicMissing = draft.id.trim().length === 0
   const targetsMissing = filledTargets.length === 0
-  // 组合撞了也是「平台目标」那一页的问题：保存灰着的时候，用户得知道去哪看。
-  const targetsProblem = targetsMissing || duplicated.size > 0
+  // 组合撞了、或者 balance 下的权重填不对，都是「平台目标」那一页的问题：保存灰着的
+  // 时候，用户得知道去哪看。
+  const targetsProblem =
+    targetsMissing || duplicated.size > 0 || weightProblems.size > 0
   // 两个整数格：继承时不判（那两格灰着，值不属于这一单），填了才判。
   const contextProblem = draft.contextWindowInherit
     ? null
@@ -352,7 +485,8 @@ export function ModelDialog({
     !targetsMissing &&
     contextProblem === null &&
     outputProblem === null &&
-    duplicated.size === 0
+    duplicated.size === 0 &&
+    weightProblems.size === 0
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -414,7 +548,7 @@ export function ModelDialog({
               </Label>
               <Select
                 value={draft.strategy}
-                onValueChange={(value) => patch({ strategy: value })}
+                onValueChange={changeStrategy}
               >
                 <SelectTrigger id='model-strategy'>
                   <SelectValue />
@@ -425,6 +559,9 @@ export function ModelDialog({
                   </SelectItem>
                   <SelectItem value='fallback'>
                     {t('models.strategyFallback')}
+                  </SelectItem>
+                  <SelectItem value='balance'>
+                    {t('models.strategyBalance')}
                   </SelectItem>
                 </SelectContent>
               </Select>
@@ -598,6 +735,16 @@ export function ModelDialog({
                 {t('models.targetsRequired')}
               </p>
             ) : null}
+            {draft.strategy === 'balance' ? (
+              <>
+                <p className='text-xs text-muted-foreground'>
+                  {t('models.weightHint')}
+                </p>
+                <p className='text-xs text-muted-foreground'>
+                  {t('models.balanceWeightHint')}
+                </p>
+              </>
+            ) : null}
             {sorting ? (
               <>
                 <p className='text-xs text-muted-foreground'>
@@ -673,7 +820,10 @@ export function ModelDialog({
                           <span className='text-sm font-medium'>
                             {t('models.targetHeading', { index: index + 1 })}
                           </span>
-                          {weight === undefined ? null : (
+                          {/* balance 下权重由下面的输入框取代这行只读文字：那里是
+                              份额，得手填；single / fallback 下位次就是权重。 */}
+                          {weight === undefined ||
+                          draft.strategy === 'balance' ? null : (
                             <span className='text-xs text-muted-foreground'>
                               {t('models.targetWeight', { weight })}
                             </span>
@@ -732,6 +882,40 @@ export function ModelDialog({
                             />
                           </div>
                         </div>
+                        {draft.strategy === 'balance' ? (
+                          <div className='grid gap-2'>
+                            <Label htmlFor={`target-weight-${index}`}>
+                              {t('models.weightLabel')}
+                            </Label>
+                            <Input
+                              id={`target-weight-${index}`}
+                              type='number'
+                              step={1}
+                              min={1}
+                              inputMode='numeric'
+                              value={target.weightText}
+                              aria-invalid={
+                                weightProblems.has(index) || undefined
+                              }
+                              aria-describedby={
+                                weightProblems.has(index)
+                                  ? `target-weight-problem-${index}`
+                                  : undefined
+                              }
+                              onChange={(event) =>
+                                patchWeight(index, event.target.value)
+                              }
+                            />
+                            {weightProblems.has(index) ? (
+                              <p
+                                id={`target-weight-problem-${index}`}
+                                className='text-xs text-destructive'
+                              >
+                                {weightProblems.get(index)}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : null}
                         {duplicated.has(index) ? (
                           <p className='text-xs text-destructive'>
                             {t('models.duplicateTarget', {

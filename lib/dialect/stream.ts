@@ -1,5 +1,5 @@
 import type { Json } from "../json.ts";
-import { cachedInputOfOpenAI } from "./cache.ts";
+import { cachedInputOfOpenAI, type Usage } from "./cache.ts";
 import { AuthError } from "../credential.ts";
 import { randomUUID } from "node:crypto";
 import { readSseEvents, sseData, sseEvent, SSE_DONE } from "../sse-stream.ts";
@@ -20,7 +20,7 @@ import { scrubForClient } from "../log-scrub.ts";
 export async function* openaiStreamToAnthropic(
   chunks: AsyncIterable<Json>,
   model: string,
-  onUsage?: (usage: Json) => void,
+  onUsage?: (usage: Usage) => void,
 ): AsyncGenerator<string> {
   const messageId = `msg_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
   let started = false;
@@ -193,7 +193,7 @@ export async function* openaiStreamToAnthropic(
 export async function* anthropicStreamToOpenAI(
   body: ReadableStream<Uint8Array>,
   model: string,
-  onUsage?: (usage: Json) => void,
+  onUsage?: (usage: Usage) => void,
   signal?: AbortSignal,
 ): AsyncGenerator<string> {
   const completionId = `chatcmpl-${randomUUID().replace(/-/g, "").slice(0, 24)}`;
@@ -327,7 +327,7 @@ function openaiUsage(
   outputTokens: number,
   cachedTokens: number,
   writtenTokens = 0,
-): Json {
+): Usage {
   // OpenAI 的 prompt_tokens 是全部输入：Anthropic 的 input_tokens 只是没命中
   // 缓存的那部分，命中读到的与写进去的都要算进去（见 dialect/cache.ts）。
   const prompt = inputTokens + cachedTokens + writtenTokens;

@@ -424,6 +424,92 @@ async function publish(id: string, strategy: string): Promise<any> {
   check("两个模型都还在 /v1/models 里", ids.includes("bal-model") && ids.includes("single-model"), ids.join(","));
 }
 
+/* ------------------------------------------------------------------ *
+ * 七、HTTP 层：balance 的粘性、份额、降级（真网关 + 假上游）
+ * ------------------------------------------------------------------ */
+
+// 上面几节量的是纯函数算出什么；这里量的是客户端发请求之后上游真正收到什么
+// bal-model 已在上一段发布：两个 qoder 目标 GLM-5.3(7) 与 DeepSeek-V4-Pro(3)
+
+section("HTTP：balance 粘性（同一会话 5 次，上游模型名一致）");
+
+{
+  fake.reset();
+  const statuses: number[] = [];
+  for (let i = 0; i < 5; i++) {
+    const res = await chat("bal-model", { "x-claude-code-session-id": "sess-sticky-1" });
+    statuses.push(res.status);
+  }
+  const models = fake.seen.map((s) => s.model);
+  check("HTTP 粘性：5 次都成功", statuses.every((s) => s === 200), statuses.join(","));
+  check("HTTP 粘性：上游被叫了 5 次", fake.seen.length === 5, String(fake.seen.length));
+  // 只断五次彼此相同：HRW 修好之后赢家可能换人，写死模型名会假红
+  check(
+    "HTTP 粘性：5 次的上游模型名互相同一",
+    models.length === 5 && models[0].length > 0 && models.every((m) => m === models[0]),
+    models.join(","),
+  );
+}
+
+section("HTTP：balance 份额不是优先级（20 个会话，两个上游都出现）");
+
+{
+  fake.reset();
+  const statuses: number[] = [];
+  for (let i = 0; i < 20; i++) {
+    const res = await chat("bal-model", { "x-claude-code-session-id": `sess-share-${i}` });
+    statuses.push(res.status);
+  }
+  const models = fake.seen.map((s) => s.model);
+  check("HTTP 份额：20 次都成功", statuses.every((s) => s === 200), statuses.join(","));
+  check(
+    "HTTP 份额：两个上游都出现过（不是按权重排序永远取第一个）",
+    new Set(models).size === 2,
+    [...new Set(models)].join(","),
+  );
+}
+
+section("HTTP：balance 降级确定性（首选失败，同一会话三次落同一个次选）");
+
+{
+  // 先发一次，看这个会话实际落在哪个模型上（取最后一次上游调用：成功的那个）
+  // HRW 修好之后赢家可能换人，所以首选必须动态探出来，不能写死
+  fake.reset();
+  await chat("bal-model", { "x-claude-code-session-id": "sess-failover-1" });
+  const probe = fake.seen;
+  const first = probe[probe.length - 1]?.model ?? "";
+  check("HTTP 降级：探到了这个会话实际落的目标", first.length > 0, first);
+
+  // 只让那个目标失败：FAILING_MODELS 的既有行为不动，测完就撤
+  fake.failModels.add(first);
+  const statuses: number[] = [];
+  const answering: string[] = [];
+  const attempted: string[][] = [];
+  for (let i = 0; i < 3; i++) {
+    const before = fake.seen.length;
+    const res = await chat("bal-model", { "x-claude-code-session-id": "sess-failover-1" });
+    statuses.push(res.status);
+    const calls = fake.seen.slice(before).map((s) => s.model);
+    attempted.push(calls);
+    answering.push(calls[calls.length - 1] ?? "");
+  }
+  fake.failModels.delete(first);
+
+  check("HTTP 降级：首选失败后三次都成功", statuses.every((s) => s === 200), statuses.join(","));
+  // 每次都真的先撞了被失败的首选：证明降级被触发，而不是三次都绕开它（假绿）
+  check(
+    "HTTP 降级：三次都先试了被失败的首选",
+    attempted.every((calls) => calls.includes(first)),
+    JSON.stringify(attempted),
+  );
+  check("HTTP 降级：三次都落在同一个次选目标", new Set(answering).size === 1, answering.join(","));
+  check(
+    "HTTP 降级：次选不是失败的首选",
+    answering.every((m) => m !== first && m.length > 0),
+    `${answering.join(",")} / ${first}`,
+  );
+}
+
 await gw.stopAndWait();
 await new Promise<void>((resolve) => {
   fake.close();
