@@ -115,6 +115,10 @@ run = "node --experimental-strip-types test/gateway-page-check.ts"
 description = "Check that a zcode 4xx keeps the real upstream status and is not retried, while a 500 is (a fake upstream)"
 run = "node --experimental-strip-types test/zcode-retry-check.ts"
 
+[tasks."test:tool:silence"]
+description = "Check that a tool-call silence is resent to the same upstream as-is, and that the budget running out is a retryable 504 (a fake upstream, no tokens spent)"
+run = "node --experimental-strip-types test/tool-silence-check.ts"
+
 [tasks."test:policy:e2e"]
 description = "Check that the policy takes effect at once (a fake upstream, no tokens spent)"
 run = "node --experimental-strip-types test/provider-policy-e2e-check.ts"

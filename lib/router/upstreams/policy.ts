@@ -9,7 +9,7 @@ import { log } from "../../log.ts";
 import { AuthError } from "../../credential.ts";
 import type { WorkBuddyModel } from "../../workbuddy/models.ts";
 import { TokenRhythmNoBalanceError } from "../../tokenrhythm/transport.ts";
-import { byOrder, classifyUpstreamError, describeUpstreamError, isDegradableUpstreamError, isNoBalanceFailure, networkDetailOf, selectProvider } from "../provider-selection.ts";
+import { byOrder, classifyUpstreamError, describeUpstreamError, isDegradableUpstreamError, isNoBalanceFailure, isSameUpstreamResend, networkDetailOf, selectProvider } from "../provider-selection.ts";
 import { byWeight } from "../selection.ts";
 import {
   businessCodeOf,
@@ -22,6 +22,7 @@ import {
   withUpstreamAnswer,
   withUpstreamBody,
   withUpstreamStatus,
+  withGatewayOwnStatus,
 } from "../../upstream-status.ts";
 import { clearCooldown, setCooldown } from "../../cooldown.ts";
 import { scrubForClient, scrubForLog } from "../../log-scrub.ts";
@@ -302,6 +303,64 @@ function retryDelayMs(retries: number): number {
 export function transientRetryPlan(): { delaysMs: readonly number[]; repeatLastMs: number } {
   const delaysMs = TRANSIENT_RETRY_DELAYS_MS;
   return { delaysMs, repeatLastMs: delaysMs[delaysMs.length - 1] };
+}
+
+/**
+ * Resend the same request to the same upstream, as-is.
+ *
+ * The tool-call silence says "that one connection is stuck": the upstream is healthy
+ * (see ToolCallSilenceError in lib/router/deliver.ts). Switching upstream would
+ * replace the tool call that is already open, and switching account would move the
+ * session the client asked for — so the same request goes out again, to the same
+ * upstream, unchanged.
+ *
+ * The verdict is one place only: the classification (isSameUpstreamResend in
+ * lib/router/provider-selection.ts). The budget is the cell the account retries use
+ * (ROUTER_RETRY_BUDGET_MS): no new setting.
+ */
+export async function resendSameUpstream<T>(
+  what: string,
+  run: () => Promise<T>,
+  opts: RetryBudget = {},
+): Promise<T> {
+  const budgetMs = opts.budgetMs ?? attemptBudgetMs();
+  const clock = opts.now ?? Date.now;
+  const nap = opts.sleep ?? sleep;
+  // The deadline covers the upstream's own time too: one tool-opening silence can
+  // eat the whole budget
+  const deadline = clock() + budgetMs;
+  let retries = 0;
+  for (;;) {
+    try {
+      return await run();
+    } catch (e) {
+      if (!isSameUpstreamResend(e)) throw e;
+      const delay = retryDelayMs(retries);
+      if (clock() + delay > deadline) {
+        log.info(`[ROUTE] ${what} ${describedForLog(e)}, no time left for a ${delay}ms resend`);
+        throw asResendTimeout(e);
+      }
+      retries += 1;
+      log.info(
+        `[ROUTE] ${what} ${describedForLog(e)}, resending the same request in ${delay}ms (resend ${retries})`,
+      );
+      await nap(delay);
+    }
+  }
+}
+
+/**
+ * The budget is gone: the client gets a timeout it may retry.
+ *
+ * 504 is the gateway's own answer (the upstream never sent one), so it is marked as
+ * such — the classifier must not read it as something the upstream said (see
+ * lib/upstream-status.ts)
+ */
+function asResendTimeout(error: unknown): Error {
+  const err: Error & { status?: unknown } =
+    error instanceof Error ? error : new Error("the resend budget ran out");
+  if (typeof err.status !== "number") err.status = 504;
+  return withGatewayOwnStatus(err);
 }
 
 /**

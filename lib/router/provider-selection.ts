@@ -179,6 +179,7 @@ export type UpstreamFailureKind =
   | "request"
   | "unreachable"
   | "connection"
+  | "tool-silence"
   | "unknown";
 
 /** The words in the union, so a verdict key missing at runtime can be caught */
@@ -195,6 +196,7 @@ export const FAILURE_KINDS = [
   "request",
   "unreachable",
   "connection",
+  "tool-silence",
   "unknown",
 ] as const satisfies readonly UpstreamFailureKind[];
 
@@ -215,6 +217,7 @@ export const CALLER_RESEND_BY_KIND: Record<UpstreamFailureKind, boolean> = {
   connection: true,
   timeout: true,
   "rate-limit": true,
+  "tool-silence": true,
   refused: false,
   credential: false,
   quota: false,
@@ -339,6 +342,19 @@ export function isDegradableUpstreamError(error: unknown): boolean {
 }
 
 /**
+ * Should this failure be resent to the same upstream, as-is?
+ *
+ * One place decides: the classification. The tool-call silence is the only failure
+ * that gets this treatment — the upstream is healthy, that one connection is stuck,
+ * so the same request goes out again on the same upstream (switching upstream would
+ * replace the tool call that is already open)
+ */
+export function isSameUpstreamResend(error: unknown): boolean {
+  const failure = classifyUpstreamError(error);
+  return failure.kind === "tool-silence" && failure.retrySameAccountNow;
+}
+
+/**
  * Is this failure "the account has no money left"?
  *
  * That is the hook of expiry_first: the account whose balance runs out first
@@ -372,6 +388,18 @@ export function classifyUpstreamError(error: unknown): UpstreamFailure {
   // never sent one. The 429 the client finally sees is the gateway's own
   // answer, not the upstream's.
   if (isQueued(error)) return classifiedFailure("queued", null, true, false);
+  // The upstream opened a tool call and then went quiet before the arguments came.
+  //
+  // The upstream is healthy there — what is stuck is that one connection. So it is
+  // not degradable (another upstream would replace the tool call that is already
+  // open) but it is worth retrying right now: the same request on the same upstream
+  // usually goes through. No status either: the upstream never sent one.
+  //
+  // 外面看不到这个 degradable：重发那一层（resendSameUpstream）把预算用完的它换成
+  // 504 的超时，那时这一轮的总时限也到了，不会再去换目标。所以「绝不换上游」在真实
+  // 链路上是靠预算限住的，degradable 这一格是契约的一部分（别的调用点抛到外层时的
+  // 判决），用例在分类那一节钉住它的值。
+  if (isToolCallSilence(error)) return classifiedFailure("tool-silence", null, false, true);
   // The platform's own code says more than the status does.
   const code = businessCodeOf(error);
   // 「这个免费模型被限流」：换账号没用（限的是模型），也不该把整个账号下线
@@ -491,6 +519,18 @@ function isQueued(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const name = String((error as { name?: unknown }).name ?? "");
   return name === "QueuedError";
+}
+
+/**
+ * The upstream opened a tool call and went quiet before the arguments arrived.
+ *
+ * The name is the discriminator (see ToolCallSilenceError in
+ * lib/router/deliver.ts): the delivery layer says which kind of silence this is,
+ * the routing layer decides what to do with it
+ */
+function isToolCallSilence(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  return String((error as { name?: unknown }).name ?? "") === "ToolCallSilenceError";
 }
 
 /**
