@@ -972,8 +972,11 @@ export type ConfigItem = Message<"agentfacade.admin.v1.ConfigItem"> & {
   unit: ConfigUnit;
 
   /**
-   * 数值的上下界，只有有界的整数才有。没有界时 has_min / has_max 为假，
+   * 数值的上下界，只有有界的项才有。没有界时 has_min / has_max 为假，
    * 此时 min_value / max_value 无意义 —— 别把 0 当成「下界是 0」。
+   *
+   * 单位与 value 相同（也就是 unit 说的那个传输单位）。前端自己换算成显示单位
+   * 再比：ROUTER_STREAM_IDLE_MS 的 600000 毫秒在面板上是 600 秒的输入框上限。
    *
    * @generated from field: bool has_min = 13;
    */
