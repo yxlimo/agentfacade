@@ -25,7 +25,7 @@ import {
   healthSnapshot,
   snapshotEntry,
 } from "../admin/upstreams.ts";
-import { sendError } from "./deliver.ts";
+import { markTerminalError, sendError } from "./deliver.ts";
 import { handle } from "./handle.ts";
 import { listCooldowns, type CooldownRow } from "../cooldown.ts";
 import { serveModels } from "./catalog-routes.ts";
@@ -74,6 +74,7 @@ app.use(async (ctx, next) => {
 // key should not cost a megabyte of parsing.
 const requireKey: Koa.Middleware = async (ctx, next) => {
   if (!authenticate(ctx.headers as Record<string, unknown>, keys)) {
+    markTerminalError(ctx);
     ctx.status = 401;
     ctx.body = { error: { type: "authentication_error", message: "invalid api key" } };
     return;

@@ -13,6 +13,8 @@
 //   6 ClientGoneError（499）→ 没有这个头
 //   7 调用方显式传同名头 → 以调用方为准（大小写两种写法）
 //   8 分类的每个 kind 都有重发判据，类型与运行时都对齐
+//   9 手写错误响应也带 x-should-retry: false（真 Koa app）：
+//     未知模型 404、无效 api key 401、目录 400/404、头模板取不到会话 400
 //
 // 判据只有一份：classifyUpstreamError(e).resendable。它问的是「调用方要不要重发
 // 整个请求」，与 retryable（路由器现在要不要换账号再试）不是同一个问题。opencode
@@ -29,6 +31,7 @@ process.env.FACADE_DATA_DIR = tmp;
 process.env.ROUTER_RETRY_BUDGET_MS = "50";
 process.env.ROUTER_FIRST_FRAME_MS = "60_000";
 process.env.ROUTER_STREAM_IDLE_MS = "150";
+process.env.REQUIRE_API_KEY = "true";
 
 const { AuthError } = await import("../lib/credential.ts");
 const { createOpenPlatform, syncPlatformModels } = await import("../lib/open-platforms.ts");
@@ -37,6 +40,8 @@ const { writeOpenPlatformKey } = await import("../lib/open-platform-credentials.
 const { ClientGoneError, StreamIdleError, sendError } = await import("../lib/router/deliver.ts");
 const { classifyUpstreamError, FAILURE_KINDS, RESENDABLE_BY_KIND } = await import("../lib/router/provider-selection.ts");
 const { handle } = await import("../lib/router/handle.ts");
+const { loadKeys } = await import("../lib/api-keys.ts");
+const { app } = await import("../lib/router/app.ts");
 const { closeStore } = await import("../lib/store.ts");
 
 let pass = 0;
@@ -50,6 +55,22 @@ function check(name: string, ok: boolean, detail = ""): void {
     console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ""}`);
   }
 }
+
+// 真 Koa app：鉴权、目录、根路由都走用户真正打到的那条链路
+const appServer = http.createServer(app.callback());
+await new Promise<void>((resolve) => appServer.listen(0, "127.0.0.1", resolve));
+const appPort = (appServer.address() as { port: number }).port;
+const apiKey = Object.values(loadKeys())[0] ?? "";
+// 目录 404 要在任何模型发布之前打：一旦建了假平台，根路由就有清单了
+const bareCatalog = await fetch(`http://127.0.0.1:${appPort}/v1/models`, {
+  headers: { authorization: `Bearer ${apiKey}` },
+});
+const bareBody = await bareCatalog.text();
+check(
+  "目录 404（没有发布模型）：x-should-retry: false",
+  bareCatalog.status === 404 && bareCatalog.headers.get("x-should-retry") === "false",
+  `${bareCatalog.status} ${bareBody.slice(0, 200)}`,
+);
 
 // 假上游：三种失败各走一条路径，按 x-scenario 选择
 const upstream = http.createServer((req, res) => {
@@ -101,12 +122,14 @@ const scenarios: Record<string, string> = {
   auth: "retry-header-auth",
   timeout: "retry-header-timeout",
   "rate-limit": "retry-header-rate-limit",
+  inject: "retry-header-inject",
 };
 for (const [scenario, platform] of Object.entries(scenarios)) {
   const made = createOpenPlatform({
     id: platform,
     label: `Retry Header Fake ${scenario}`,
     baseUrl: `http://127.0.0.1:${upstreamPort}/v1`,
+    headers: scenario === "inject" ? [{ name: "x-facade-session", value: "{session-id}" }] : [],
   });
   check(`假开放平台 ${scenario} 建好了`, made.ok === true, made.message);
   const model = `retry-header-${scenario}-model`;
@@ -224,6 +247,51 @@ check("鉴权失败：x-should-retry: false", auth.retryHeader === "false", `${a
 check("客户端走了：499 且没有这个头", gone.status === 499 && gone.retryHeader === undefined, `${gone.status} ${String(gone.retryHeader)}`);
 check("调用方显式 false 不被覆盖", override.retryHeader === "false", String(override.retryHeader));
 check("调用方大写名字也不被覆盖", overrideUpper.retryHeader === "false", String(overrideUpper.retryHeader));
+
+const appUrl = `http://127.0.0.1:${appPort}`;
+const authed = { authorization: `Bearer ${apiKey}`, "content-type": "application/json" };
+const postJson = (path: string, model: string) =>
+  fetch(`${appUrl}${path}`, {
+    method: "POST",
+    headers: authed,
+    body: JSON.stringify({ model, messages: [{ role: "user", content: "hello" }] }),
+  });
+
+const badDialect = await fetch(`${appUrl}/v1/models?dialect=bogus`, { headers: authed });
+const badDialectBody = await badDialect.text();
+check(
+  "目录 400（方言不认识）：x-should-retry: false",
+  badDialect.status === 400 && badDialect.headers.get("x-should-retry") === "false",
+  `${badDialect.status} ${badDialectBody.slice(0, 200)}`,
+);
+
+const badKey = await fetch(`${appUrl}/v1/messages`, {
+  method: "POST",
+  headers: { authorization: "Bearer sk-TESTONLY-wrong-key", "content-type": "application/json" }, // privacy:allow — 编造的样例
+  body: JSON.stringify({ model: "retry-header-server-model", messages: [{ role: "user", content: "hello" }] }),
+});
+const badKeyBody = await badKey.text();
+check(
+  "无效 api key 401：x-should-retry: false",
+  badKey.status === 401 && badKey.headers.get("x-should-retry") === "false",
+  `${badKey.status} ${badKeyBody.slice(0, 200)}`,
+);
+
+const noModel = await postJson("/v1/messages", "no-such-model-xyz");
+const noModelBody = await noModel.text();
+check(
+  "未知模型 404：x-should-retry: false",
+  noModel.status === 404 && noModel.headers.get("x-should-retry") === "false",
+  `${noModel.status} ${noModelBody.slice(0, 200)}`,
+);
+
+const noSession = await postJson("/retry-header-inject/v1/messages", "retry-header-inject-model");
+const noSessionBody = await noSession.text();
+check(
+  "注入头取不到会话 400：x-should-retry: false",
+  noSession.status === 400 && noSession.headers.get("x-should-retry") === "false",
+  `${noSession.status} ${noSessionBody.slice(0, 200)}`,
+);
 const idleFailure = classifyUpstreamError(new StreamIdleError(150, "model=fake", "mid-stream"));
 const limitedFailure = classifyUpstreamError(new AuthError("rate limited", "", 429));
 check(
@@ -266,8 +334,10 @@ check(
 
 upstream.closeAllConnections?.();
 route.closeAllConnections?.();
+appServer.closeAllConnections?.();
 await new Promise<void>((resolve) => upstream.close(() => resolve()));
 await new Promise<void>((resolve) => route.close(() => resolve()));
+await new Promise<void>((resolve) => appServer.close(() => resolve()));
 closeStore();
 fs.rmSync(tmp, { recursive: true, force: true });
 

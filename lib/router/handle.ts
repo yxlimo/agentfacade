@@ -43,7 +43,7 @@ import { platformAvailabilities, type PlatformAvailability, type PlatformState }
 import { noteUpstreamFailure } from "../upstream-failures.ts";
 import { checkBreaker, noteBreakerOutcome, type BreakerVerdict } from "../upstream-breaker.ts";
 import { cooldownStamp } from "./account-cooldown.ts";
-import { ClientGoneError, sendError, withRetryAfter } from "./deliver.ts";
+import { ClientGoneError, markTerminalError, sendError, withRetryAfter } from "./deliver.ts";
 
 const TOKENRHYTHM_MAX_ATTEMPTS = configNumber("TOKENRHYTHM_MAX_ATTEMPTS", 3);
 // 上游排队时等多久（毫秒）：上游自己说了秒数就用它的，没说就用这个。等几次不是
@@ -584,6 +584,7 @@ export async function handle(
  * 模型」会去改模型名，而模型名是对的。
  */
 function unknownModel(ctx: Koa.Context, wanted: string): void {
+  markTerminalError(ctx);
   ctx.status = 404;
   ctx.body = {
     error: { type: "invalid_request_error", message: `unknown model "${wanted}"` },
@@ -627,6 +628,7 @@ async function callUpstream(
       body,
     );
     if (!injected.ok) {
+      markTerminalError(ctx);
       ctx.status = 400;
       ctx.body = { error: { type: "invalid_request_error", message: injected.message } };
       return;

@@ -2083,6 +2083,19 @@ function retryAfterHeaders(e: unknown): Record<string, string> {
 }
 
 /**
+ * Mark a hand-written failure as terminal for clients that read x-should-retry
+ *
+ * These answers are produced before any upstream round trip: a bad key, a model
+ * that is not published, a malformed catalog request or an unrenderable header
+ * template. Repeating the same request cannot turn any of them into a success,
+ * so the client must not spend another attempt on it. sendError decides the
+ * same question from the failure classification and owns that path alone
+ */
+export function markTerminalError(ctx: Koa.Context): void {
+  ctx.set("x-should-retry", "false");
+}
+
+/**
  * Write a failure out.
  *
  * `headers` is for the failures that carry something the client acts on — a
