@@ -554,12 +554,10 @@ function idleErrorRetryableEnabled(): boolean {
  * Only mid-stream silence is rewritten: a first-frame timeout happens before
  * headers are out, so the caller can still switch targets instead
  *
- * The tool-opening timeout is in the same boat as the first-frame one: it fires
- * inside the content gate, before the commit point, so it is thrown out and the
- * routing layer switches targets — it never becomes an error frame. Rewriting it
- * as a retryable mid-stream timeout would be wrong twice over: the client never
- * sees that frame (nothing was sent yet), and the sentence would claim a
- * mid-stream silence that did not happen.
+ * The tool-call silence is not rewritten either: it carries its own error type
+ * (`ToolCallSilenceError`), and the rewrite is for the mid-stream silence only.
+ * The client never saw those frames (nothing was sent yet), so the rewritten
+ * sentence would describe a silence the client never ran into.
  */
 function retryableIdleMessage(e: unknown): string | null {
   if (!(e instanceof StreamIdleError) || e.phase !== "mid-stream") return null;
@@ -784,27 +782,31 @@ function isHeartbeatOnly(bytes: Uint8Array): boolean {
 }
 
 /**
- * 这次安静是等第一帧、流中途，还是工具开局之后没等到参数。
+/**
+ * Which silence this is: waiting for the first frame, or the stream going quiet
+ * mid-answer.
  *
- * 三种该做的事不一样，句子也得说清是哪一种：首帧超时与工具开局超时都发生在提交
- * 点之前（头还没发，路由层还能换目标），中途超时发生在头已发出去之后（只能给
- * 客户端写一条 error 帧）。
+ * The two are handled differently: the first-frame timeout happens before the
+ * commit point (headers not out yet, the routing layer can still switch
+ * targets), the mid-stream timeout happens after them (only an error frame can
+ * reach the client).
+ *
+ * A tool call that opened but never got its arguments is not a phase: it has
+ * its own error type (`ToolCallSilenceError`), because the upstream is healthy
+ * there — what is stuck is that one connection.
  */
-export type StreamPhase = "first-frame" | "mid-stream" | "tool-opening";
+export type StreamPhase = "first-frame" | "mid-stream";
 
 /**
- * 这一次的安静该怎么说：三种超时三句话。
+ * How this silence is put into words: two kinds, two sentences.
  *
- * 分开写是因为这三件事该做的事不一样：等第一帧等不到、工具开了头等不到参数，都是
- * 提交点之前的失败（路由层还能换目标）；流中途停住是头已发出去之后的失败（只能给
- * 客户端写一条 error 帧）。日志与客户端文案都要能分辨是哪一种。
+ * The tool-call silence borrows the mid-stream one: the client does not need
+ * to know whether the silence came in the middle of an answer or at the start
+ * of a tool call. The log is where the two are told apart.
  */
 function idleSentence(idleMs: number, label: string, phase: StreamPhase): string {
   if (phase === "first-frame") {
     return `upstream sent nothing for ${idleSpan(idleMs)} waiting for the first frame (${label})`;
-  }
-  if (phase === "tool-opening") {
-    return `upstream sent nothing for ${idleSpan(idleMs)} after the tool opening frame (${label})`;
   }
   return `upstream sent nothing for ${idleSpan(idleMs)} mid-stream (${label})`;
 }
@@ -815,9 +817,9 @@ function idleSentence(idleMs: number, label: string, phase: StreamPhase): string
  * `name` 是 `TimeoutError`：`classifyUpstreamError` 认这个名字，日志里因此是
  * timeout 而不是 unknown，策略也照「上游太慢」处理（换一个账号也许答得出来）。
  *
- * `message` 是人话：它是客户端唯一能看到的那一句，所以要说清是等第一帧等到
- * 了上限，还是流开到一半停住了，还是工具开了个头就没了参数 —— 那三件事该做
- * 的事不一样。
+ * `message` is human words: it is the one sentence the client can see, so it
+ * has to say whether the first frame never came or the stream went quiet
+ * mid-answer.
  */
 export class StreamIdleError extends Error {
   readonly idleMs: number;
@@ -830,6 +832,34 @@ export class StreamIdleError extends Error {
     this.idleMs = idleMs;
     this.label = label;
     this.phase = phase;
+  }
+}
+
+/**
+ * The upstream opened a tool call and then went quiet: the tool's name arrived,
+ * its arguments did not.
+ *
+ * It is deliberately not a `StreamIdleError`: the upstream is healthy there —
+ * what is stuck is that one connection. Whether to retry it or to move to
+ * another upstream is the routing layer's call; the delivery layer only says
+ * which kind of silence this is.
+ *
+ * `name` is the discriminator (`ToolCallSilenceError`), so the routing layer
+ * can tell the two apart without reading the message.
+ *
+ * The sentence is the mid-stream one: the client does not need to know whether
+ * the silence came in the middle of an answer or at the start of a tool call.
+ * The log is where the two are told apart.
+ */
+export class ToolCallSilenceError extends Error {
+  readonly idleMs: number;
+  readonly label: string;
+
+  constructor(idleMs: number, label: string) {
+    super(idleSentence(idleMs, label, "mid-stream"));
+    this.name = "ToolCallSilenceError";
+    this.idleMs = idleMs;
+    this.label = label;
   }
 }
 
@@ -1300,8 +1330,8 @@ interface ToolOpeningGate {
   remainingMs(): number | null;
   /** 看一帧：它是不是工具开局帧？是的话从这一刻起开始计时。 */
   observe(json: Json): void;
-  /** 到点了：这个错（与「上游安静」同一类，但说得清是哪一种）。 */
-  timeoutError(): StreamIdleError;
+  /** The timeout: this error (the tool opened, the arguments did not come). */
+  timeoutError(): ToolCallSilenceError;
 }
 
 function toolOpeningGate(dialect: UpstreamDialect, label: string): ToolOpeningGate {
@@ -1318,7 +1348,12 @@ function toolOpeningGate(dialect: UpstreamDialect, label: string): ToolOpeningGa
       if (!isToolOpeningFrame(json, dialect)) return;
       deadline = Date.now() + ms;
     },
-    timeoutError: () => new StreamIdleError(ms, label, "tool-opening"),
+    timeoutError: () => {
+      // The log is the only place that tells the two silences apart: the client
+      // gets the same sentence as a mid-stream silence.
+      log.warn(`[DELIVER] tool_call 静默 ${idleSpan(ms)}：上游只发了工具的名字，参数还没来（${label}）`);
+      return new ToolCallSilenceError(ms, label);
+    },
   };
 }
 
@@ -1380,10 +1415,12 @@ function replayHeld(held: Uint8Array[], reader: ReadableStreamDefaultReader<Uint
  * 缓冲有上限：字节数或帧数超了就无条件提交，按今天的自由流继续 —— 慢流不该被
  * 整条扣住。
  *
- * 工具开局帧（工具的名字来了、参数还没来）按判据不算内容，所以它一定被扣在这里 ——
- * 从它到达那一刻起，上游可能一声不吭。ROUTER_TOOL_OPENING_MS 量的是「开局之后等
- * 参数等了多久」：键开着且大于 0 时，到点就在这里失败（提交点之前，路由层还能换
- * 目标）；键是 0 时沿用中途那个窗口，也就是今天的行为。
+ * A tool-opening frame (the tool's name arrived, its arguments did not) is not
+ * content by the criterion, so it is held here — from the moment it arrives the
+ * upstream may go quiet. ROUTER_TOOL_OPENING_MS measures how long to wait for
+ * the arguments: with the key on and above 0 the failure happens here (before
+ * the commit point, the client has zero bytes); with the key at 0 the
+ * mid-stream window applies, which is today's behaviour.
  */
 async function gateUntilContent(
   body: ReadableStream<Uint8Array>,
@@ -1461,8 +1498,9 @@ async function gateUntilContent(
  * 把已经解析好的帧扣在手里，直到出现第一块对用户可见的内容。
  *
  * 与 gateUntilContent 同语义：内容一到就提交，之前上游失败或静默就原样抛出。
- * 工具开局之后的上限也在这里（见 gateUntilContent 那段注释）：键开着且大于 0
- * 时，开局帧之后等不到参数就在这里失败 —— 提交点之前，路由层还能换目标。
+ * The tool-opening limit is here too (see the comment in gateUntilContent): with
+ * the key on and above 0, an opening frame that never gets its arguments fails
+ * here — before the commit point, the client has zero bytes.
  */
 async function gateChunksUntilContent(iterator: AsyncIterator<Json>, label: string): Promise<Json[]> {
   const held: Json[] = [];
