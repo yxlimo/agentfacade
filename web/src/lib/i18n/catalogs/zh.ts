@@ -577,6 +577,10 @@ export const zh = {
   'models.targetOrderLabel': '目标顺序',
   'models.targetHeading': '目标 {{index}}',
   'models.targetWeight': '权重 {{weight}}',
+  'models.weightLabel': '权重',
+  'models.weightHint':
+    '权重是份额，比重按比例分会话：7 和 3 就是七三分，改它不用动顺序',
+  'models.weightInvalid': '只填大于 0 的整数',
   'models.removeTarget': '删除目标 {{index}}',
   'models.groupColumn': '平台组',
   'models.modelIdColumn': '平台模型 id',

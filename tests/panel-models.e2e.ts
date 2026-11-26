@@ -111,6 +111,26 @@ async function savedOverride(
   return (saved.overrides ?? []).find((item) => item.id === modelId);
 }
 
+/** 回查服务端存下来的那个主路由模型（targets 按权重从大到小回）。 */
+async function storedModel(id: string): Promise<{
+  strategy?: string;
+  targets: Array<{ groupName?: string; upstreamModel?: string; weight?: number }>;
+}> {
+  const list = await adminRpc<{
+    models?: Array<{
+      id: string;
+      strategy?: string;
+      targets?: Array<{
+        groupName?: string;
+        upstreamModel?: string;
+        weight?: number;
+      }>;
+    }>;
+  }>('ListPublishedModels', {});
+  const found = (list.models ?? []).find((model) => model.id === id);
+  return { strategy: found?.strategy, targets: found?.targets ?? [] };
+}
+
 test('自定义模型（目录空）：一个下拉管 thinking，三档逐字；选不支持的档位整块不摆；档位可选却没勾时挡住并当场说清', async ({
   app,
   screen,
@@ -494,6 +514,115 @@ test('主路由模型：策略选按会话负载均衡，列表徽章、刷新�
     );
     await browser.keyboard.press('Escape');
     await expect(again).toBeHidden();
+  } finally {
+    if (saved) {
+      await adminRpc('DeletePublishedModel', { id: modelId }).catch(() => {});
+    }
+    await dropPlatform(platform).catch(() => {});
+  }
+});
+
+test('主路由模型：balance 下手填权重 7 / 3 存住，切回依次回退按位次推导成 2 / 1', async ({
+  app,
+  screen,
+  browser,
+}) => {
+  const platform = 'e2e-weight-balance';
+  const label = 'E2E 权重站';
+  const modelId = 'e2e-weight-model';
+  let saved = false;
+  try {
+    // 开放平台、没有模型目录：平台模型 id 是手填的输入框。
+    await seedOpenPlatform(platform, label);
+
+    await app.open();
+    await login(screen);
+    await screen.getByRole('link', { name: '主路由模型' }).click();
+    await expect(screen.getByRole('heading', { name: '主路由模型' })).toBeVisible();
+
+    // 先建一条两目标的模型（默认策略是单一目标）。
+    await screen.getByRole('button', { name: '新增' }).click();
+    const create = screen.getByRole('dialog', { name: '新增主路由模型' });
+    await expect(create).toBeVisible();
+    await create.getByLabel('对外 id').fill(modelId);
+    await create.getByRole('tab', { name: /平台目标/ }).click();
+
+    await create.getByLabel('平台组').click();
+    await screen.getByRole('option', { name: /E2E 权重站/ }).click();
+    await create.getByRole('textbox', { name: '平台模型 id' }).fill('fake-model-one');
+
+    await create.getByRole('button', { name: '加一个目标' }).click();
+    await create.getByLabel('平台组').nth(1).click();
+    await screen.getByRole('option', { name: /E2E 权重站/ }).click();
+    await create
+      .getByRole('textbox', { name: '平台模型 id' })
+      .nth(1)
+      .fill('fake-model-two');
+
+    // 换成「按会话负载均衡」：那里权重是份额，两行各有一格手填。
+    await create.getByRole('tab', { name: '基本' }).click();
+    await pickOption(
+      screen,
+      create.getByRole('combobox', { name: '策略' }),
+      '按会话负载均衡',
+    );
+    await create.getByRole('tab', { name: /平台目标/ }).click();
+
+    const weights = create.getByRole('spinbutton', { name: '权重' });
+    await expect(weights).toHaveCount(2);
+    // 切到 balance 的那一刻草稿被填成 2、1 —— 不是空，也不是 0。
+    await expect(weights.nth(0)).toHaveValue('2');
+    await expect(weights.nth(1)).toHaveValue('1');
+
+    // ── e：填 7 / 3 → 保存 → 刷新 → 重开还是 7 / 3（走真后端，不是 mock） ──
+    await weights.nth(0).fill('7');
+    await weights.nth(1).fill('3');
+    await create.getByRole('button', { name: '保存' }).click();
+    await expect(create).toBeHidden();
+    saved = true;
+
+    const stored = await storedModel(modelId);
+    expect(stored.strategy).toBe('balance');
+    expect(stored.targets.map((target) => [target.upstreamModel, target.weight])).toEqual([
+      ['fake-model-one', 7],
+      ['fake-model-two', 3],
+    ]);
+
+    // 整页刷新：权重是从库里读回来的，不是只活在这一次渲染里。
+    await browser.goto('/admin/models');
+    await expect(screen.getByRole('heading', { name: '主路由模型' })).toBeVisible();
+    const row = rowOf(screen, modelId);
+    await expect(row).toBeVisible();
+    await row.getByRole('button', { name: '编辑' }).click();
+    const edit = screen.getByRole('dialog', { name: '编辑主路由模型' });
+    await expect(edit).toBeVisible();
+    await edit.getByRole('tab', { name: /平台目标/ }).click();
+    await expect(edit.getByRole('spinbutton', { name: '权重' }).nth(0)).toHaveValue('7');
+    await expect(edit.getByRole('spinbutton', { name: '权重' }).nth(1)).toHaveValue('3');
+
+    // ── f：切回依次回退 → 权重回到位次推导（2 / 1），顺序没变 ──
+    await edit.getByRole('tab', { name: '基本' }).click();
+    await pickOption(
+      screen,
+      edit.getByRole('combobox', { name: '策略' }),
+      '依次回退',
+    );
+    await edit.getByRole('tab', { name: /平台目标/ }).click();
+    // 输入框让位给只读的位次权重。
+    await expect(edit.getByRole('spinbutton', { name: '权重' })).toHaveCount(0);
+    await expect(edit.getByText('权重 2')).toBeVisible();
+    await expect(edit.getByText('权重 1')).toBeVisible();
+
+    await edit.getByRole('button', { name: '保存' }).click();
+    await expect(edit).toBeHidden();
+
+    const after = await storedModel(modelId);
+    expect(after.strategy).toBe('fallback');
+    // 份额不跨策略留着：同一批目标、同样的先后，权重是位次推导的 2 / 1。
+    expect(after.targets.map((target) => [target.upstreamModel, target.weight])).toEqual([
+      ['fake-model-one', 2],
+      ['fake-model-two', 1],
+    ]);
   } finally {
     if (saved) {
       await adminRpc('DeletePublishedModel', { id: modelId }).catch(() => {});

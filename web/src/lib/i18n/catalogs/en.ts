@@ -591,6 +591,10 @@ export const en: Record<keyof typeof zh, string> = {
   'models.targetOrderLabel': 'Target order',
   'models.targetHeading': 'Target {{index}}',
   'models.targetWeight': 'Weight {{weight}}',
+  'models.weightLabel': 'Weight',
+  'models.weightHint':
+    'Weight is a share: sessions split in proportion, so 7 and 3 means seven to three. Changing it needs no reordering',
+  'models.weightInvalid': 'Enter an integer greater than 0',
   'models.removeTarget': 'Delete target {{index}}',
   'models.groupColumn': 'Platform group',
   'models.modelIdColumn': 'Platform model id',
