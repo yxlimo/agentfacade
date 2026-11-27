@@ -122,7 +122,7 @@ function ensureTable(): void {
  */
 function addMissingColumns(): void {
   const have = new Set(
-    (store().prepare("PRAGMA table_info(usage_event)").all() as any[]).map((c) => String(c.name)),
+    (store().prepare("PRAGMA table_info(usage_event)").all() as { name?: unknown }[]).map((c) => String(c.name)),
   );
   for (const [name, type] of [
     ["session_id", "TEXT NOT NULL DEFAULT ''"],
@@ -199,7 +199,7 @@ export interface UsageFilter {
 export function listUsage(filter: UsageFilter = {}): UsageEvent[] {
   ensureTable();
   const where: string[] = [];
-  const args: any[] = [];
+  const args: (string | number)[] = [];
   if (filter.upstreamId) {
     where.push("upstream_id = ?");
     args.push(filter.upstreamId);
@@ -229,7 +229,7 @@ export function listUsage(filter: UsageFilter = {}): UsageEvent[] {
     "session_id, parent_session_id, session_name, agent_name, client, ok, status, prompt_tokens, " +
     "completion_tokens, reasoning_tokens, latency_ms, error " +
     `FROM usage_event${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY id DESC`;
-  const rows = store().prepare(sql).all(...args) as any[];
+  const rows = store().prepare(sql).all(...args) as Record<string, unknown>[];
   const capped = filter.limit && filter.limit > 0 ? rows.slice(0, filter.limit) : rows;
   return capped.map((r) => ({
     id: Number(r.id),
@@ -267,21 +267,34 @@ export function listUsage(filter: UsageFilter = {}): UsageEvent[] {
  * 少了这一步，MiniMax 的流式请求会记成 7 个输入令牌，而同一请求的非流式
  * 记成 204 —— 上游把输入拆成了两处报。
  */
-export function usageTotals(usage: any): TokenTotals {
+export function usageTotals(usage: unknown): TokenTotals {
   const empty = { promptTokens: 0, completionTokens: 0, reasoningTokens: 0 };
   if (!usage || typeof usage !== "object") return empty;
+  // Every vendor spells these differently and each may be absent, so the fields
+  // stay `unknown` here: num() is the only reader and it already treats a
+  // non-number as 0.
+  const u = usage as {
+    prompt_tokens?: unknown;
+    input_tokens?: unknown;
+    cache_read_input_tokens?: unknown;
+    cache_creation_input_tokens?: unknown;
+    completion_tokens?: unknown;
+    output_tokens?: unknown;
+    reasoning_tokens?: unknown;
+    completion_tokens_details?: { reasoning_tokens?: unknown };
+    output_tokens_details?: { thinking_tokens?: unknown };
+  };
   const promptTokens =
-    typeof usage.prompt_tokens === "number"
-      ? usage.prompt_tokens
-      : num(usage.input_tokens) +
-        num(usage.cache_read_input_tokens) +
-        num(usage.cache_creation_input_tokens);
-  const completionTokens =
-    typeof usage.completion_tokens === "number" ? usage.completion_tokens : num(usage.output_tokens);
+    typeof u.prompt_tokens === "number"
+      ? u.prompt_tokens
+      : num(u.input_tokens) +
+        num(u.cache_read_input_tokens) +
+        num(u.cache_creation_input_tokens);
+  const completionTokens = typeof u.completion_tokens === "number" ? u.completion_tokens : num(u.output_tokens);
   const reasoningTokens = num(
-    usage.completion_tokens_details?.reasoning_tokens ??
-      usage.output_tokens_details?.thinking_tokens ??
-      usage.reasoning_tokens,
+    u.completion_tokens_details?.reasoning_tokens ??
+      u.output_tokens_details?.thinking_tokens ??
+      u.reasoning_tokens,
   );
   return { promptTokens, completionTokens, reasoningTokens };
 }
