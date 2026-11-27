@@ -241,7 +241,6 @@ function legacySetting(key: string, fallback: string): string | null {
  * （各家的 quota-plugin.ts 里的 baseUrls）。认不出就是「没有额度」（未知）——
  * 那比把用户的地址改掉轻得多。
  */
-// pi-lens-ignore: hardcoded-url -- these are the vendor defaults a legacy plugin row is migrated to; the operator's own value wins whenever the old setting exists
 function legacyPluginBase(pluginId: string): string | null {
   switch (pluginId) {
     case "qiniu":
@@ -251,6 +250,7 @@ function legacyPluginBase(pluginId: string): string | null {
     case "sensenova-pools":
       return legacySetting("SENSENOVA_BASE", "https://token.sensenova.cn/v1");
     case "tokenrhythm-wallet": {
+      // pi-lens-ignore: hardcoded-url -- the vendor default a legacy wallet row is migrated to; the operator's own value wins whenever the old setting exists
       const apiBase = legacySetting("TOKENRHYTHM_API_BASE", "https://tokenrhythm.studio");
       return legacySetting("TOKENRHYTHM_INFER_BASE", `${apiBase ?? "https://tokenrhythm.studio"}/v1`);
     }
