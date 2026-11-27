@@ -27,7 +27,7 @@ export interface SessionKey {
   source: string;
 }
 
-/** The built-in headers, most specific first. */
+/** The built-in headers, most specific first; the gateway's own prefix header is last, a fallback only. */
 export const SESSION_HEADERS: readonly string[] = [
   "x-claude-code-session-id",
   "session-id",
@@ -35,6 +35,7 @@ export const SESSION_HEADERS: readonly string[] = [
   "x-session-id",
   "x-session-affinity",
   "x-client-request-id",
+  "agentfacade_session_id",
 ];
 
 /**

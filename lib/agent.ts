@@ -84,6 +84,8 @@ export interface SessionInfo {
   sessionId: string;
   /** 父会话 id。只有 opencode 的子代理有。 */
   parentSessionId: string;
+  /** 会话名（客户端带的名字：session_name，网关前缀头兜底）。认不出来就是空串。 */
+  sessionName: string;
   /**
    * 子代理的 agent 名（be-match、reviewer……）。
    *
@@ -106,6 +108,11 @@ export interface SessionInfo {
  *                                 语义相同，两边共用
  *   x-agent-name                  agent 名，中性，两边共用
  *   x-session-affinity / x-session-id   pi 自己的会话头
+ *   session_id                          OpenAI 风格的裸名拼法
+ *   parent_session_id                  父会话的裸名拼法
+ *   session_name                       会话名，OpenAI 风格的裸名拼法
+ *   agentfacade_session_id / agentfacade_parent_session_id /
+ *   agentfacade_session_name           网关自己的前缀头，只在裸名都没有时兜底
  *
  * 顺序有讲究：pi 的子代理上，pi-subagents 会把 `x-session-affinity` 改写成
  * **父**会话的 id（为了让请求继续命中父会话的提示缓存），所以子会话 id 必须
@@ -117,14 +124,23 @@ export function detectSession(headers: HeaderBag): SessionInfo {
     header(headers, "x-pi-session-id") ||
     header(headers, "x-session-id") ||
     header(headers, "x-session-affinity") ||
+    header(headers, "session_id") ||
+    header(headers, "agentfacade_session_id") ||
     "";
   const parentSessionId =
-    header(headers, "x-parent-session-id") || header(headers, "x-opencode-parent-session-id") || "";
+    header(headers, "x-parent-session-id") ||
+    header(headers, "x-opencode-parent-session-id") ||
+    header(headers, "parent_session_id") ||
+    header(headers, "agentfacade_parent_session_id") ||
+    "";
   // agent 名是子代理那侧给的（pi 的会话头扩展写这个头）。
   const agentName = header(headers, "x-agent-name") || "";
+  // 会话名是客户端带的（OpenAI 风格的裸名，网关前缀头兜底）。
+  const sessionName = header(headers, "session_name") || header(headers, "agentfacade_session_name") || "";
   return {
     sessionId: sessionId.slice(0, 128),
     parentSessionId: parentSessionId.slice(0, 128),
+    sessionName: sessionName.slice(0, 64),
     agentName: agentName.slice(0, 64),
   };
 }
@@ -150,6 +166,7 @@ export function detectSession(headers: HeaderBag): SessionInfo {
  *   connection、keep-alive、proxy-authorization、proxy-authenticate、te、
  *   trailer、transfer-encoding、upgrade
  *                              逐跳头，只管一条连接，不能跟着跨这一跳
+ *   agentfacade_*          网关自己加的内部头（会话兜底那批），不回传给上游
  */
 const GATEWAY_OWN_HEADERS = new Set([
   "authorization",
@@ -176,6 +193,8 @@ export function clientForwardHeaders(headers: HeaderBag): Record<string, string>
   for (const [name, value] of Object.entries(headers)) {
     const key = name.toLowerCase();
     if (GATEWAY_OWN_HEADERS.has(key)) continue;
+    // 网关自己加的 agentfacade_* 头是内部信息，不回传给上游。
+    if (key.startsWith("agentfacade_")) continue;
     const text = Array.isArray(value) ? value.join(", ") : value;
     if (!text) continue;
     out[key] = text.slice(0, MAX_HEADER_VALUE);
