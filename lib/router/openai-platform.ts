@@ -51,7 +51,6 @@ export async function openAiPlatformChat(
       "content-type": "application/json",
       Authorization: `Bearer ${platform.key}`,
       Accept: body.stream ? "text/event-stream" : "application/json",
-      "User-Agent": "Mozilla/5.0 (compatible; buddy-proxy)",
       ...extraHeaders,
     },
     body: JSON.stringify(body),

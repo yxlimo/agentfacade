@@ -311,7 +311,6 @@ export async function anthropicPlatformChat(
       "x-api-key": platform.key,
       "anthropic-version": ANTHROPIC_VERSION,
       Accept: body.stream ? "text/event-stream" : "application/json",
-      "User-Agent": "Mozilla/5.0 (compatible; buddy-proxy)",
     },
     body: JSON.stringify(body),
     ...(signal ? { signal } : {}),
