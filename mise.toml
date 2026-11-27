@@ -226,6 +226,10 @@ run = "node --experimental-strip-types test/stream-idle-check.ts"
 description = "Check that a quiet mid-stream answer resumes once and stays in one Anthropic block"
 run = "node --experimental-strip-types test/continue-on-idle-check.ts"
 
+[tasks."test:silence:e2e"]
+description = "The six shapes of a quiet upstream end to end: heartbeats are not progress, slow tool arguments are, the tool window, the same-upstream resend, the usage row"
+run = "node --experimental-strip-types test/silence-e2e-check.ts"
+
 
 [tasks."test:idle:retryable"]
 description = "Check that the idle-timeout error frame is byte-identical by default and retryable when the flag is on"
@@ -695,7 +699,7 @@ depends = ["test:router:session-balance", "test:selection", "test:policy", "test
 
 [tasks."check:deliver"]
 description = "Response delivery: streaming frames, backpressure, dialects, client-gone and log scrubbing (lib/router, lib/dialect, lib/log-scrub)"
-depends = ["test:deliver:frames", "test:deliver:backpressure", "test:peek:stream", "test:stream:idle", "test:continue:idle", "test:idle:retryable", "test:send-error:retry-header", "test:deliver:cut", "test:stream:limits", "test:empty-answer", "test:dialect:stream", "test:dialect:cache", "test:json:value", "test:effort", "test:client:gone", "test:log:scrub", "test:scrub:client"]
+depends = ["test:deliver:frames", "test:deliver:backpressure", "test:peek:stream", "test:stream:idle", "test:continue:idle", "test:silence:e2e", "test:idle:retryable", "test:send-error:retry-header", "test:deliver:cut", "test:stream:limits", "test:empty-answer", "test:dialect:stream", "test:dialect:cache", "test:json:value", "test:effort", "test:client:gone", "test:log:scrub", "test:scrub:client"]
 
 [tasks."check:kinds"]
 description = "The upstream kinds: simulated clients and open platforms (lib/kinds, lib/qoder, lib/workbuddy, lib/minimax, lib/zcode, lib/tokenrhythm, lib/intern-ai, lib/qiniu, lib/xinghuo, lib/sensenova)"

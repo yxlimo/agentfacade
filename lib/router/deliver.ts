@@ -879,7 +879,12 @@ function chunkIsProgress(bytes: Uint8Array, tracker: ToolCallTracker | null): bo
     } catch {
       return true;
     }
-    if (tracker.observe(json)) return true;
+    // 收全的工具参数算内容；只有名字、参数还在流的不算「能发给客户端」，
+    // 但它们同样是上游在说话 —— 工具那一侧有自己的窗口
+    // （ROUTER_TOOL_OPENING_MS，锚点是最后一个工具帧），这里只管这段安静够不够。
+    // 把参数碎片当成静默，量到的就成了整段工具调用的总时长，一条慢慢吐参数的长
+    // 工具调用会被这条通用窗口砍掉。
+    if (tracker.observe(json) || tracker.toolFrame) return true;
   }
   return false;
 }
