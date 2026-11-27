@@ -513,34 +513,7 @@ export { STREAM_IDLE_DEFAULT_MS };
 markHotSetting("ROUTER_FIRST_FRAME_MS");
 markHotSetting("ROUTER_STREAM_IDLE_MS");
 markHotSetting("ROUTER_IDLE_ERROR_RETRYABLE");
-markHotSetting("ROUTER_CONTINUE_ON_IDLE");
-markHotSetting("ROUTER_CONTINUE_MAX");
-// 工具开局那个上限也是热的：它在内容闸里每条请求读一次，面板改完下一条请求
-// 就是新的值（与 ROUTER_CONTINUE_MAX 同一套读法）。
 markHotSetting("ROUTER_TOOL_OPENING_MS");
-
-/** 续写上下文里已产出的文本最多带多少（字节）。超了取尾部：尾部才是断点。 */
-const CONTINUE_TEXT_MAX = 32 * 1024;
-
-/**
- * ROUTER_CONTINUE_MAX 的默认值与取值范围（0 等于关闭）。
- *
- * 范围要导出：面板的输入框边界、setConfigValue 的提示语、这里的夹取，三处读同一份。
- * 各写一份字面量的话，总有一天面板写着 0–5 而实际夹到 0–3。
- */
-export const CONTINUE_MAX_DEFAULT = 2;
-export const CONTINUE_MAX_MIN = 0;
-export const CONTINUE_MAX_MAX = 5;
-
-/**
- * 续写开关：默认关。与两个上限同一套读法，直接在答复里读，不走参数。
- *
- * 默认关是钉住的：生产上「静默就写 error 事件」是既有行为，续写是新能力，
- * 不打开就一个字节都不改。
- */
-function continueOnIdleEnabled(): boolean {
-  return configFlag("ROUTER_CONTINUE_ON_IDLE", false);
-}
 
 /**
  * Retryable idle errors are opt-in because they change bytes on the wire; with
@@ -561,7 +534,7 @@ function idleErrorRetryableEnabled(): boolean {
  */
 function retryableIdleMessage(e: unknown): string | null {
   if (!(e instanceof StreamIdleError) || e.phase !== "mid-stream") return null;
-  if (!idleErrorRetryableEnabled() || continueOnIdleEnabled()) return null;
+  if (!idleErrorRetryableEnabled()) return null;
   const seconds = e.idleMs / 1000;
   return `upstream timed out after ${seconds}s mid-stream: no data received for ${seconds}s`;
 }
@@ -578,213 +551,14 @@ function openAIErrorFrame(e: unknown): string | null {
   return sseData({ error: { type: "server_error", code: "upstream_idle_timeout", message } });
 }
 
-let warnedIdleModeConflict = false;
-
-/**
- * The two switches are alternatives, not a hierarchy: when both are on the
- * stream resumes and the retryable failure shape is never used. One warning
- * is enough because this is a configuration mistake, not a per-request event
- */
-function noteIdleModeConflict(): void {
-  if (warnedIdleModeConflict) return;
-  if (!idleErrorRetryableEnabled() || !continueOnIdleEnabled()) return;
-  warnedIdleModeConflict = true;
-  log.warn("[DELIVER] ROUTER_CONTINUE_ON_IDLE 与 ROUTER_IDLE_ERROR_RETRYABLE 都开着，按续写处理");
-}
-
-/**
- * 续写次数：默认 2，范围 0–5。越界夹回范围并 warn 一行（0 等于关闭）。
- *
- * NaN 没有可判的语义，显式回落默认并 warn —— 不能让它变成「次数无限」。
- */
-function continueMax(): number {
-  const raw = configNumber("ROUTER_CONTINUE_MAX", CONTINUE_MAX_DEFAULT);
-  if (Number.isNaN(raw)) {
-    log.warn(`[DELIVER] 续写次数 ${raw} 不是有限数，已回落默认 ${CONTINUE_MAX_DEFAULT}`);
-    return CONTINUE_MAX_DEFAULT;
-  }
-  if (raw < CONTINUE_MAX_MIN || raw > CONTINUE_MAX_MAX) {
-    const clamped = Math.min(CONTINUE_MAX_MAX, Math.max(CONTINUE_MAX_MIN, raw));
-    log.warn(`[DELIVER] 续写次数 ${raw} 越界（${CONTINUE_MAX_MIN}-${CONTINUE_MAX_MAX}），已按 ${clamped} 生效`);
-    return clamped;
-  }
-  return raw;
-}
-
-/**
- * 一次答复里已经产出的东西。
- *
- * 只记长度与「在不在途」，不记正文内容（与日志同一规矩）。续写要靠它判断
- * 能不能接上：正文是断点，工具调用在途就拼不回来。
- */
-interface ContinueState {
-  /** 已写出去的正文（按上游方言累加）。 */
-  text: string;
-  /** 已写出去的推理（按上游方言累加）。 */
-  reasoning: string;
-  /** 有没有进行中的工具调用：有就不续写（半截 JSON 拼不回来）。 */
-  toolInFlight: boolean;
-  /** 已经用掉几次续写。 */
-  attempts: number;
-  /** 已经写给客户端多少字节（提交之后才有数）。 */
-  clientBytes: number;
-  /** 见过哪几类帧，按首次出现的顺序（正文/思考/工具名/参数/完成）。 */
-  frameKinds: string[];
-  /** 累积到的参数字节数。 */
-  argBytes: number;
-}
-
-/**
- * 续写要的「重发」能力：拿已产出的文本与推理，换一条新的上游流。
- *
- * 没传就没有续写能力 —— 调用方（只有开放平台那条路径）决定谁能续。
- */
-export type Reopen = (partial: { text: string; reasoning: string }) => Promise<ReadableStream<Uint8Array>>;
-
-/** 已产出的文本超了就取尾部：尾部才是断点，前面的已经写出去了。 */
-function tailText(text: string): string {
-  return text.length > CONTINUE_TEXT_MAX ? text.slice(text.length - CONTINUE_TEXT_MAX) : text;
-}
-
-/**
- * 为什么不能续写；能续写就返回 null。
- *
- * 每一条都是「少一条就按今天的行为失败」的判据：没有重发能力、开关没开、
- * 次数为 0、次数用完、工具调用在途。
- */
-function continueBlockedReason(state: ContinueState, reopen: Reopen | undefined): string | null {
-  if (!reopen) return "没有续写能力";
-  if (!continueOnIdleEnabled()) return "续写开关没开";
-  if (continueMax() <= 0) return "续写次数为 0";
-  if (state.attempts >= continueMax()) return "次数用完";
-  if (state.toolInFlight) return "工具调用在途";
-  return null;
-}
-/** 「再拿一条上游流」的结果：拿到下一条，或者不能续了（带上该收尾的错）。 */
-type ContinueOutcome =
-  | { kind: "stream"; stream: ReadableStream<Uint8Array> }
-  | { kind: "blocked"; error: unknown };
-
-/**
- * 「再拿一条上游流」这件事：能续就给出下一条（各自过同一道安静闸），
- * 不能续就给出该按哪个错收尾。
- *
- * 次数在这里加：加了才去问还能不能续，所以续写自己再失败时次数已经吃掉
- * 一次，上限兜住，不会无限续。续写请求自己没成（没发出去、被上游拒了）
- * 按那条错收尾，不再拿同一条请求重试。
- */
-async function continueWith(
-  state: ContinueState,
-  reopen: Reopen | undefined,
-  error: unknown,
-  label: string,
-  dialect: UpstreamDialect,
-): Promise<ContinueOutcome> {
-  const why = continueBlockedReason(state, reopen);
-  // `!reopen` 在判据里已经覆盖，这里再写一次是给类型收窄：走到下面调用
-  // reopen 时它一定在。
-  if (why || !reopen) {
-    // 不续写的时候一定要留一句为什么：从外面只看得见「客户端收到 error 事件」，
-    // 到底是开关没开、没重发能力、次数用完还是工具调用在途，只有这里知道。
-    log.warn(
-      `[DELIVER] 静默后不续写：${why ?? "没有重发能力"}（已产出 ${state.text.length} 字，已续 ${state.attempts} 次，` +
-        `已发给客户端 ${state.clientBytes} 字节，帧序 ${frameKindLine(state)}，参数累积 ${state.argBytes} 字节）`,
-    );
-    return { kind: "blocked", error };
-  }
-  state.attempts++;
-  log.warn(`[DELIVER] 流中途静默 ${idleSpan(idleMsOf(error))}，第 ${state.attempts} 次续写（已有 ${state.text.length} 字）`);
-  try {
-    const following = await reopen({ text: tailText(state.text), reasoning: tailText(state.reasoning) });
-    return { kind: "stream", stream: withStreamIdle(following, label, {}, dialect) };
-  } catch (e) {
-    return { kind: "blocked", error: e };
-  }
-}
-
-/** 帧的种类：日志里按首次出现的顺序记下来（最多六种）。 */
-const FRAME_KINDS = ["正文", "思考", "工具名", "参数", "完成"] as const;
-
-/**
- * 记下一帧是哪种：去重，按首次出现的顺序。
- *
- * 只有种类与顺序，不记内容 —— 这一层从不把正文写进日志。
- */
-function noteFrameKind(state: ContinueState, kind: (typeof FRAME_KINDS)[number]): void {
-  if (state.frameKinds.length >= FRAME_KINDS.length) return;
-  if (state.frameKinds.includes(kind)) return;
-  state.frameKinds.push(kind);
-}
-
-/** OpenAI 方言的一帧里产出了什么（正文、推理、工具调用在途）。 */
-function trackOpenAIChunk(chunk: Json, state: ContinueState): void {
-  const delta = (chunk as { choices?: Array<{ delta?: Json }> })?.choices?.[0]?.delta;
-  if (!delta || typeof delta !== "object") return;
-  const d = delta as Json;
-  if (typeof d.content === "string" && d.content) state.text += d.content;
-  const reasoning = typeof d.reasoning_content === "string" ? d.reasoning_content : d.reasoning;
-  if (typeof reasoning === "string" && reasoning) state.reasoning += reasoning;
-  if (Array.isArray(d.tool_calls) && d.tool_calls.length > 0) state.toolInFlight = true;
-  noteFrameKinds(chunk, state);
-}
-
-/**
- * 记下这一帧是哪种（正文/思考/工具名/参数/完成）与累积的参数字节。
- *
- * 与 trackOpenAIChunk 分开：帧序是给日志看的（两条投递路径都要记），而正文与工具
- * 在途只跟续写有关。
- */
-function noteFrameKinds(chunk: Json, state: ContinueState): void {
-  const delta = (chunk as { choices?: Array<{ delta?: Json }> })?.choices?.[0]?.delta;
-  if (delta && typeof delta === "object") {
-    const d = delta as Json;
-    if (typeof d.content === "string" && d.content) noteFrameKind(state, "正文");
-    const reasoning = typeof d.reasoning_content === "string" ? d.reasoning_content : d.reasoning;
-    if (typeof reasoning === "string" && reasoning) noteFrameKind(state, "思考");
-    if (Array.isArray(d.tool_calls)) {
-      for (const call of d.tool_calls) {
-        const fn = jsonObjectOf(jsonAt(call as JsonValue, "function"));
-        if (typeof fn?.name === "string" && fn.name) noteFrameKind(state, "工具名");
-        if (typeof fn?.arguments === "string" && fn.arguments) {
-          noteFrameKind(state, "参数");
-          state.argBytes += fn.arguments.length;
-        }
-      }
-    }
-  }
-  const finish = (chunk as { choices?: Array<{ finish_reason?: unknown }> })?.choices?.[0]?.finish_reason;
-  if (finish) noteFrameKind(state, "完成");
-}
-
-/**
- * 帧的种类顺序，写进日志给人看：正文/思考/工具名/参数/完成。
- */
-function frameKindLine(state: ContinueState): string {
-  return state.frameKinds.length > 0 ? state.frameKinds.join("/") : "无";
-}
 
 
-/** 一帧有多少字节（写给客户端的那些）。 */
-function frameBytes(chunk: string | Uint8Array): number {
-  return typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.length;
-}
-/** 一帧是不是「只带角色」的开场帧：续写的轮次不重发它（角色已经立过了）。 */
-function isRoleOnlyChunk(chunk: Json): boolean {
-  const delta = (chunk as { choices?: Array<{ delta?: Json }> })?.choices?.[0]?.delta;
-  if (!delta || typeof delta !== "object") return false;
-  const d = delta as Json;
-  if (d.role === undefined) return false;
-  return !d.content && !d.reasoning_content && !d.reasoning && !Array.isArray(d.tool_calls);
-}
+
 
 
 /** 「安静了多久」，写进句子给人看：一秒以内说毫秒，不然说秒。 */
 function idleSpan(idleMs: number): string {
   return idleMs < 1000 ? `${idleMs}ms` : `${Math.round(idleMs / 1000)}s`;
-}
-/** 出错时「静默了多久」：只有流安静那道闸给得出这个数，别的错没有。 */
-function idleMsOf(error: unknown): number {
-  return error instanceof StreamIdleError ? error.idleMs : 0;
 }
 
 /**
@@ -2103,40 +1877,6 @@ async function* watchFinish(
   }
 }
 
-/**
- * 把一条条上游流接成一个 OpenAI 帧的迭代：每条流出错就问「还能不能再来一条」。
- *
- * 续写把好几条流接成一条答复，转换器（openaiStreamToAnthropic）的内部状态
- * ——开场帧、内容块编号、收尾帧——必须跨流留住。每条流换一个转换器会重发
- * 开场帧、重发 content_block_start：块编号被顶掉，客户端按索引累积时前半截
- * 正文就没了。所以转换器只建一个，喂给它的是这个「一条接一条」的迭代。
- *
- * 每一段各自过安静闸（在调用方套好的 withStreamIdle 里）：哪一段静默就抛
- * 哪一段的错。不能续的时候把该收尾的错原样抛出去，由调用方按今天的方式收尾。
- */
-async function* chainedOpenAIChunks(
-  first: ReadableStream<Uint8Array>,
-  next: (error: unknown) => Promise<ContinueOutcome>,
-  signal: AbortSignal,
-  state: ContinueState,
-): AsyncGenerator<Json> {
-  let current: ReadableStream<Uint8Array> | null = first;
-  while (current) {
-    try {
-      for await (const chunk of readOpenAIChunks(current, signal)) {
-        trackOpenAIChunk(chunk, state);
-        yield chunk;
-      }
-      current = null;
-    } catch (e) {
-      const outcome = await next(e);
-      if (outcome.kind === "blocked") {
-        throw outcome.error;
-      }
-      current = outcome.stream;
-    }
-  }
-}
 
 
 /**
@@ -2160,10 +1900,8 @@ export async function deliverOpenAIStream(
   onFinish?: (finish: AnswerFinish) => void,
   onUsage?: (usage: Usage) => void,
   onFailure?: (error: unknown) => void,
-  reopen?: Reopen,
 ): Promise<void> {
   ctx.res.setHeader("x-request-id", rid("req_"));
-  noteIdleModeConflict();
   // 客户端走了的时候，这个信号让读上游的那个循环停下来。
   const abort = new AbortController();
   // **先**把「客户端走了」这件事听上，再去等上游的第一帧。
@@ -2207,43 +1945,20 @@ export async function deliverOpenAIStream(
   // 看门狗断开连接时（客户端不读了）也要停上游：它还在吐字就是在计费。
   onClientGone(ctx, upstream, abort);
   if (dialect === "openai") {
-    await pipeOpenAIChunks(upstream, ctx, onFinish, onUsage, model, onFailure, abort, reopen);
+    await pipeOpenAIChunks(upstream, ctx, onFinish, onUsage, model, onFailure, abort);
     return;
   }
-  // 续写：一条答复一个转换器，多轮上游流在它下游串起来（见 chainedOpenAIChunks）
-  // ——每条流换一个转换器会重发开场帧、重发 content_block_start，块编号被顶掉。
-  const continueState: ContinueState = {
-    text: "",
-    reasoning: "",
-    toolInFlight: false,
-    attempts: 0,
-    clientBytes: 0,
-    frameKinds: [],
-    argBytes: 0,
-  };
-  let current = upstream;
-  const nextStream = async (e: unknown): Promise<ContinueOutcome> => {
-    const outcome = await continueWith(continueState, reopen, e, `model=${model}`, "openai");
-    if (outcome.kind === "stream") {
-      current = outcome.stream;
-      // 新一段也要挂上「客户端走了就停」：看门狗认的是当前这一段。
-      onClientGone(ctx, current, abort);
-    }
-    return outcome;
-  };
   try {
     for await (const chunk of openaiStreamToAnthropic(
-      watchFinish(chainedOpenAIChunks(current, nextStream, abort.signal, continueState), onFinish, onUsage),
+      watchFinish(upstream, onFinish, onUsage),
       model,
     )) {
       if (!(await writeFrame(ctx, chunk))) {
         // 客户端走了：上游也别接着算（还在计费），这一条也不该记成成功。
-        await stopUpstream(current, abort);
+        await stopUpstream(upstream, abort);
         reportClientGone(ctx, onFailure);
         break;
       }
-      // 已经写给客户端多少字节：日志里要能看出「哪一帧先到了客户端」。
-      continueState.clientBytes += frameBytes(chunk);
     }
     // 上游安静的时候客户端断开：这条请求不算成功（客户端一个字都没拿到）。
     reportClientGone(ctx, onFailure);
@@ -2285,7 +2000,6 @@ export async function deliverAnthropicStream(
   onFinish?: (finish: AnswerFinish) => void,
 ): Promise<void> {
   ctx.res.setHeader("x-request-id", rid("req_"));
-  noteIdleModeConflict();
   // 客户端走了的时候，这个信号让读上游的那个循环停下来。
   const abort = new AbortController();
   // **先**把「客户端走了」这件事听上，再去等上游的第一帧：第一帧可能要等
@@ -2439,7 +2153,6 @@ export async function deliverOpenAIChunks(
   onFailure?: (error: unknown) => void,
 ): Promise<void> {
   ctx.res.setHeader("x-request-id", rid("req_"));
-  noteIdleModeConflict();
   // 第一块内容读到之前不写头：头一落地（flushHeaders），路由层就换不了目标。
   // 读不到内容就往外抛，那一层还能换下一个账号或目标。
   //
@@ -2645,18 +2358,7 @@ async function pipeOpenAIChunks(
   model?: string,
   onFailure?: (error: unknown) => void,
   abort?: AbortController,
-  reopen?: Reopen,
 ): Promise<void> {
-  // 续写把好几条流接成一条答复：片段计数跨轮累加，结束原因取最后一轮。
-  const continueState: ContinueState = {
-    text: "",
-    reasoning: "",
-    toolInFlight: false,
-    attempts: 0,
-    clientBytes: 0,
-    frameKinds: [],
-    argBytes: 0,
-  };
   const counts: AnswerSegments = { content: 0, thinking: 0, tool: 0 };
   let finishReason: string | undefined;
   const accFinish = (finish: AnswerFinish) => {
@@ -2669,16 +2371,9 @@ async function pipeOpenAIChunks(
   try {
     for (;;) {
       let roundGone = false;
-      let firstOfRound = true;
       try {
         for await (const chunk of watchFinish(readOpenAIChunks(upstream, abort?.signal), accFinish, onUsage)) {
           if (model && chunk && typeof chunk === "object") chunk.model = model;
-          // 续写的轮次不重发开场帧：角色那一份已经立过了。
-          if (continueState.attempts > 0 && firstOfRound && isRoleOnlyChunk(chunk)) {
-            firstOfRound = false;
-            continue;
-          }
-          firstOfRound = false;
           const frame = sseData(chunk);
           if (!(await writeFrame(ctx, frame))) {
             // 客户端走了：上游也别接着算（还在计费），这一条也不该记成成功。
@@ -2687,9 +2382,6 @@ async function pipeOpenAIChunks(
             roundGone = true;
             break;
           }
-          // 已经写给客户端多少字节、见过哪几类帧：日志里要能看出「哪一帧先到了客户端」。
-          continueState.clientBytes += frameBytes(frame);
-          noteFrameKinds(chunk, continueState);
         }
         if (roundGone) {
           reportClientGone(ctx, onFailure);
@@ -2706,18 +2398,13 @@ async function pipeOpenAIChunks(
         await writeFrame(ctx, SSE_DONE);
         return;
       } catch (e) {
-        const outcome = await continueWith(continueState, reopen, e, `model=${model ?? ""}`, "anthropic");
-        if (outcome.kind === "blocked") {
-          log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(outcome.error)}`);
-          await writeFrame(ctx, openAIErrorFrame(outcome.error) ?? sseData({ error: { type: "api_error", message: clientMessageOf(outcome.error) } }));
-          await writeFrame(ctx, SSE_DONE);
-          reportFailure(onFailure, outcome.error);
-          // 字节一个不变，错要抛给调用方：这条答复是失败的，不抛的话调用方
-          // 记成成功（用量表上那些 0 token 的「成功」就是这么来的）。
-          throw outcome.error;
-        }
-        upstream = outcome.stream;
-        // 回到开头
+        log.warn(`[DELIVER] 发给客户端的错误事件：${failureLine(e)}`);
+        await writeFrame(ctx, openAIErrorFrame(e) ?? sseData({ error: { type: "api_error", message: clientMessageOf(e) } }));
+        await writeFrame(ctx, SSE_DONE);
+        reportFailure(onFailure, e);
+        // 字节一个不变，错要抛给调用方：这条答复是失败的，不抛的话调用方
+        // 记成成功（用量表上那些 0 token 的「成功」就是这么来的）。
+        throw e;
       }
     }
   } finally {
