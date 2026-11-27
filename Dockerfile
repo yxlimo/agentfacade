@@ -1,16 +1,21 @@
 # The code is baked into the image. The NAS never gets a checkout: this file is
 # built locally, exported as a tar, and `docker load`ed on the other side.
 #
-# Two stages: the panel is built with node and pnpm, the runtime only carries
-# the result. The router runs the .ts files directly with native type stripping
-# (>= 22.6), so there is no build step for the backend.
+# Three stages: the panel and the runtime dependencies are built with node + pnpm,
+# the runtime only carries the results. The router runs the .ts files directly with
+# native type stripping (>= 22.6), so there is no build step for the backend.
+#
+# 底座用 nicklpeterson/pnpm-node，而不是 node + corepack：corepack 会在**构建容器里**
+# 从 npm registry 下 pnpm 的独立二进制包（@pnpm/exe.*，25 MB 量级）。这台机器上构建
+# 容器下大文件会卡死（实测 13 KB/s 量级，corepack 900 秒超时），冷缓存时镜像根本建
+# 不出来。pnpm-node 是 node 官方镜像加上预装的 pnpm，拉一次就有，构建里不再下 pnpm。
+# tag 是「node 主版本-pnpm 版本-发行版」，这里的 pnpm 版本必须与 package.json 的
+# packageManager 一致，否则 pnpm 会因为它自己不是那个版本而拒绝干活。
 
 # ── 面板 ──────────────────────────────────────────────────────────────────
-FROM node:24-alpine AS web
+FROM docker.io/nicklpeterson/pnpm-node:24-12.16.1-bookworm AS web
 
 WORKDIR /build
-
-RUN corepack enable
 
 # 面板自己的依赖。
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./web/
@@ -24,8 +29,25 @@ COPY lib/gen/ ./lib/gen/
 
 RUN cd web && pnpm build
 
+# ── 运行时依赖 ────────────────────────────────────────────────────────────
+# 单独一层：运行时镜像不带 pnpm、不带 devDependencies。
+FROM docker.io/nicklpeterson/pnpm-node:24-12.16.1-bookworm AS deps
+
+WORKDIR /deps
+
+# pnpm-workspace.yaml 要一起 COPY：lockfile 里记着 settings.addMissingPeerTypes
+# （来自这个文件），容器里的 pnpm 会严格比对，缺了文件就报
+# ERR_PNPM_LOCKFILE_CONFIG_MISMATCH。
+#
+# 但虚拟仓库类型要用命令行覆盖成 project：文件里写的是 global，node_modules 里
+# 就只剩指向 store 的符号链接，而 store 在 /root/.local/share/pnpm（drwx------），
+# 运行用户是 node(1000) 进不去，容器一启动就是 ERR_MODULE_NOT_FOUND。
+# project 布局把包装进本目录 .pnpm/，镜像自包含（2026-10-30 实测）。
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile --prod --config.virtualStoreType=project
+
 # ── 运行时 ────────────────────────────────────────────────────────────────
-FROM node:24-alpine
+FROM docker.io/library/node:24-bookworm-slim
 
 # The identity of the image: which commit, which version this code is.
 #
@@ -43,18 +65,8 @@ LABEL org.opencontainers.image.version=$APP_VERSION
 
 WORKDIR /app
 
-# Dependencies first so this layer is cached.
-#
-# pnpm-workspace.yaml 要一起 COPY：lockfile 里记着 settings.addMissingPeerTypes
-# （来自这个文件），容器里的 pnpm 会严格比对，缺了文件就报
-# ERR_PNPM_LOCKFILE_CONFIG_MISMATCH。
-#
-# 但虚拟仓库类型要用命令行覆盖成 project：文件里写的是 global，node_modules 里
-# 就只剩指向 store 的符号链接，而 store 在 /root/.local/share/pnpm（drwx------），
-# 运行用户是 node(1000) 进不去，容器一启动就是 ERR_MODULE_NOT_FOUND。
-# project 布局把包装进本目录 .pnpm/，镜像自包含（2026-10-30 实测）。
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN corepack enable && pnpm install --frozen-lockfile --prod --config.virtualStoreType=project
+COPY --from=deps /deps/node_modules ./node_modules
+COPY package.json ./
 
 # Only what the router actually loads: the entry point and lib/. There is no login
 # program: the router runs the device flow itself when a credential is missing.
