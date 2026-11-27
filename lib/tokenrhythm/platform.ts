@@ -61,7 +61,7 @@ export async function platformApi<T>(
     method,
     headers: write
       ? writeHeaders(session)
-      : { Cookie: session.cookie, Accept: "application/json", "User-Agent": "Mozilla/5.0 (compatible; buddy-proxy)" },
+      : { Cookie: session.cookie, Accept: "application/json" },
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
     signal: AbortSignal.timeout(20_000),
   });

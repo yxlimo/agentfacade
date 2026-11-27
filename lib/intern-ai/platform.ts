@@ -87,7 +87,6 @@ export async function consoleApi<T>(
     method,
     headers: {
       Accept: "application/json",
-      "User-Agent": "Mozilla/5.0 (compatible; buddy-proxy)",
       ...consoleAuthHeaders(token, session),
       ...(init.body !== undefined ? { "content-type": "application/json" } : {}),
       ...(init.headers ?? {}),

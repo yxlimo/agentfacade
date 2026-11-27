@@ -102,7 +102,6 @@ export async function listDiscoveryModels(apiKey: string): Promise<InternAiModel
     headers: {
       Accept: "application/json",
       Authorization: `Bearer ${apiKey}`,
-      "User-Agent": "Mozilla/5.0 (compatible; buddy-proxy)",
     },
     signal: AbortSignal.timeout(20_000),
   });

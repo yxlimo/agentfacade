@@ -54,7 +54,6 @@ async function requestJson(url: string, session: SenseNovaSession, init: Platfor
     headers: {
       Accept: "application/json",
       Authorization: `Bearer ${session.accessToken}`,
-      "User-Agent": "Mozilla/5.0 (compatible; buddy-proxy)",
       ...(init.body !== undefined ? { "content-type": "application/json" } : {}),
     },
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
