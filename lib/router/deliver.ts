@@ -1764,6 +1764,9 @@ function withToolSilenceGuard(
   let parseBuf: Uint8Array = new Uint8Array(0);
   let scanPos = 0;
   let lastToolAt = 0;
+  // 诊断用：上游一共读了多少字节、上一次打这行是什么时候。
+  let readBytes = 0;
+  let lastNote = Date.now();
 
   /** 把扣住的帧按原顺序写出去。 */
   const flushHeld = (controller: ReadableStreamDefaultController<Uint8Array>): void => {
@@ -1798,6 +1801,17 @@ function withToolSilenceGuard(
             return;
           }
           if (!value || value.length === 0) continue;
+
+          // 上游到底在不在说话、我们到底发没发：卡住的时候这两件事要一眼分得开。
+          // 每 10 秒一行，不刷屏。
+          readBytes += value.length;
+          if (Date.now() - lastNote >= 10_000) {
+            lastNote = Date.now();
+            log.info(
+              `[DELIVER] ${label}：上游已读 ${readBytes} 字节，扣住 ${heldFrames} 帧 ${heldBytes} 字节` +
+                (holding ? "（正在扣住，客户端零字节）" : "（未扣住）"),
+            );
+          }
 
           parseBuf = concatBytes(parseBuf, value);
           let flushed = false;
