@@ -58,13 +58,13 @@ const LEGACY_VENDOR_KIND_VERSION = 2;
 const PLATFORM_HEADERS_VERSION = 5;
 
 /** 库的 schema 版本现在是多少（没写过就是 0）。 */
-function schemaVersion(db: DatabaseSync): number {
+export function schemaVersion(db: DatabaseSync): number {
   const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
   return Number(row?.user_version ?? 0);
 }
 
 /** 把版本推到 n；已经更高就不动（步骤是往上堆的，不能回写旧号）。 */
-function setSchemaVersion(db: DatabaseSync, n: number): void {
+export function setSchemaVersion(db: DatabaseSync, n: number): void {
   if (schemaVersion(db) >= n) return;
   db.exec(`PRAGMA user_version = ${n}`);
 }

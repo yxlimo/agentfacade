@@ -24,6 +24,7 @@ import {
   migratePlatformHeaders,
   migrateSimulatedClients,
 } from "./migrate-platforms.ts";
+import { migrateUsageSessionName } from "./migrate-usage.ts";
 
 let db: DatabaseSync | null = null;
 /**
@@ -70,6 +71,7 @@ export function store(): DatabaseSync {
   // 注入头模板那一列最后补：前面的迁移按 user_version 判「是否已跑」，版本号
   // 先被推上去的话，旧库的 legacy/vendor/quota 迁移会被整段跳过。
   migratePlatformHeaders(db);
+  migrateUsageSessionName(db);
   return db;
 }
 /**

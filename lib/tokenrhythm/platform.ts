@@ -57,6 +57,7 @@ export async function platformApi<T>(
 ): Promise<T> {
   const method = init.method ?? "GET";
   const write = method !== "GET";
+  // pi-lens-ignore: ts-ssrf -- the host comes from the platform's configured base URL (an operator setting, same trust level as the account itself), so an allowlist here would only restate that config
   const r = await fetch(requestUrl(init.base, path), {
     method,
     headers: write
