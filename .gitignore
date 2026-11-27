@@ -57,6 +57,10 @@ tools/*
 web/node_modules/
 web/dist/
 
+# 本机离线构建用的暂存（见 mise.local.toml 的 image:build:local）：宿主机装好的
+# 运行时依赖，构建时直接 COPY 进镜像，构建里不联络 registry。
+.image-stage/
+Dockerfile.local
 # The IDE's own files: they carry this machine's paths.
 .idea/
 
@@ -79,3 +83,4 @@ test/.tmp/
 # 是仓库里的东西，只挡 e2e 这一个）。
 .claude/
 .agents/skills/e2e/
+.dockerignore.local
