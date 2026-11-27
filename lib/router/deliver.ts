@@ -541,11 +541,7 @@ function retryableIdleMessage(e: unknown): string | null {
 
 /** Every other failure keeps its existing error frame byte for byte */
 function openAIErrorFrame(e: unknown): string | null {
-  // 提交之后的工具静默：这一类**不受** ROUTER_IDLE_ERROR_RETRYABLE 管（用户明确要它
-  // 可重试），形状与可重试的中途静默一样。
-  if (e instanceof ToolCallInFlightTimeoutError) {
-    return sseData({ error: { type: "server_error", code: "upstream_idle_timeout", message: e.message } });
-  }
+  // 中途静默（提交之后上游不说话了）：这一类可重试，客户端会自己重发。
   const message = retryableIdleMessage(e);
   if (message === null) return null;
   return sseData({ error: { type: "server_error", code: "upstream_idle_timeout", message } });
@@ -714,60 +710,6 @@ export class StreamIdleError extends Error {
     this.idleMs = idleMs;
     this.label = label;
     this.phase = phase;
-  }
-}
-
-/**
- * The upstream opened a tool call and then went quiet: the tool's name arrived,
- * its arguments did not.
- *
- * It is deliberately not a `StreamIdleError`: the upstream is healthy there —
- * what is stuck is that one connection. Whether to retry it or to move to
- * another upstream is the routing layer's call; the delivery layer only says
- * which kind of silence this is.
- *
- * `name` is the discriminator (`ToolCallSilenceError`), so the routing layer
- * can tell the two apart without reading the message.
- *
- * The sentence is the mid-stream one: the client does not need to know whether
- * the silence came in the middle of an answer or at the start of a tool call.
- * The log is where the two are told apart.
- */
-export class ToolCallSilenceError extends Error {
-  readonly idleMs: number;
-  readonly label: string;
-
-  constructor(idleMs: number, label: string) {
-    super(idleSentence(idleMs, label, "mid-stream"));
-    this.name = "ToolCallSilenceError";
-    this.idleMs = idleMs;
-    this.label = label;
-  }
-}
-
-
-/**
- * 提交之后：工具调用还在写，上游却安静了。
- *
- * 提交点已经过去（客户端已经拿到了字节），续写不可能 —— 半截 JSON 拼不回来。所以
- * 这一次的失败只能是把话说清楚：「超时了，工具调用还在写」。客户端据此决定要不要
- * 重发。
- *
- * 形状与中途静默那句话一致，但**不受** ROUTER_IDLE_ERROR_RETRYABLE 管：那一类改写
- * 是给「中途静默」用的，这一类用户明确要它可重试。
- *
- * `name` 是 TimeoutError：分类器据此判成「超时」，记账那一层记 504（超时）而不是
- * 502（上游挂了）—— 上游没坏，坏的是这一条连接。
- */
-export class ToolCallInFlightTimeoutError extends Error {
-  readonly idleMs: number;
-  readonly label: string;
-
-  constructor(idleMs: number, label: string) {
-    super(`upstream timed out after ${idleSpan(idleMs)} mid-stream: a tool call was still being written (${label})`);
-    this.name = "TimeoutError";
-    this.idleMs = idleMs;
-    this.label = label;
   }
 }
 
@@ -1135,12 +1077,6 @@ export function errorFromUpstreamPayload(detail: JsonValue | undefined): AuthErr
 
 /* ---------------- 「第一块内容」这道闸 ---------------- */
 
-/** 扣住的帧最多这么多字节，超过就无条件提交（按今天的自由流继续）。 */
-const CONTENT_GATE_MAX_BYTES = 256 * 1024;
-
-/** 扣住的帧最多这么多帧，超过就无条件提交。 */
-const CONTENT_GATE_MAX_FRAMES = 1_000;
-
 /** 一个值是不是「非空的内容」：字符串要非空，数组要非空。 */
 function isNonEmptyContent(value: unknown): boolean {
   if (typeof value === "string") return value.length > 0;
@@ -1344,62 +1280,6 @@ class ToolCallTracker {
   }
 }
 
-/**
- * 工具开局之后最多再等多久（毫秒）。
- *
- * 0 = 关着：沿用中途那个窗口，也就是今天的行为。读一次是一条请求的量 —— 热设置，
- * 面板改完下一条请求就用新的值（与 ROUTER_CONTINUE_MAX 同一套读法）。
- */
-function toolOpeningMs(): number {
-  const raw = configNumber("ROUTER_TOOL_OPENING_MS", 0);
-  const ms = clampStreamLimit(raw);
-  if (streamLimitWasCapped(raw)) {
-    log.warn(`[DELIVER] 工具开局上限 ${raw} 超过上限，已按 ${ms} 生效`);
-  }
-  return ms > 0 ? ms : 0;
-}
-
-/**
- * 工具开局之后那道闸：几时开始计时、还剩多久、到点了是什么错。
- *
- * 只有内容闸用得上：工具帧按判据**不算内容**（参数没收全），所以它一定被扣在
- * 闸里 —— 从它到达那一刻起，上游可能一声不吭。这道闸量的就是「上一个工具帧
- * 之后等了多久」。
- */
-interface ToolOpeningGate {
-  /** 这个上限（毫秒）。0 = 关着：沿用中途那个窗口，也就是今天的行为。 */
-  ms: number;
-  /** 没在计时的时候是 null；计时之后是「还剩几毫秒」（负数表示已经到点）。 */
-  remainingMs(): number | null;
-  /** 看一帧：它是不是工具帧？是的话从这一刻起开始计时。 */
-  observe(tracker: ToolCallTracker): void;
-  /** The timeout: this error (the tool opened, the arguments did not come). */
-  timeoutError(): ToolCallSilenceError;
-}
-
-function toolOpeningGate(label: string): ToolOpeningGate {
-  const ms = toolOpeningMs();
-  let deadline: number | null = null;
-  return {
-    ms,
-    remainingMs: () => (deadline === null ? null : deadline - Date.now()),
-    observe(tracker) {
-      // 关着的时候什么也不看：今天的行为一个字都不改。
-      if (!(ms > 0)) return;
-      // 锚点是**最后一个工具帧**：参数在慢慢流动（每 20ms 一片）不算静默，慢流
-      // 不该被砍。只有工具帧推这条死线。
-      if (!tracker.toolFrame) return;
-      deadline = Date.now() + ms;
-    },
-    timeoutError: () => {
-      // The log is the only place that tells the two silences apart: the client
-      // gets the same sentence as a mid-stream silence.
-      log.warn(`[DELIVER] tool_call 静默 ${idleSpan(ms)}：上游只发了工具的名字，参数还没来（${label}）`);
-      return new ToolCallSilenceError(ms, label);
-    },
-  };
-}
-
 /** 一帧原始 SSE 文本：事件名与数据 payload。 */
 interface RawSseFrame {
   event?: string;
@@ -1429,23 +1309,6 @@ function parseRawSseFrame(raw: string): RawSseFrame | undefined {
   return event ? { event, data } : { data };
 }
 
-/** 把扣住的帧按原顺序写出去，然后接着读上游。 */
-function replayHeld(held: Uint8Array[], reader: ReadableStreamDefaultReader<Uint8Array>): ReadableStream<Uint8Array> {
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const chunk of held) controller.enqueue(chunk);
-    },
-    async pull(controller) {
-      const { done, value } = await reader.read();
-      if (done) controller.close();
-      else controller.enqueue(value);
-    },
-    cancel(reason) {
-      reader.cancel(reason);
-    },
-  });
-}
-
 
 /**
  * 工具帧是原子的：扣住，直到参数收全。
@@ -1465,341 +1328,6 @@ function replayHeld(held: Uint8Array[], reader: ReadableStreamDefaultReader<Uint
  * 扣住期间上游安静了：走工具那个窗口（ROUTER_TOOL_OPENING_MS），到点失败 ——
  * 客户端这时一个工具帧都没拿到（它拿到的是思考/正文与那句可重试的超时）。
  */
-
-/**
- * 一帧的末尾在字节流里的位置（不含那一帧）；没有完整的一帧就是 -1。
- *
- * 按字节找而不是按字符找：帧的字节要原样交给客户端（拆开再拼起来必须一模
- * 一样），而一个多字节字符绝不会把分隔切在中间。分隔认 "\n\n" 与 "\r\n\r\n"
- * 两种（有的上游用 CRLF）。
- */
-function findFrameEnd(bytes: Uint8Array, from: number): number {
-  for (let i = from; i < bytes.length; i++) {
-    if (bytes[i] !== 0x0a) continue;
-    if (i + 1 < bytes.length && bytes[i + 1] === 0x0a) return i + 2;
-    if (i + 2 < bytes.length && bytes[i + 1] === 0x0d && bytes[i + 2] === 0x0a) return i + 3;
-  }
-  return -1;
-}
-
-/** 两段字节接起来。 */
-function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
-  if (a.length === 0) return b;
-  const out = new Uint8Array(a.length + b.length);
-  out.set(a, 0);
-  out.set(b, a.length);
-  return out;
-}
-
-/**
- * 一帧的 JSON：解析不了就是 undefined（那一帧照原样转发，只是不参与工具判定）。
- */
-function frameJson(frame: Uint8Array): Json | undefined {
-  const parsed = parseRawSseFrame(new TextDecoder().decode(frame));
-  if (!parsed) return undefined;
-  try {
-    return parseLooseJson(parsed.data);
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * 这一帧是不是「工具调用到此为止」：上游说完了。
- *
- * OpenAI 那边是 finish_reason，Anthropic 那边是块结束或消息结束。参数没收全也到
- * 这里为止了 —— 扣着的帧原样写出去，不吞帧。
- */
-function isToolCallEndFrame(json: Json, dialect: UpstreamDialect): boolean {
-  if (dialect === "anthropic") {
-    const type = jsonAt(json, "type");
-    return type === "content_block_stop" || type === "message_stop";
-  }
-  const choices = jsonAt(json, "choices");
-  if (!Array.isArray(choices)) return false;
-  const finish = jsonObjectOf(choices[0])?.finish_reason;
-  return finish !== undefined && finish !== null;
-}
-
-function withToolSilenceGuard(
-  body: ReadableStream<Uint8Array>,
-  dialect: UpstreamDialect,
-  label: string,
-): ReadableStream<Uint8Array> {
-  const windowMs = toolOpeningMs();
-  const reader = body.getReader();
-  const tracker = new ToolCallTracker(dialect);
-  // 扣住的帧：从工具帧那一帧起，往后的每一帧都在这里，按上游顺序排着。
-  const held: Uint8Array[] = [];
-  let heldBytes = 0;
-  let heldFrames = 0;
-  let holding = false;
-  // 上游的字节按帧拆：帧的字节原样保留，扣住与写出是同一批字节。
-  let parseBuf: Uint8Array = new Uint8Array(0);
-  let scanPos = 0;
-  let lastToolAt = 0;
-  // 诊断用：上游一共读了多少字节、上一次打这行是什么时候。
-  let readBytes = 0;
-  let lastNote = Date.now();
-
-  /** 把扣住的帧按原顺序写出去。 */
-  const flushHeld = (controller: ReadableStreamDefaultController<Uint8Array>): void => {
-    if (!heldFrames) return;
-    log.info(`[DELIVER] 工具帧扣住 ${heldFrames} 帧 ${heldBytes} 字节，写出（${label}）`);
-    for (const frame of held) controller.enqueue(frame);
-    held.length = 0;
-    heldBytes = 0;
-    heldFrames = 0;
-    holding = false;
-  };
-
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      try {
-        for (;;) {
-          // 工具在途时那道闸：到点是提交之后的工具静默（可重试）。
-          // 键关着的时候不算这一道 —— 静默归上游那道中途窗口（今天的行为）。
-          const deadline = windowMs > 0 && tracker.inFlight ? lastToolAt + windowMs : null;
-          const read = reader.read();
-          const { done, value } =
-            deadline === null
-              ? await read
-              : await within(read, Math.max(0, deadline - Date.now()), () => new ToolCallInFlightTimeoutError(windowMs, label));
-          if (done) {
-            // 上游正常结束：扣住的帧原样写出去（不吞帧）。
-            flushHeld(controller);
-            // 没收尾的半帧也出去：它已经在上游那里了，吞掉就是丢字节。
-            const rest = parseBuf.slice(scanPos);
-            if (rest.length > 0) controller.enqueue(rest);
-            controller.close();
-            return;
-          }
-          if (!value || value.length === 0) continue;
-
-          // 上游到底在不在说话、我们到底发没发：卡住的时候这两件事要一眼分得开。
-          // 每 10 秒一行，不刷屏。
-          readBytes += value.length;
-          if (Date.now() - lastNote >= 10_000) {
-            lastNote = Date.now();
-            log.info(
-              `[DELIVER] ${label}：上游已读 ${readBytes} 字节，扣住 ${heldFrames} 帧 ${heldBytes} 字节` +
-                (holding ? "（正在扣住，客户端零字节）" : "（未扣住）"),
-            );
-          }
-
-          parseBuf = concatBytes(parseBuf, value);
-          let flushed = false;
-          for (;;) {
-            const end = findFrameEnd(parseBuf, scanPos);
-            if (end < 0) break;
-            const frame = parseBuf.slice(scanPos, end);
-            scanPos = end;
-
-            const json = frameJson(frame);
-            let toolFrame = false;
-            if (json !== undefined) {
-              tracker.observe(json);
-              toolFrame = tracker.toolFrame;
-              // 锚点是**最后一个工具帧**：参数在慢慢流动（每 20ms 一片）不算静默。
-              if (toolFrame) lastToolAt = Date.now();
-            }
-            if (!holding && toolFrame) holding = true;
-            if (holding) {
-              held.push(frame);
-              heldBytes += frame.length;
-              heldFrames++;
-            } else {
-              controller.enqueue(frame);
-            }
-            if (!holding) continue;
-            // 参数收全了：按原顺序一次性写出。
-            if (tracker.toolArgsComplete) {
-              flushHeld(controller);
-              flushed = true;
-              break;
-            }
-            // 上游说完了：参数没收全也写出去（不吞帧）。
-            if (json !== undefined && isToolCallEndFrame(json, dialect)) {
-              flushHeld(controller);
-              flushed = true;
-              break;
-            }
-            // 扣得太久了：立刻写出去，此后不再扣这一轮（静默归中途那个窗口）。
-            if (heldBytes > CONTENT_GATE_MAX_BYTES || tracker.argBytes > CONTENT_GATE_MAX_BYTES) {
-              tracker.stopTrackingTools();
-              flushHeld(controller);
-              flushed = true;
-              break;
-            }
-          }
-          // 已经拆过的字节不留着：它们要么给出去了，要么在扣着的那些帧里。
-          if (scanPos > 0) {
-            parseBuf = parseBuf.slice(scanPos);
-            scanPos = 0;
-          }
-          if (flushed) return;
-          if (!holding) return;
-          // 还在扣：接着读上游，直到参数收全。
-        }
-      } catch (e) {
-        // 上游那一侧要收掉：它还挂着就是在计费。
-        await cancelReader(reader);
-        throw e;
-      }
-    },
-    cancel(reason) {
-      void reader.cancel(reason);
-    },
-  });
-}
-
-/**
- * 把上游的帧扣在手里，直到出现第一块对用户可见的内容。
- *
- * 头一落地（flushHeaders），路由层就换不了目标了。旧判据是「收到第一块字节」——
- * Anthropic 的 message_start 几乎立刻就到，可它只是信封，客户端一个字内容都没收到，
- * 路由层已经没有换目标的机会（客户端拿到的是 200 里藏一句 error）。判据改成
- * 「收到第一块对用户可见的内容」：信封扣住，内容一到就提交（把扣住的帧按原顺序
- * 逐字节写出去）；在那之前上游失败或静默，原样抛出，路由层自然换下一个目标。
- *
- * 缓冲有上限：字节数或帧数超了就无条件提交，按今天的自由流继续 —— 慢流不该被
- * 整条扣住。
- *
- * A tool-opening frame (the tool's name arrived, its arguments did not) is not
- * content by the criterion, so it is held here — from the moment it arrives the
- * upstream may go quiet. ROUTER_TOOL_OPENING_MS measures how long to wait for
- * the arguments: with the key on and above 0 the failure happens here (before
- * the commit point, the client has zero bytes); with the key at 0 the
- * mid-stream window applies, which is today's behaviour.
- */
-async function gateUntilContent(
-  body: ReadableStream<Uint8Array>,
-  dialect: UpstreamDialect,
-  label: string,
-  signal?: AbortSignal,
-): Promise<ReadableStream<Uint8Array>> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  const held: Uint8Array[] = [];
-  let heldBytes = 0;
-  let frameCount = 0;
-  let buffer = "";
-  // 工具开局之后那道闸（键关着的时候它什么也不做）。
-  const tracker = new ToolCallTracker(dialect);
-  const opening = toolOpeningGate(label);
-
-  try {
-    for (;;) {
-      // 工具开局之后的上限：这一读最多等那么久。没在计时的时候就是一直等。
-      const waitMs = opening.remainingMs();
-      if (waitMs !== null && waitMs <= 0) {
-        // 死线已经过去了：不等下一帧，直接算超时（上游那一侧在 catch 里收掉）。
-        await cancelReader(reader);
-        throw opening.timeoutError();
-      }
-      const read = readOrAbort(reader, signal);
-      const { done, value } = waitMs === null ? await read : await within(read, waitMs, () => opening.timeoutError());
-      if (signal?.aborted) {
-        await cancelReader(reader);
-        throw new ClientGoneError();
-      }
-      if (done) break;
-      if (!value || value.length === 0) continue;
-      held.push(value);
-      heldBytes += value.length;
-      buffer += decoder.decode(value, { stream: true });
-
-      let idx: number;
-      while ((idx = buffer.indexOf("\n\n")) >= 0) {
-        const raw = buffer.slice(0, idx);
-        buffer = buffer.slice(idx + 2);
-        const frame = parseRawSseFrame(raw);
-        if (!frame) continue;
-        frameCount++;
-        if (looksLikeErrorPayload(frame.data)) {
-          await cancelReader(reader);
-          throw errorFromUpstreamPayload(payloadIn(frame.data) ?? frame.data);
-        }
-        let json: Json;
-        try {
-          json = parseLooseJson(frame.data);
-        } catch {
-          continue;
-        }
-        // 工具开局帧：从这一刻起开始计时（上限关着的时候什么也不发生）。
-        const isContent = tracker.observe(json);
-        // 工具帧：从这一刻起开始计时（上限关着的时候什么也不发生）。
-        opening.observe(tracker);
-        if (isContent) {
-          return replayHeld(held, reader);
-        }
-      }
-      // 参数累积超了上限：不再等它收全，立刻提交（此后静默归中途那个窗口）。
-      if (tracker.argBytes > CONTENT_GATE_MAX_BYTES) {
-        tracker.forceComplete();
-        return replayHeld(held, reader);
-      }
-      if (heldBytes > CONTENT_GATE_MAX_BYTES || frameCount > CONTENT_GATE_MAX_FRAMES) {
-        return replayHeld(held, reader);
-      }
-    }
-  } catch (e) {
-    await cancelReader(reader);
-    throw e;
-  }
-
-  return replayHeld(held, reader);
-}
-
-/**
- * 把已经解析好的帧扣在手里，直到出现第一块对用户可见的内容。
- *
- * 与 gateUntilContent 同语义：内容一到就提交，之前上游失败或静默就原样抛出。
- * The tool-opening limit is here too (see the comment in gateUntilContent): with
- * the key on and above 0, an opening frame that never gets its arguments fails
- * here — before the commit point, the client has zero bytes.
- */
-async function gateChunksUntilContent(iterator: AsyncIterator<Json>, label: string): Promise<Json[]> {
-  const held: Json[] = [];
-  let heldBytes = 0;
-  let frameCount = 0;
-  // 工具开局之后那道闸（键关着的时候它什么也不做）。
-  const tracker = new ToolCallTracker("openai");
-  const opening = toolOpeningGate(label);
-  try {
-    for (;;) {
-      // 工具开局之后的上限：这一读最多等那么久。没在计时的时候就是一直等。
-      const waitMs = opening.remainingMs();
-      if (waitMs !== null && waitMs <= 0) throw opening.timeoutError();
-      const next: IteratorResult<Json> =
-        waitMs === null
-          ? await iterator.next()
-          : await within(Promise.resolve(iterator.next()), waitMs, () => opening.timeoutError());
-      if (next.done) break;
-      held.push(next.value);
-      frameCount++;
-      heldBytes += JSON.stringify(next.value ?? null).length;
-      // 工具开局帧：从这一刻起开始计时（上限关着的时候什么也不发生）。
-      const isContent = tracker.observe(next.value);
-      opening.observe(tracker);
-      if (isContent) return held;
-      // 参数累积超了上限：不再等它收全，立刻提交（此后静默归中途那个窗口）。
-      if (tracker.argBytes > CONTENT_GATE_MAX_BYTES) {
-        tracker.forceComplete();
-        return held;
-      }
-      if (heldBytes > CONTENT_GATE_MAX_BYTES || frameCount > CONTENT_GATE_MAX_FRAMES) return held;
-    }
-  } catch (e) {
-    // 出错（含工具开局超时）：上游那一侧的迭代器收掉，别把它挂在那儿。
-    void Promise.resolve(iterator.return?.(undefined)).catch(() => {
-      /* 已经结束了 */
-    });
-    throw e;
-  }
-
-  return held;
-}
 
 /** The whole answer, for a client that did not ask for a stream. */
 export function deliverJson(
@@ -1915,14 +1443,10 @@ export async function deliverOpenAIStream(
   if (state.gone) abort.abort();
   let upstream: ReadableStream<Uint8Array>;
   try {
-    // 等上游的**第一帧**也要算进「安静」，而且量的是**首帧那个上限**（比中途
-    // 那个长：推理模型的第一个 token 常常要两分多钟）。
+    // 上游的**第一帧**：等它也要算「安静」，量的是首帧那个上限（比中途那个长：
+    // 推理模型的第一个 token 常常要两分多钟）。这一帧到了就立刻发头 —— 客户端
+    // 拿到的是「有什么发什么」，我们不再把字节扣在手里等一整条帧拼全。
     upstream = await peekStream(withStreamIdle(body, `model=${model}`, {}, "openai"), abort.signal);
-    // 第一帧读到不等于答复开始：信封扣住，等第一块对用户可见的内容。内容之前
-    // 上游失败或静默，头还没发，原样抛出换目标。
-    upstream = await gateUntilContent(upstream, "openai", `model=${model}`, abort.signal);
-    // 提交之后：工具调用在途又静默 → 按工具那个窗口快速失败（可重试）。
-    upstream = withToolSilenceGuard(upstream, "openai", `model=${model}`);
   } catch (e) {
     if (e instanceof ClientGoneError) {
       reportClientGone(ctx, onFailure);
@@ -2011,16 +1535,11 @@ export async function deliverAnthropicStream(
   // 一个计时走，源头才不会因为没人读而挂在那里（挂着就是在计费）。
   let upstream: ReadableStream<Uint8Array>;
   try {
-    // 第一块内容读到之前不写头：头一落地（flushHeaders），路由层就换不了目标，
-    // 客户端拿到的是 200 里藏一句 error；而这里抛出去，它还能换下一个账号或
-    // 目标。peek 出来的流把第一块字节原样交回给下面（不丢、不重排），内容闸
-    // 再把信封扣住，等第一块对用户可见的内容。
+    // 上游的第一帧到了就立刻发头：头一落地（flushHeaders）就换不了目标，所以
+    // 这一帧之前抛出去的错，路由层还能换账号或目标；这一帧之后我们只报错，
+    // 由客户端自己重试。字节不再扣在手里等整条事件帧拼全 —— 那是客户端
+    // 300 秒收不到任何字节的原因。
     upstream = await peekStream(withStreamIdle(body, `model=${model}`, {}, "anthropic"), abort.signal);
-    // 信封扣住，等第一块对用户可见的内容：内容之前上游失败或静默，头还没发，
-    // 原样抛出换目标。
-    upstream = await gateUntilContent(upstream, "anthropic", `model=${model}`, abort.signal);
-    // 提交之后：工具调用在途又静默 → 按工具那个窗口快速失败（可重试）。
-    upstream = withToolSilenceGuard(upstream, "anthropic", `model=${model}`);
   } catch (e) {
     if (e instanceof ClientGoneError) {
       reportClientGone(ctx, onFailure);
@@ -2153,25 +1672,12 @@ export async function deliverOpenAIChunks(
   onFailure?: (error: unknown) => void,
 ): Promise<void> {
   ctx.res.setHeader("x-request-id", rid("req_"));
-  // 第一块内容读到之前不写头：头一落地（flushHeaders），路由层就换不了目标。
-  // 读不到内容就往外抛，那一层还能换下一个账号或目标。
-  //
-  // 这里也计时：已经解析好的帧那个入口原先一点上限都没有，只靠 undici 兼底 ——
-  // 另两个入口都有，三个入口该是一套东西（见 withIteratorIdle）。
-  const iterator = withIteratorIdle(chunks, `model=${model}`)[Symbol.asyncIterator]();
-  let held: Json[];
-  try {
-    held = await gateChunksUntilContent(iterator, `model=${model}`);
-  } catch (e) {
-    log.warn(`[DELIVER] 上游在内容出现之前就失败了：${failureLine(e)}`);
-    reportFailure(onFailure, e);
-    // 响应从没接管过：它还是 Koa 的，调用方写的 sendError 才会落到 socket 上。
-    throw e;
-  }
-  // 第一块内容读到了（或者上游一字不说就收工了，那是空答复）：现在才接管响应、发头。
+  // 有什么发什么：这一条入口拿到的已经是解析好的帧，直接发头往下写，不再
+  // 等第一块「内容」出现（扣住就是客户端收不到字节的原因）。
+  // 这里也计时：三个入口该是一套东西（见 withIteratorIdle）。
+  const source = withIteratorIdle(chunks, `model=${model}`);
   takeOver(ctx);
   sseHead(ctx);
-  const source = restoreHeld(held, iterator);
   if (dialect === "openai") {
     try {
       for await (const chunk of source) {
