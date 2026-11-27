@@ -1286,29 +1286,6 @@ interface RawSseFrame {
   data: string;
 }
 
-/** 把一帧原始 SSE 文本拆成事件名与数据（与 readSseEvents 同一套解析）。 */
-function parseRawSseFrame(raw: string): RawSseFrame | undefined {
-  let event: string | undefined;
-  const dataLines: string[] = [];
-  for (const line of raw.split("\n")) {
-    const trimmed = line.replace(/\r$/, "");
-    if (trimmed === "") continue;
-    if (trimmed.startsWith(":")) continue;
-    if (trimmed.startsWith("event:")) {
-      event = trimmed.slice(6).trim();
-      continue;
-    }
-    if (trimmed.startsWith("data:")) {
-      dataLines.push(trimmed.slice(5).replace(/^ /, ""));
-      continue;
-    }
-    if (dataLines.length) dataLines.push(trimmed);
-  }
-  if (!dataLines.length) return undefined;
-  const data = dataLines.join("\n");
-  return event ? { event, data } : { data };
-}
-
 
 /**
  * 工具帧是原子的：扣住，直到参数收全。
@@ -1714,30 +1691,6 @@ export async function deliverOpenAIChunks(
     reportFailure(onFailure, e);
   }
   ctx.res.end();
-}
-
-/**
- * Put the frames that were held back in front of the rest.
- *
- * 扣住的帧是在发头之前读的（那时还不知道该不该发一个 200），但它们就是答复的
- * 前几帧：原样交给后面的循环，不能丢也不能重排。
- */
-async function* restoreHeld<T>(held: T[], rest: AsyncIterator<T>): AsyncGenerator<T> {
-  try {
-    for (const item of held) yield item;
-    for (;;) {
-      const next: IteratorResult<T> = await rest.next();
-      if (next.done) return;
-      yield next.value;
-    }
-  } finally {
-    // 循环提前收工（客户端走了）：上游那一侧的生成器也要停下来（它还在计费）。
-    try {
-      await rest.return?.();
-    } catch {
-      /* 已经结束了 */
-    }
-  }
 }
 
 function errorEvent(message: string): string {
