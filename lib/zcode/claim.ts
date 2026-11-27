@@ -37,7 +37,7 @@ import { ZCODE_CLAIM_APP_VERSION, zcodePlatformApiHeaders } from "./transport.ts
  * 账单域（领取与投放）用的客户端版本。
  *
  * 与 ZCODE_VERSION 分开：那个是**模型请求**的指纹（动了会被上游当异常活动），
- * 这个是账单计划接口的版本。实测这几个端点报的是 3.18.2。
+ * 这个是账单计划接口的版本（旧版本号下投放回 0 条，见 transport.ts 的注释）。
  *
  * 值本身住在 transport.ts（领取的头要用它，而头在那里）。这里再导出一次：
  * 从 claim.ts 导入的调用（marketing.ts、测试）照旧能用。

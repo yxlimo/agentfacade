@@ -28,12 +28,14 @@ export const ZCODE_MESSAGES_URL = `${ZCODE_BASE}/api/v1/zcode-plan/anthropic/v1/
  * 账单域（领取、投放、客户端配置）报的那一版。
  *
  * 与模型请求的版本分开：那个是**模型请求**的指纹（动了会被上游当异常活动），
- * 这个是账单计划接口的版本。实测这几个端点认的是 3.18.2。
+ * 这个是账单计划接口的版本。投放只认最新客户端报的那一版：旧版本号下
+ * marketing/touch 回 0 条投放（账号有效也领不到），4.0.0 才有。领取与投放的
+ * 请求形状在 3.18.2 → 4.0.0 之间一个字都没变，变的只有这个字符串。
  *
  * 放在这一处而不是 claim.ts：领取的头要用它，而头在这里 —— 反过来导入会成环
  * （claim.ts 已经导入这一层了）。claim.ts 仍然导出它（从那儿导入的旧调用不变）。
  */
-export const ZCODE_CLAIM_APP_VERSION = configString("ZCODE_CLAIM_APP_VERSION", "3.18.2");
+export const ZCODE_CLAIM_APP_VERSION = configString("ZCODE_CLAIM_APP_VERSION", "4.0.0");
 
 /** 客户端报的用户代理。 */
 const USER_AGENT = `ZCode/${ZCODE_VERSION}`;
