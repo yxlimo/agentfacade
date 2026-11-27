@@ -11,6 +11,7 @@ import { readEnvValue } from "../env.ts";
 import { SIMULATED_CLIENTS } from "../platform-catalog.ts";
 // 凭据 id 的唯一算法（叶子模块）：厂商 kind 退场要按账号定位推理 key 原来存哪。
 import { providerSecretId } from "../credential-ids.ts";
+import { jsonObjectOf } from "../dialect/json-value.ts";
 // legacySetting 读的设置在 settings 模块里：环境先、库里其次、默认最后。
 import { getConfig } from "./settings.ts";
 
@@ -168,7 +169,9 @@ export function migrateLegacyVendorKinds(db: DatabaseSync): void {
       if (!from?.data) continue;
       let apiKey = "";
       try {
-        apiKey = String((JSON.parse(from.data) as Record<string, unknown>)[legacy.keyField] ?? "").trim();
+        const parsed: unknown = JSON.parse(from.data);
+        const fields = jsonObjectOf(parsed);
+        apiKey = String(fields?.[legacy.keyField] ?? "").trim();
       } catch {
         // 读不出来的凭据就是没凭据：下面的写入自然跳过它。
         continue;
