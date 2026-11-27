@@ -194,7 +194,6 @@ async function hop(url: string, init: RequestInit = {}): Promise<Response> {
     signal: AbortSignal.timeout(TIMEOUT_MS),
     headers: {
       Accept: "application/json, text/html",
-      "User-Agent": "Mozilla/5.0 (compatible; buddy-proxy)",
       ...(init.headers as Record<string, string> | undefined),
     },
   });
@@ -286,7 +285,6 @@ async function loginSession(
     headers: {
       "content-type": "application/json",
       Accept: "application/json",
-      "User-Agent": "Mozilla/5.0 (compatible; buddy-proxy)",
     },
     body: JSON.stringify(loginBody(creds.user, creds.password, challenge)),
     signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -350,7 +348,6 @@ async function exchangeCode(code: string, codeVerifier: string, state: string): 
     headers: {
       "content-type": "application/x-www-form-urlencoded",
       Accept: "application/json",
-      "User-Agent": "Mozilla/5.0 (compatible; buddy-proxy)",
     },
     body: new URLSearchParams({
       grant_type: "authorization_code",
@@ -376,7 +373,6 @@ export async function refreshSession(session: SenseNovaSession, providerId = "se
     headers: {
       "content-type": "application/x-www-form-urlencoded",
       Accept: "application/json",
-      "User-Agent": "Mozilla/5.0 (compatible; buddy-proxy)",
     },
     body: new URLSearchParams({
       grant_type: "refresh_token",

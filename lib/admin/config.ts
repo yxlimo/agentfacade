@@ -32,7 +32,6 @@ import {
   clampStreamLimit,
   streamLimitWasCapped,
 } from "../router/stream-limits.ts";
-import { CONTINUE_MAX_MAX, CONTINUE_MAX_MIN } from "../router/deliver.ts";
 import { listConfig } from "../store.ts";
 import { pruneUsage } from "../usage.ts";
 
@@ -65,23 +64,15 @@ configNumber("ROUTER_FIRST_FRAME_MS", STREAM_FIRST_FRAME_DEFAULT_MS);
 configNumber("ROUTER_STREAM_IDLE_MS", STREAM_IDLE_DEFAULT_MS);
 // 工具开头到了、参数还没来的那段等待。默认 0：不开这个计时，沿用中途那个窗口
 // （今天的行为）。
-configNumber("ROUTER_TOOL_OPENING_MS", 0);
 configNumber("ROUTER_RETRY_BUDGET_MS", 180_000);
 
 // 这一项的热标记写在这里：读它的那个模块在 lib/router/** 里，不是这份登记处，
 // 而面板不能对一个每条请求读一次的设置说要重启。
-markHotSetting("ROUTER_TOOL_OPENING_MS");
 
-// 流中途静默超时后的自动续写：开关默认关，次数默认 2。deliver.ts 与
-// open-platform.ts 在每条请求开始时读这两个键，所以是热的 —— 标记由读它的
-// 那个模块写。
-configFlag("ROUTER_CONTINUE_ON_IDLE", false);
-configNumber("ROUTER_CONTINUE_MAX", 2);
 
 // 与「静默超时后自动续写」互为替代，不是上下位：续写是我们替客户端把话说完（无痕、
-// 不重复计费），这个是让客户端自己整回合重发（它掌握次数与退避）。两者同时开时以求
-// 续写为准，deliver.ts 里有一条 warn 与用例钉这个优先级。
-// 默认关：客户端只在认出「可重试的超时」时才重发，改默认等于悄悄换掉所有人看到的失败形状。
+// 静默超时之后报什么：默认关 —— 客户端只在认出「可重试的超时」时才整回合
+// 重发，改默认等于悄悄换掉所有人看到的失败形状。
 configFlag("ROUTER_IDLE_ERROR_RETRYABLE", false);
 
 // 剩下这几个是「读一次就定在常量里」的（lib/periodic.ts 的定时器、
@@ -151,11 +142,8 @@ export interface ConfigItemView {
 const DESCRIPTIONS: Record<string, string> = {
   ROUTER_FIRST_FRAME_MS: "等不到第一个字就把同一请求重发给同一个上游（秒）；这是等首字的上限",
   ROUTER_STREAM_IDLE_MS: "正文或 thinking 停这么久就算静默（秒）；之后见下面三项",
-  ROUTER_TOOL_OPENING_MS: "tool_call 发一半停这么久就算静默（秒）；0 = 跟「多久算静默」一致。静默后把同一请求重发给同一上游，不换上游",
   ROUTER_RETRY_BUDGET_MS: "一次请求的重试总时限（秒）",
-  ROUTER_CONTINUE_ON_IDLE: "断开重连让上游接着写，客户端感觉不到中断",
-  ROUTER_CONTINUE_MAX: "一次答复最多续写几次；0 = 不续写，直接报错",
-  ROUTER_IDLE_ERROR_RETRYABLE: "与续写二选一：改成报可重试超时，让客户端整回合重发",
+  ROUTER_IDLE_ERROR_RETRYABLE: "静默改报可重试超时，让客户端整回合重发",
   HEALTH_CACHE_MS: "额度与状态快照多久刷新（秒）",
   BENEFITS_INTERVAL_MS: "签到任务多久跑一次（秒）",
   QODER_LEGACY_RETRY_MS: "Qoder 旧协议排队后隔多久重试（秒）",
@@ -179,10 +167,7 @@ const DESCRIPTIONS: Record<string, string> = {
 const LABELS: Record<string, string> = {
   ROUTER_FIRST_FRAME_MS: "等首字时限",
   ROUTER_STREAM_IDLE_MS: "多久算静默",
-  ROUTER_TOOL_OPENING_MS: "tool_call 静默多久",
   ROUTER_RETRY_BUDGET_MS: "重试总时限",
-  ROUTER_CONTINUE_ON_IDLE: "静默后自动续写",
-  ROUTER_CONTINUE_MAX: "最多续写几次",
   ROUTER_IDLE_ERROR_RETRYABLE: "静默时报可重试",
   HEALTH_CACHE_MS: "快照刷新间隔",
   BENEFITS_INTERVAL_MS: "签到间隔",
@@ -202,7 +187,6 @@ const LABELS: Record<string, string> = {
 const UNITS: Record<string, ConfigUnit> = {
   ROUTER_FIRST_FRAME_MS: ConfigUnit.MILLISECONDS,
   ROUTER_STREAM_IDLE_MS: ConfigUnit.MILLISECONDS,
-  ROUTER_TOOL_OPENING_MS: ConfigUnit.MILLISECONDS,
   ROUTER_RETRY_BUDGET_MS: ConfigUnit.MILLISECONDS,
   HEALTH_CACHE_MS: ConfigUnit.MILLISECONDS,
   BENEFITS_INTERVAL_MS: ConfigUnit.MILLISECONDS,
@@ -219,28 +203,10 @@ const KINDS: Record<ConfigType, ConfigKind> = {
 
 /** 这三个键是流的三道闸，它们的取值受同一个上限约束。 */
 function isStreamLimitKey(key: string): boolean {
-  return key === "ROUTER_FIRST_FRAME_MS" || key === "ROUTER_STREAM_IDLE_MS" || key === "ROUTER_TOOL_OPENING_MS";
+  return key === "ROUTER_FIRST_FRAME_MS" || key === "ROUTER_STREAM_IDLE_MS";
 }
 
 
-// NaN is left to the caller to fall back on; bounds come from deliver.ts so the two cannot drift.
-function clampContinueMax(value: number): number {
-  if (Number.isNaN(value)) return value;
-  if (value < CONTINUE_MAX_MIN) return CONTINUE_MAX_MIN;
-  if (value > CONTINUE_MAX_MAX) return CONTINUE_MAX_MAX;
-  return value;
-}
-
-/** 这个值是不是被夹回边界了。NaN 不算。 */
-function continueMaxWasCapped(value: number): boolean {
-  if (Number.isNaN(value)) return false;
-  return value < CONTINUE_MAX_MIN || value > CONTINUE_MAX_MAX;
-}
-
-/** 这个键是不是续写次数那一项。 */
-function isContinueMaxKey(key: string): boolean {
-  return key === "ROUTER_CONTINUE_MAX";
-}
 
 /**
  * The bounds the panel is told about for a key.
@@ -251,9 +217,6 @@ function isContinueMaxKey(key: string): boolean {
  * constant, so the panel's max and the value actually in force cannot drift.
  */
 function boundsFor(key: string): { hasMin: boolean; minValue: bigint; hasMax: boolean; maxValue: bigint } {
-  if (isContinueMaxKey(key)) {
-    return { hasMin: true, minValue: BigInt(CONTINUE_MAX_MIN), hasMax: true, maxValue: BigInt(CONTINUE_MAX_MAX) };
-  }
   if (isStreamLimitKey(key)) {
     return { hasMin: false, minValue: 0n, hasMax: true, maxValue: BigInt(STREAM_LIMIT_MAX_MS) };
   }
@@ -288,11 +251,7 @@ const USER_FACING = new Set([
   // 四个超时旋钮：等首帧、流中途的停顿、tool_call 静默、重试的总时限
   "ROUTER_FIRST_FRAME_MS",
   "ROUTER_STREAM_IDLE_MS",
-  "ROUTER_TOOL_OPENING_MS",
   "ROUTER_RETRY_BUDGET_MS",
-  // 流中途静默超时后的自动续写
-  "ROUTER_CONTINUE_ON_IDLE",
-  "ROUTER_CONTINUE_MAX",
   "ROUTER_IDLE_ERROR_RETRYABLE",
   // 后台的定时任务与它刷的那份快照
   "PERIODIC_ENABLED",
@@ -357,14 +316,6 @@ export function configItems(): ConfigItemView[] {
       if (Number.isFinite(n) && streamLimitWasCapped(n)) {
         const capped = clampStreamLimit(n);
         log.warn(`[CONFIG] ${setting.key} 现在是 ${n}，超过上限，已按 ${capped} 生效`);
-        shown = String(capped);
-      }
-    }
-    if (isContinueMaxKey(setting.key)) {
-      const n = Number(raw);
-      if (Number.isFinite(n) && continueMaxWasCapped(n)) {
-        const capped = clampContinueMax(n);
-        log.warn(`[CONFIG] ${setting.key} 现在是 ${n}，不在 ${CONTINUE_MAX_MIN} 到 ${CONTINUE_MAX_MAX} 之间，已按 ${capped} 生效`);
         shown = String(capped);
       }
     }
@@ -442,13 +393,6 @@ export function setConfigValue(key: string, value: string, clear = false): { ok:
     if (Number.isFinite(n) && streamLimitWasCapped(n)) {
       stored = String(clampStreamLimit(n));
       cappedNote = `上限 ${STREAM_LIMIT_MAX_MS}，填的值已按上限收下（填 ${value}，存 ${stored}）`;
-    }
-  }
-  if (isContinueMaxKey(key)) {
-    const n = Number(value);
-    if (Number.isFinite(n) && continueMaxWasCapped(n)) {
-      stored = String(clampContinueMax(n));
-      cappedNote = `范围 ${CONTINUE_MAX_MIN} 到 ${CONTINUE_MAX_MAX}，填的值已夹回边界（填 ${value}，存 ${stored}）`;
     }
   }
   configOverride(key, stored);

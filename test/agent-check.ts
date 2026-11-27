@@ -5,7 +5,7 @@
 // 头是从真的客户端抓的：pi 发 user-agent: pi/1.4.0 (linux; node/…)，
 // opencode 发 user-agent: opencode/latest/2.1.3/cli 外加 x-opencode-client。
 
-import { detectAgent } from "../lib/agent.ts";
+import { detectAgent, detectSession, clientForwardHeaders } from "../lib/agent.ts";
 
 let pass = 0;
 let fail = 0;
@@ -64,6 +64,94 @@ check("没有头是 unknown", empty.name === "unknown", empty.name);
 
 const browser = detectAgent({ "user-agent": "Mozilla/5.0 (X11; Linux x86_64) Chrome/140" });
 check("浏览器报第一个词", browser.name === "Mozilla", browser.name);
+
+console.log("");
+console.log("会话头");
+
+// 1. 只有 OpenAI 风格的裸名三个头：三个字段都读到。
+const bare = detectSession({
+  "session_id": "sess-bare",
+  "parent_session_id": "par-bare",
+  "session_name": "bare-name",
+});
+check(
+  "裸名三个头都读到",
+  bare.sessionId === "sess-bare" && bare.parentSessionId === "par-bare" && bare.sessionName === "bare-name",
+  `${bare.sessionId}|${bare.parentSessionId}|${bare.sessionName}`,
+);
+
+// 2. 只有网关前缀那三个：值取自前缀头，证明兜底链接上了。
+const prefixed = detectSession({
+  "agentfacade_session_id": "sess-prefix",
+  "agentfacade_parent_session_id": "par-prefix",
+  "agentfacade_session_name": "prefix-name",
+});
+check(
+  "前缀头兜底：三个字段都读到，值取自前缀头",
+  prefixed.sessionId === "sess-prefix" && prefixed.parentSessionId === "par-prefix" && prefixed.sessionName === "prefix-name",
+  `${prefixed.sessionId}|${prefixed.parentSessionId}|${prefixed.sessionName}`,
+);
+
+// 3. 两套都有：裸名优先，前缀只做兜底。
+const both = detectSession({
+  "session_id": "sess-bare",
+  "parent_session_id": "par-bare",
+  "session_name": "bare-name",
+  "agentfacade_session_id": "sess-prefix",
+  "agentfacade_parent_session_id": "par-prefix",
+  "agentfacade_session_name": "prefix-name",
+});
+check(
+  "两套都有时裸名优先",
+  both.sessionId === "sess-bare" && both.parentSessionId === "par-bare" && both.sessionName === "bare-name",
+  `${both.sessionId}|${both.parentSessionId}|${both.sessionName}`,
+);
+
+// 5. 新补的 session_id 不许插队到既有链（x-session-id）前面。
+const priority = detectSession({
+  "x-session-id": "from-x-session-id",
+  "session_id": "from-session-id",
+});
+check("并存时按既有优先级取 x-session-id", priority.sessionId === "from-x-session-id", priority.sessionId);
+
+// 会话名是名字字段，截断线与 agentName 一致（64）。
+const longName = detectSession({ "session_name": "n".repeat(100) });
+check("会话名按 64 截断", longName.sessionName === "n".repeat(64), `len=${longName.sessionName.length}`);
+
+console.log("");
+console.log("转发头过滤");
+
+// 4. agentfacade_ 前缀的头一个都不外发，裸名三个照旧透传。
+const forwarded = clientForwardHeaders({
+  "agentfacade_session_id": "sess-prefix",
+  "agentfacade_parent_session_id": "par-prefix",
+  "agentfacade_session_name": "prefix-name",
+  "session_id": "sess-bare",
+  "parent_session_id": "par-bare",
+  "session_name": "bare-name",
+});
+check(
+  "agentfacade_ 前缀的三个头都不转发",
+  !("agentfacade_session_id" in forwarded) && !("agentfacade_parent_session_id" in forwarded) && !("agentfacade_session_name" in forwarded),
+  JSON.stringify(Object.keys(forwarded)),
+);
+check(
+  "裸名三个头照旧透传",
+  forwarded["session_id"] === "sess-bare" && forwarded["parent_session_id"] === "par-bare" && forwarded["session_name"] === "bare-name",
+  JSON.stringify(forwarded),
+);
+
+// 精确名单照旧生效，前缀规则与它并存（键名大小写不敏感）。
+const mixed = clientForwardHeaders({
+  "authorization": "Bearer gateway-key",
+  "AgentFacade_Session_Id": "sess-mixed",
+  "session_id": "sess-bare",
+});
+check(
+  "精确名单照旧：authorization 与前缀头都摘掉",
+  !("authorization" in mixed) && !("agentfacade_session_id" in mixed) && mixed["session_id"] === "sess-bare",
+  JSON.stringify(mixed),
+);
 
 console.log("");
 console.log(`${pass} 项过了，${fail} 项没过`);

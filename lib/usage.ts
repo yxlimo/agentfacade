@@ -33,6 +33,8 @@ export interface UsageEvent {
   sessionId: string;
   /** 父会话 id。只有子代理有；空的就是主代理。 */
   parentSessionId: string;
+  /** 会话名（客户端在请求头里带的名字）。认不出来就是空串。 */
+  sessionName: string;
   /**
    * 子代理的 agent 名（be-match、reviewer……）。
    *
@@ -63,7 +65,7 @@ export interface UsageEvent {
 }
 
 /** 写一条之前的东西：id 和时间由这里补。 */
-export type UsageEventInput = Omit<UsageEvent, "id" | "day" | "hour" | "ts"> & { ts?: number };
+export type UsageEventInput = Omit<UsageEvent, "id" | "day" | "hour" | "ts" | "sessionName"> & { ts?: number; sessionName?: string };
 
 /** 本地时区的天。 */
 export function localDay(ts: number): string {
@@ -90,6 +92,7 @@ function ensureTable(): void {
       agent             TEXT NOT NULL,
       session_id        TEXT NOT NULL DEFAULT '',
       parent_session_id TEXT NOT NULL DEFAULT '',
+      session_name      TEXT NOT NULL DEFAULT '',
       agent_name        TEXT NOT NULL DEFAULT '',
       client            TEXT NOT NULL,
       ok                INTEGER NOT NULL,
@@ -119,12 +122,13 @@ function ensureTable(): void {
  */
 function addMissingColumns(): void {
   const have = new Set(
-    (store().prepare("PRAGMA table_info(usage_event)").all() as any[]).map((c) => String(c.name)),
+    (store().prepare("PRAGMA table_info(usage_event)").all() as { name?: unknown }[]).map((c) => String(c.name)),
   );
   for (const [name, type] of [
     ["session_id", "TEXT NOT NULL DEFAULT ''"],
     ["parent_session_id", "TEXT NOT NULL DEFAULT ''"],
     ["agent_name", "TEXT NOT NULL DEFAULT ''"],
+    ["session_name", "TEXT NOT NULL DEFAULT ''"],
   ] as const) {
     if (have.has(name)) continue;
     try {
@@ -143,9 +147,9 @@ export function recordUsage(input: UsageEventInput): void {
     store()
       .prepare(
         "INSERT INTO usage_event (ts, day, hour, upstream_id, upstream_model, agent_model, " +
-          "agent, session_id, parent_session_id, agent_name, client, ok, status, prompt_tokens, " +
+          "agent, session_id, parent_session_id, session_name, agent_name, client, ok, status, prompt_tokens, " +
           "completion_tokens, reasoning_tokens, latency_ms, error) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         ts,
@@ -157,6 +161,7 @@ export function recordUsage(input: UsageEventInput): void {
         input.agent,
         input.sessionId,
         input.parentSessionId,
+        input.sessionName ?? "",
         input.agentName,
         input.client,
         input.ok ? 1 : 0,
@@ -194,7 +199,7 @@ export interface UsageFilter {
 export function listUsage(filter: UsageFilter = {}): UsageEvent[] {
   ensureTable();
   const where: string[] = [];
-  const args: any[] = [];
+  const args: (string | number)[] = [];
   if (filter.upstreamId) {
     where.push("upstream_id = ?");
     args.push(filter.upstreamId);
@@ -221,10 +226,10 @@ export function listUsage(filter: UsageFilter = {}): UsageEvent[] {
   }
   const sql =
     "SELECT id, ts, day, hour, upstream_id, upstream_model, agent_model, agent, " +
-    "session_id, parent_session_id, agent_name, client, ok, status, prompt_tokens, " +
+    "session_id, parent_session_id, session_name, agent_name, client, ok, status, prompt_tokens, " +
     "completion_tokens, reasoning_tokens, latency_ms, error " +
     `FROM usage_event${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY id DESC`;
-  const rows = store().prepare(sql).all(...args) as any[];
+  const rows = store().prepare(sql).all(...args) as Record<string, unknown>[];
   const capped = filter.limit && filter.limit > 0 ? rows.slice(0, filter.limit) : rows;
   return capped.map((r) => ({
     id: Number(r.id),
@@ -237,6 +242,7 @@ export function listUsage(filter: UsageFilter = {}): UsageEvent[] {
     agent: String(r.agent),
     sessionId: String(r.session_id ?? ""),
     parentSessionId: String(r.parent_session_id ?? ""),
+    sessionName: String(r.session_name ?? ""),
     agentName: String(r.agent_name ?? ""),
     client: String(r.client),
     ok: Number(r.ok) !== 0,
@@ -261,21 +267,34 @@ export function listUsage(filter: UsageFilter = {}): UsageEvent[] {
  * 少了这一步，MiniMax 的流式请求会记成 7 个输入令牌，而同一请求的非流式
  * 记成 204 —— 上游把输入拆成了两处报。
  */
-export function usageTotals(usage: any): TokenTotals {
+export function usageTotals(usage: unknown): TokenTotals {
   const empty = { promptTokens: 0, completionTokens: 0, reasoningTokens: 0 };
   if (!usage || typeof usage !== "object") return empty;
+  // Every vendor spells these differently and each may be absent, so the fields
+  // stay `unknown` here: num() is the only reader and it already treats a
+  // non-number as 0.
+  const u = usage as {
+    prompt_tokens?: unknown;
+    input_tokens?: unknown;
+    cache_read_input_tokens?: unknown;
+    cache_creation_input_tokens?: unknown;
+    completion_tokens?: unknown;
+    output_tokens?: unknown;
+    reasoning_tokens?: unknown;
+    completion_tokens_details?: { reasoning_tokens?: unknown };
+    output_tokens_details?: { thinking_tokens?: unknown };
+  };
   const promptTokens =
-    typeof usage.prompt_tokens === "number"
-      ? usage.prompt_tokens
-      : num(usage.input_tokens) +
-        num(usage.cache_read_input_tokens) +
-        num(usage.cache_creation_input_tokens);
-  const completionTokens =
-    typeof usage.completion_tokens === "number" ? usage.completion_tokens : num(usage.output_tokens);
+    typeof u.prompt_tokens === "number"
+      ? u.prompt_tokens
+      : num(u.input_tokens) +
+        num(u.cache_read_input_tokens) +
+        num(u.cache_creation_input_tokens);
+  const completionTokens = typeof u.completion_tokens === "number" ? u.completion_tokens : num(u.output_tokens);
   const reasoningTokens = num(
-    usage.completion_tokens_details?.reasoning_tokens ??
-      usage.output_tokens_details?.thinking_tokens ??
-      usage.reasoning_tokens,
+    u.completion_tokens_details?.reasoning_tokens ??
+      u.output_tokens_details?.thinking_tokens ??
+      u.reasoning_tokens,
   );
   return { promptTokens, completionTokens, reasoningTokens };
 }

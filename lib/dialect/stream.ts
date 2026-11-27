@@ -41,7 +41,8 @@ export async function* openaiStreamToAnthropic(
   // over until the upstream says so.
   let finalStopReason = "";
   let finished = false;
-  const toolCalls = new Map<number, { id: string; name: string; args: string }>();
+  // 每路工具调用一行：块号（-1 = 还没开）、已发出的参数（不重发已发过的部分）。
+  const toolCalls = new Map<number, { id: string; name: string; args: string; blockIndex: number; emitted: number }>();
 
   async function* start(usage?: Json): AsyncGenerator<string> {
     if (started) return;
@@ -79,6 +80,9 @@ export async function* openaiStreamToAnthropic(
     const choice = chunk.choices?.[0];
     if (!choice) continue;
     const delta = choice.delta ?? {};
+    // 上游只要开口了就把 message_start 发出去：客户端在这一帧之后就知道流开着，
+    // 不会因为「第一块内容还没来」而干等（扣住的年代它等的是整条帧）。
+    if (!started) yield* start();
 
     if (typeof delta.content === "string" && delta.content.length) {
       if (!started) yield* start();
@@ -120,11 +124,30 @@ export async function* openaiStreamToAnthropic(
 
     for (const call of Array.isArray(delta.tool_calls) ? delta.tool_calls : []) {
       const index = typeof call.index === "number" ? call.index : 0;
-      const existing = toolCalls.get(index) ?? { id: "", name: "", args: "" };
+      const existing = toolCalls.get(index) ?? { id: "", name: "", args: "", blockIndex: -1, emitted: 0 };
       if (call.id) existing.id = call.id;
       if (call.function?.name) existing.name = call.function.name;
-      if (typeof call.function?.arguments === "string") existing.args += call.function.arguments;
+      const incoming = typeof call.function?.arguments === "string" ? call.function.arguments : "";
+      existing.args += incoming;
       toolCalls.set(index, existing);
+      // 名字到了就把这个工具块开出来：Anthropic 的协议允许 input 先空着，
+      // 参数用 input_json_delta 一片一片补。等参数收全再发等于把整段扣住。
+      if (existing.name && existing.blockIndex < 0) {
+        existing.blockIndex = nextIndex++;
+        yield sseEvent("content_block_start", {
+          type: "content_block_start",
+          index: existing.blockIndex,
+          content_block: { type: "tool_use", id: existing.id || `toolu_${randomUUID().slice(0, 12)}`, name: existing.name, input: {} },
+        });
+      }
+      if (existing.blockIndex >= 0 && incoming.length > 0) {
+        existing.emitted += incoming.length;
+        yield sseEvent("content_block_delta", {
+          type: "content_block_delta",
+          index: existing.blockIndex,
+          delta: { type: "input_json_delta", partial_json: incoming },
+        });
+      }
     }
 
     if (choice.finish_reason) {
@@ -137,22 +160,23 @@ export async function* openaiStreamToAnthropic(
         yield sseEvent("content_block_stop", { type: "content_block_stop", index: thinkingIndex });
         thinkingOpen = false;
       }
-      // OpenAI splits the tool arguments at token boundaries, so they are only
-      // valid JSON once the call is complete.
-      let index = nextIndex++;
+      // 工具块已经边到边开过了，这里只收尾：参数一个都没到的（空调用）补一个
+      // 空对象，别让客户端拿到一个没有 delta 的 tool_use 块。
       for (const call of toolCalls.values()) {
-        yield sseEvent("content_block_start", {
-          type: "content_block_start",
-          index,
-          content_block: { type: "tool_use", id: call.id || `toolu_${randomUUID().slice(0, 12)}`, name: call.name, input: {} },
-        });
-        yield sseEvent("content_block_delta", {
-          type: "content_block_delta",
-          index,
-          delta: { type: "input_json_delta", partial_json: call.args || "{}" },
-        });
-        yield sseEvent("content_block_stop", { type: "content_block_stop", index });
-        index++;
+        if (call.blockIndex < 0) {
+          call.blockIndex = nextIndex++;
+          yield sseEvent("content_block_start", {
+            type: "content_block_start",
+            index: call.blockIndex,
+            content_block: { type: "tool_use", id: call.id || `toolu_${randomUUID().slice(0, 12)}`, name: call.name, input: {} },
+          });
+          yield sseEvent("content_block_delta", {
+            type: "content_block_delta",
+            index: call.blockIndex,
+            delta: { type: "input_json_delta", partial_json: "{}" },
+          });
+        }
+        yield sseEvent("content_block_stop", { type: "content_block_stop", index: call.blockIndex });
       }
       const stopReason = choice.finish_reason === "length" ? "max_tokens" : choice.finish_reason === "tool_calls" ? "tool_use" : "end_turn";
       finalStopReason = stopReason;

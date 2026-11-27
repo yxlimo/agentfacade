@@ -10,6 +10,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "usage-check-"));
 process.env.FACADE_DATA_DIR = tmp;
@@ -20,10 +21,12 @@ const {
   recordUsage,
   localDay,
   clearUsage,
+  localHour,
   maxTotals,
   usageTotals,
 } = await import("../lib/usage.ts");
 const { usageEvents, usageSummary } = await import("../lib/admin/usage.ts");
+const { store, closeStore } = await import("../lib/store.ts");
 
 let pass = 0;
 let fail = 0;
@@ -355,9 +358,135 @@ check(
   JSON.stringify(bySubagent),
 );
 
+console.log("");
+console.log("会话名");
+
+clear();
+// The read-back of each stored row is the assertion: a dropped write or a
+// literal "undefined" cannot pass
+const sessionNameRow = {
+  upstreamId: "qoder",
+  upstreamModel: "glm-5.3",
+  agentModel: "glm-5.3",
+  agent: "pi",
+  parentSessionId: "",
+  agentName: "",
+  client: "qoder",
+  ok: true,
+  status: 200,
+  promptTokens: 1,
+  completionTokens: 1,
+  reasoningTokens: 0,
+  latencyMs: 1,
+  error: "",
+};
+recordUsage({ ...sessionNameRow, sessionId: "ses-named", sessionName: "fix-login" });
+recordUsage({ ...sessionNameRow, sessionId: "ses-unnamed" });
+const namedEvent = listUsage().find((e) => e.sessionId === "ses-named");
+check("写进去读回来：库里那一行是 fix-login", namedEvent?.sessionName === "fix-login", JSON.stringify(namedEvent?.sessionName));
+const unnamedEvent = listUsage().find((e) => e.sessionId === "ses-unnamed");
+check("不传 sessionName：库里那一行是空串", unnamedEvent?.sessionName === "", JSON.stringify(unnamedEvent?.sessionName));
+
+console.log("");
+console.log("老库升级：session_name 列");
+
+// The hand-built database is one migration behind and has a usage_event table
+// with no session_name column, so store() has to alter that exact table
+const OLD_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "usage-session-name-old-"));
+const OLD_FILE = path.join(OLD_DIR, "agentfacade.db");
+{
+  const old = new DatabaseSync(OLD_FILE);
+  old.exec(
+    `CREATE TABLE usage_event (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts                INTEGER NOT NULL,
+      day               TEXT NOT NULL,
+      hour              INTEGER NOT NULL,
+      upstream_id       TEXT NOT NULL,
+      upstream_model    TEXT NOT NULL,
+      agent_model       TEXT NOT NULL,
+      agent             TEXT NOT NULL,
+      session_id        TEXT NOT NULL DEFAULT '',
+      parent_session_id TEXT NOT NULL DEFAULT '',
+      agent_name        TEXT NOT NULL DEFAULT '',
+      client            TEXT NOT NULL,
+      ok                INTEGER NOT NULL,
+      status            INTEGER NOT NULL,
+      prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+      completion_tokens INTEGER NOT NULL DEFAULT 0,
+      reasoning_tokens  INTEGER NOT NULL DEFAULT 0,
+      latency_ms        INTEGER NOT NULL DEFAULT 0,
+      error             TEXT NOT NULL DEFAULT ''
+    )`,
+  );
+  old
+    .prepare(
+      "INSERT INTO usage_event (ts, day, hour, upstream_id, upstream_model, agent_model, agent, " +
+        "session_id, parent_session_id, agent_name, client, ok, status, prompt_tokens, error) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .run(
+      now,
+      localDay(now),
+      localHour(now),
+      "qoder",
+      "glm-5.3",
+      "glm-5.3",
+      "pi",
+      "old-session",
+      "",
+      "old-agent",
+      "qoder",
+      1,
+      200,
+      777,
+      "old-error",
+    );
+  const before = (old.prepare("PRAGMA table_info(usage_event)").all() as { name?: string }[]).map(
+    (column) => column.name ?? "",
+  );
+  check("旧库建出来就没有 session_name 列", !before.includes("session_name"), before.join(","));
+  old.exec("PRAGMA user_version = 5");
+  old.close();
+}
+// The singleton still points at the tmp database from the earlier cases
+closeStore();
+process.env.FACADE_DATA_DIR = OLD_DIR;
+store();
+const after = (store().prepare("PRAGMA table_info(usage_event)").all() as { name?: string }[]).map(
+  (column) => column.name ?? "",
+);
+check("store() 之后列真的补上了", after.includes("session_name"), after.join(","));
+const oldEvent = listUsage().find((e) => e.id === 1);
+check(
+  "老行还在，字段原样",
+  oldEvent?.sessionId === "old-session" &&
+    oldEvent?.agentName === "old-agent" &&
+    oldEvent?.promptTokens === 777 &&
+    oldEvent?.error === "old-error",
+  JSON.stringify(oldEvent),
+);
+check("老行读出来 sessionName 是空串", oldEvent?.sessionName === "", JSON.stringify(oldEvent?.sessionName));
+
+closeStore();
+let reopenError = "";
+try {
+  store();
+} catch (e) {
+  reopenError = (e as Error)?.message ?? String(e);
+}
+check("同一个库第二次 store() 不报错", reopenError === "", reopenError);
+const rowsAfterReopen = listUsage();
+check(
+  "第二次 store() 之后老行还在，sessionName 还是空串",
+  rowsAfterReopen.length === 1 && rowsAfterReopen[0].sessionName === "",
+  JSON.stringify(rowsAfterReopen.map((e) => [e.id, e.sessionName])),
+);
+closeStore();
+fs.rmSync(OLD_DIR, { recursive: true, force: true });
+
 // Close the database before removing its directory: on Windows an open
 // file cannot be deleted (EPERM), so the handle has to go first.
-const { closeStore } = await import("../lib/store.ts");
 closeStore();
 fs.rmSync(tmp, { recursive: true, force: true });
 

@@ -11,6 +11,7 @@ import { readEnvValue } from "../env.ts";
 import { SIMULATED_CLIENTS } from "../platform-catalog.ts";
 // 凭据 id 的唯一算法（叶子模块）：厂商 kind 退场要按账号定位推理 key 原来存哪。
 import { providerSecretId } from "../credential-ids.ts";
+import { jsonObjectOf } from "../dialect/json-value.ts";
 // legacySetting 读的设置在 settings 模块里：环境先、库里其次、默认最后。
 import { getConfig } from "./settings.ts";
 
@@ -58,13 +59,13 @@ const LEGACY_VENDOR_KIND_VERSION = 2;
 const PLATFORM_HEADERS_VERSION = 5;
 
 /** 库的 schema 版本现在是多少（没写过就是 0）。 */
-function schemaVersion(db: DatabaseSync): number {
+export function schemaVersion(db: DatabaseSync): number {
   const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
   return Number(row?.user_version ?? 0);
 }
 
 /** 把版本推到 n；已经更高就不动（步骤是往上堆的，不能回写旧号）。 */
-function setSchemaVersion(db: DatabaseSync, n: number): void {
+export function setSchemaVersion(db: DatabaseSync, n: number): void {
   if (schemaVersion(db) >= n) return;
   db.exec(`PRAGMA user_version = ${n}`);
 }
@@ -168,7 +169,9 @@ export function migrateLegacyVendorKinds(db: DatabaseSync): void {
       if (!from?.data) continue;
       let apiKey = "";
       try {
-        apiKey = String((JSON.parse(from.data) as Record<string, unknown>)[legacy.keyField] ?? "").trim();
+        const parsed: unknown = JSON.parse(from.data);
+        const fields = jsonObjectOf(parsed);
+        apiKey = String(fields?.[legacy.keyField] ?? "").trim();
       } catch {
         // 读不出来的凭据就是没凭据：下面的写入自然跳过它。
         continue;
@@ -247,6 +250,7 @@ function legacyPluginBase(pluginId: string): string | null {
     case "sensenova-pools":
       return legacySetting("SENSENOVA_BASE", "https://token.sensenova.cn/v1");
     case "tokenrhythm-wallet": {
+      // pi-lens-ignore: hardcoded-url -- the vendor default a legacy wallet row is migrated to; the operator's own value wins whenever the old setting exists
       const apiBase = legacySetting("TOKENRHYTHM_API_BASE", "https://tokenrhythm.studio");
       return legacySetting("TOKENRHYTHM_INFER_BASE", `${apiBase ?? "https://tokenrhythm.studio"}/v1`);
     }

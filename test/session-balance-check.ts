@@ -114,7 +114,7 @@ section("SESSION_HEADER：追加，不覆盖");
     reloadConfig();
     const two = extract({ "x-second": "second-value" });
     check("逗号分隔的多个按顺序试", two?.source === "header:x-second", JSON.stringify(two));
-    // 内置表不被自定义头挤掉：报过的头名仍是六条内置在前
+    // 内置表不被自定义头挤掉：报过的头名仍是七条内置在前
     const names = sessionHeaderNames();
     check(
       "自定义头追加在内置表末尾",

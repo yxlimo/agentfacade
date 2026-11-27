@@ -9,6 +9,8 @@ thinking: medium
 systemPromptMode: append
 # 权限写在这里，派单只给 agent + model + task（见 skill pi-subagents-extend）。
 extend:
+  setup:
+    preExec: sh .pi/worktree-setup.sh
   permissions:
     scope: ["."]
     write:

@@ -171,13 +171,9 @@ function errorJsonOf(text: string, dialect: "openai" | "anthropic"): any {
   return line ? JSON.parse(line.slice(6)) : null;
 }
 
-function setModes(retryable: boolean, continuing = false, max: number | null = null): void {
+function setModes(retryable: boolean): void {
   if (retryable) process.env.ROUTER_IDLE_ERROR_RETRYABLE = "1";
   else delete process.env.ROUTER_IDLE_ERROR_RETRYABLE;
-  if (continuing) process.env.ROUTER_CONTINUE_ON_IDLE = "true";
-  else delete process.env.ROUTER_CONTINUE_ON_IDLE;
-  if (max === null) delete process.env.ROUTER_CONTINUE_MAX;
-  else process.env.ROUTER_CONTINUE_MAX = String(max);
   reloadConfig();
 }
 
@@ -192,20 +188,6 @@ for (const flagOn of [false, true]) {
   }
 }
 
-// 两个开关互为替代：同时开时续写优先，且只 warn 一次
-const { log } = await import("../lib/log.ts");
-const warnings: string[] = [];
-const originalWarn = log.warn;
-log.warn = (...args: unknown[]) => {
-  warnings.push(args.map(String).join(" "));
-  return originalWarn(...args);
-};
-setModes(true, true);
-const bothContinuing = await run("openai", "stall", "both-continue");
-setModes(true, true, 0);
-const bothExhausted = await run("openai", "stall", "both-exhausted");
-log.warn = originalWarn;
-setModes(false);
 if (DUMP) {
   console.log(JSON.stringify(transcripts, null, 2));
 } else {
@@ -240,12 +222,6 @@ if (DUMP) {
   check("OpenAI 提前断的文案不变", errorFrameOf(transcripts["on-openai-cut"], "openai") === EXPECTED_OFF_OPENAI_CUT, JSON.stringify(errorFrameOf(transcripts["on-openai-cut"], "openai")));
   check("提前断的文案是 upstream closed early", errorJsonOf(transcripts["on-anthropic-cut"], "anthropic")?.error?.message === CLOSED, JSON.stringify(errorJsonOf(transcripts["on-anthropic-cut"], "anthropic")));
   console.log("");
-  console.log("E 开 + 续写开：两个开关互为替代，续写优先");
-  check("两开关都开时照常续写，正文接着来", bothContinuing.includes('"content":"hi"') && bothContinuing.includes('"content":"后半"') && bothContinuing.includes('"finish_reason":"stop"'), bothContinuing.slice(-300));
-  check("续写优先时没有 error 帧", !bothContinuing.includes('"error"') && !bothContinuing.includes("timed out"), bothContinuing.slice(-300));
-  check("续写用尽也不报可重试超时", errorFrameOf(bothExhausted, "openai").includes("sent nothing") && !errorFrameOf(bothExhausted, "openai").includes("timed out"), JSON.stringify(errorFrameOf(bothExhausted, "openai")));
-  check("续写用尽时仍是旧的 api_error 形状", errorJsonOf(bothExhausted, "openai")?.error?.type === "api_error", JSON.stringify(errorJsonOf(bothExhausted, "openai")));
-  check("两个开关都开只 warn 一次", warnings.filter((line) => line.includes("按续写处理")).length === 1, JSON.stringify(warnings.filter((line) => line.includes("按续写处理"))));
 }
 
 upstream.closeAllConnections?.();

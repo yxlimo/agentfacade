@@ -57,11 +57,12 @@ export async function platformApi<T>(
 ): Promise<T> {
   const method = init.method ?? "GET";
   const write = method !== "GET";
+  // pi-lens-ignore: ts-ssrf -- the host comes from the platform's configured base URL (an operator setting, same trust level as the account itself), so an allowlist here would only restate that config
   const r = await fetch(requestUrl(init.base, path), {
     method,
     headers: write
       ? writeHeaders(session)
-      : { Cookie: session.cookie, Accept: "application/json", "User-Agent": "Mozilla/5.0 (compatible; buddy-proxy)" },
+      : { Cookie: session.cookie, Accept: "application/json" },
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
     signal: AbortSignal.timeout(20_000),
   });

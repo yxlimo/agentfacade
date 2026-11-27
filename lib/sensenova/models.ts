@@ -70,7 +70,6 @@ export async function listModels(apiKey: string): Promise<SenseNovaModel[]> {
     headers: {
       Accept: "application/json",
       Authorization: `Bearer ${apiKey}`,
-      "User-Agent": "Mozilla/5.0 (compatible; buddy-proxy)",
     },
     signal: AbortSignal.timeout(20_000),
   });
