@@ -12,6 +12,7 @@ extend:
     write:
       - lib/router/**
       - lib/session-id.ts
+      - lib/agent.ts
       - lib/cooldown.ts
       - lib/upstream-breaker.ts
       - lib/upstream-gateway-page.ts

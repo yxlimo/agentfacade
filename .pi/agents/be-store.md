@@ -12,6 +12,7 @@ extend:
     write:
       - lib/store/**
       - lib/store.ts
+      - lib/usage.ts
       - test/**
       - tests/**
       - .e2e
