@@ -64,12 +64,10 @@ configNumber("ROUTER_FIRST_FRAME_MS", STREAM_FIRST_FRAME_DEFAULT_MS);
 configNumber("ROUTER_STREAM_IDLE_MS", STREAM_IDLE_DEFAULT_MS);
 // 工具开头到了、参数还没来的那段等待。默认 0：不开这个计时，沿用中途那个窗口
 // （今天的行为）。
-configNumber("ROUTER_TOOL_OPENING_MS", 0);
 configNumber("ROUTER_RETRY_BUDGET_MS", 180_000);
 
 // 这一项的热标记写在这里：读它的那个模块在 lib/router/** 里，不是这份登记处，
 // 而面板不能对一个每条请求读一次的设置说要重启。
-markHotSetting("ROUTER_TOOL_OPENING_MS");
 
 
 // 与「静默超时后自动续写」互为替代，不是上下位：续写是我们替客户端把话说完（无痕、
@@ -144,7 +142,6 @@ export interface ConfigItemView {
 const DESCRIPTIONS: Record<string, string> = {
   ROUTER_FIRST_FRAME_MS: "等不到第一个字就把同一请求重发给同一个上游（秒）；这是等首字的上限",
   ROUTER_STREAM_IDLE_MS: "正文或 thinking 停这么久就算静默（秒）；之后见下面三项",
-  ROUTER_TOOL_OPENING_MS: "tool_call 发一半停这么久就算静默（秒）；0 = 跟「多久算静默」一致。静默后把同一请求重发给同一上游，不换上游",
   ROUTER_RETRY_BUDGET_MS: "一次请求的重试总时限（秒）",
   ROUTER_IDLE_ERROR_RETRYABLE: "与续写二选一：改成报可重试超时，让客户端整回合重发",
   HEALTH_CACHE_MS: "额度与状态快照多久刷新（秒）",
@@ -170,7 +167,6 @@ const DESCRIPTIONS: Record<string, string> = {
 const LABELS: Record<string, string> = {
   ROUTER_FIRST_FRAME_MS: "等首字时限",
   ROUTER_STREAM_IDLE_MS: "多久算静默",
-  ROUTER_TOOL_OPENING_MS: "tool_call 静默多久",
   ROUTER_RETRY_BUDGET_MS: "重试总时限",
   ROUTER_IDLE_ERROR_RETRYABLE: "静默时报可重试",
   HEALTH_CACHE_MS: "快照刷新间隔",
@@ -191,7 +187,6 @@ const LABELS: Record<string, string> = {
 const UNITS: Record<string, ConfigUnit> = {
   ROUTER_FIRST_FRAME_MS: ConfigUnit.MILLISECONDS,
   ROUTER_STREAM_IDLE_MS: ConfigUnit.MILLISECONDS,
-  ROUTER_TOOL_OPENING_MS: ConfigUnit.MILLISECONDS,
   ROUTER_RETRY_BUDGET_MS: ConfigUnit.MILLISECONDS,
   HEALTH_CACHE_MS: ConfigUnit.MILLISECONDS,
   BENEFITS_INTERVAL_MS: ConfigUnit.MILLISECONDS,
@@ -208,7 +203,7 @@ const KINDS: Record<ConfigType, ConfigKind> = {
 
 /** 这三个键是流的三道闸，它们的取值受同一个上限约束。 */
 function isStreamLimitKey(key: string): boolean {
-  return key === "ROUTER_FIRST_FRAME_MS" || key === "ROUTER_STREAM_IDLE_MS" || key === "ROUTER_TOOL_OPENING_MS";
+  return key === "ROUTER_FIRST_FRAME_MS" || key === "ROUTER_STREAM_IDLE_MS";
 }
 
 
@@ -256,7 +251,6 @@ const USER_FACING = new Set([
   // 四个超时旋钮：等首帧、流中途的停顿、tool_call 静默、重试的总时限
   "ROUTER_FIRST_FRAME_MS",
   "ROUTER_STREAM_IDLE_MS",
-  "ROUTER_TOOL_OPENING_MS",
   "ROUTER_RETRY_BUDGET_MS",
   "ROUTER_IDLE_ERROR_RETRYABLE",
   // 后台的定时任务与它刷的那份快照
