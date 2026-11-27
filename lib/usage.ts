@@ -33,6 +33,8 @@ export interface UsageEvent {
   sessionId: string;
   /** 父会话 id。只有子代理有；空的就是主代理。 */
   parentSessionId: string;
+  /** 会话名（客户端在请求头里带的名字）。认不出来就是空串。 */
+  sessionName: string;
   /**
    * 子代理的 agent 名（be-match、reviewer……）。
    *
@@ -63,7 +65,7 @@ export interface UsageEvent {
 }
 
 /** 写一条之前的东西：id 和时间由这里补。 */
-export type UsageEventInput = Omit<UsageEvent, "id" | "day" | "hour" | "ts"> & { ts?: number };
+export type UsageEventInput = Omit<UsageEvent, "id" | "day" | "hour" | "ts" | "sessionName"> & { ts?: number; sessionName?: string };
 
 /** 本地时区的天。 */
 export function localDay(ts: number): string {
@@ -90,6 +92,7 @@ function ensureTable(): void {
       agent             TEXT NOT NULL,
       session_id        TEXT NOT NULL DEFAULT '',
       parent_session_id TEXT NOT NULL DEFAULT '',
+      session_name      TEXT NOT NULL DEFAULT '',
       agent_name        TEXT NOT NULL DEFAULT '',
       client            TEXT NOT NULL,
       ok                INTEGER NOT NULL,
@@ -125,6 +128,7 @@ function addMissingColumns(): void {
     ["session_id", "TEXT NOT NULL DEFAULT ''"],
     ["parent_session_id", "TEXT NOT NULL DEFAULT ''"],
     ["agent_name", "TEXT NOT NULL DEFAULT ''"],
+    ["session_name", "TEXT NOT NULL DEFAULT ''"],
   ] as const) {
     if (have.has(name)) continue;
     try {
@@ -143,9 +147,9 @@ export function recordUsage(input: UsageEventInput): void {
     store()
       .prepare(
         "INSERT INTO usage_event (ts, day, hour, upstream_id, upstream_model, agent_model, " +
-          "agent, session_id, parent_session_id, agent_name, client, ok, status, prompt_tokens, " +
+          "agent, session_id, parent_session_id, session_name, agent_name, client, ok, status, prompt_tokens, " +
           "completion_tokens, reasoning_tokens, latency_ms, error) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         ts,
@@ -157,6 +161,7 @@ export function recordUsage(input: UsageEventInput): void {
         input.agent,
         input.sessionId,
         input.parentSessionId,
+        input.sessionName ?? "",
         input.agentName,
         input.client,
         input.ok ? 1 : 0,
@@ -221,7 +226,7 @@ export function listUsage(filter: UsageFilter = {}): UsageEvent[] {
   }
   const sql =
     "SELECT id, ts, day, hour, upstream_id, upstream_model, agent_model, agent, " +
-    "session_id, parent_session_id, agent_name, client, ok, status, prompt_tokens, " +
+    "session_id, parent_session_id, session_name, agent_name, client, ok, status, prompt_tokens, " +
     "completion_tokens, reasoning_tokens, latency_ms, error " +
     `FROM usage_event${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY id DESC`;
   const rows = store().prepare(sql).all(...args) as any[];
@@ -237,6 +242,7 @@ export function listUsage(filter: UsageFilter = {}): UsageEvent[] {
     agent: String(r.agent),
     sessionId: String(r.session_id ?? ""),
     parentSessionId: String(r.parent_session_id ?? ""),
+    sessionName: String(r.session_name ?? ""),
     agentName: String(r.agent_name ?? ""),
     client: String(r.client),
     ok: Number(r.ok) !== 0,
