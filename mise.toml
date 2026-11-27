@@ -242,6 +242,10 @@ run = "node --experimental-strip-types test/send-error-retry-header-check.ts"
 description = "Check that a stream cut mid-answer is settled as a failure on both dialects (the usage row says 504)"
 run = "node --experimental-strip-types test/anthropic-stream-cut-check.ts"
 
+[tasks."test:forward:headers"]
+description = "Check that the forwarded headers carry the client's User-Agent and never the gateway's own name"
+run = "node --experimental-strip-types test/forward-headers-check.ts"
+
 [tasks."test:stream:limits"]
 description = "Check the stream limit ceiling and that the fetch layer below it stays looser"
 run = "node --experimental-strip-types test/stream-limits-check.ts"

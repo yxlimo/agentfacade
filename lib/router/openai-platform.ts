@@ -45,14 +45,17 @@ export async function openAiPlatformChat(
       500,
     );
   }
+  // Headers.set 不分大小写：调用方自己送来一个 `authorization` 也只会被这一句
+  // 覆盖，不会多出一条 —— 对象字面量会留下两条（大小写不同算两个键），到上游
+  // 合成一个逗号串，两把凭据一起发出去。
+  const headers = new Headers({ ...extraHeaders });
+  headers.set("content-type", "application/json");
+  headers.set("authorization", `Bearer ${platform.key}`);
+  headers.set("accept", body.stream ? "text/event-stream" : "application/json");
+  // pi-lens-ignore: ssrf -- the host is the platform's configured base URL (an operator setting, same trust level as the account), so an allowlist here would only restate that config
   const response = await fetch(`${platform.base}/chat/completions`, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      Authorization: `Bearer ${platform.key}`,
-      Accept: body.stream ? "text/event-stream" : "application/json",
-      ...extraHeaders,
-    },
+    headers,
     body: JSON.stringify(body),
     ...(signal ? { signal } : {}),
   });
