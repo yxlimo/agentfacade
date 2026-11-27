@@ -1280,12 +1280,6 @@ class ToolCallTracker {
   }
 }
 
-/** 一帧原始 SSE 文本：事件名与数据 payload。 */
-interface RawSseFrame {
-  event?: string;
-  data: string;
-}
-
 
 /**
  * 工具帧是原子的：扣住，直到参数收全。
