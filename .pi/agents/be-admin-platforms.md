@@ -25,6 +25,9 @@ extend:
       - lib/platforms.ts
       - lib/platform-templates.ts
       - lib/providers.ts
+      - lib/sensenova/**
+      - lib/intern-ai/**
+      - lib/tokenrhythm/**
       - test/**
       - tests/**
       - .e2e
