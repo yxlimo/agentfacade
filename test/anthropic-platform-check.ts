@@ -200,10 +200,13 @@ const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 async function call(
   path: string,
   body: unknown,
+  // 会话头这类要由测试指定的头从这儿进；content-type 仍是固定的（客户端那份
+  // 顶不掉网关的）。
+  extraHeaders: Record<string, string> = {},
 ): Promise<{ status: number; json: any; text: string }> {
   const res = await fetch(`${base}${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...extraHeaders, "content-type": "application/json" },
     body: JSON.stringify(body),
   });
   const text = await res.text();
@@ -455,6 +458,33 @@ section("5. usage");
   check("completion 是 output", last?.completionTokens === 22, String(last?.completionTokens));
   check("上游模型名记下来了", last?.upstreamModel === "claude-sonnet-x", String(last?.upstreamModel));
   check("客户端问的模型名也记下来了", last?.agentModel === "claude-fake", String(last?.agentModel));
+}
+
+/* ------------------------------------------------------------------ *
+ * 5b. 会话名落库：客户端给什么就记什么，前缀头只做兜底
+ * ------------------------------------------------------------------ */
+
+section("5b. 会话名落库");
+
+{
+  const body = {
+    model: "claude-fake",
+    max_tokens: 16,
+    messages: [{ role: "user", content: [{ type: "text", text: "say ok" }] }],
+  };
+
+  await call("/v1/messages", body, { session_name: "fix-login" });
+  const bare = listUsage({ upstreamId: "aup" })[0];
+  check("裸名 session_name 记下来了", bare?.sessionName === "fix-login", String(bare?.sessionName));
+
+  // 头值只能是 latin-1（fetch 会拒绝别的），所以这里用 ASCII 的名字。
+  await call("/v1/messages", body, { agentfacade_session_name: "prefix-fallback" });
+  const prefixed = listUsage({ upstreamId: "aup" })[0];
+  check("只有前缀头时也记下来了", prefixed?.sessionName === "prefix-fallback", String(prefixed?.sessionName));
+
+  await call("/v1/messages", body);
+  const none = listUsage({ upstreamId: "aup" })[0];
+  check("两样都没有时是空串", none?.sessionName === "", JSON.stringify(none?.sessionName));
 }
 
 /* ------------------------------------------------------------------ *
