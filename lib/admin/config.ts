@@ -143,7 +143,7 @@ const DESCRIPTIONS: Record<string, string> = {
   ROUTER_FIRST_FRAME_MS: "等不到第一个字就把同一请求重发给同一个上游（秒）；这是等首字的上限",
   ROUTER_STREAM_IDLE_MS: "正文或 thinking 停这么久就算静默（秒）；之后见下面三项",
   ROUTER_RETRY_BUDGET_MS: "一次请求的重试总时限（秒）",
-  ROUTER_IDLE_ERROR_RETRYABLE: "与续写二选一：改成报可重试超时，让客户端整回合重发",
+  ROUTER_IDLE_ERROR_RETRYABLE: "静默改报可重试超时，让客户端整回合重发",
   HEALTH_CACHE_MS: "额度与状态快照多久刷新（秒）",
   BENEFITS_INTERVAL_MS: "签到任务多久跑一次（秒）",
   QODER_LEGACY_RETRY_MS: "Qoder 旧协议排队后隔多久重试（秒）",

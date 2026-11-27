@@ -5,7 +5,7 @@
 // 离线：本机假上游 + 假开放平台 + 真 HTTP 服务，不连任何真平台
 //
 // 覆盖：
-//   1 内容出现之前静默超时（假上游吐一帧就安静）→ x-should-retry: true
+//   1 首帧之前静默超时（假上游一个字节都不回）→ x-should-retry: true
 //   2 429 限流 → true
 //   3 上游 5xx → true
 //   4 额度类失败 → false
@@ -29,7 +29,7 @@ import type Koa from "koa";
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "send-error-retry-"));
 process.env.FACADE_DATA_DIR = tmp;
 process.env.ROUTER_RETRY_BUDGET_MS = "50";
-process.env.ROUTER_FIRST_FRAME_MS = "60_000";
+process.env.ROUTER_FIRST_FRAME_MS = "150";
 process.env.ROUTER_STREAM_IDLE_MS = "150";
 process.env.REQUIRE_API_KEY = "true";
 
@@ -97,17 +97,27 @@ const upstream = http.createServer((req, res) => {
     return;
   }
   if (scenario === "timeout") {
+    // 头发出去了、正文一个字节都不发。这就是「首帧之前静默」：网关那边一个字节
+    // 都还没发给客户端，所以能把它报成 504 并带上 x-should-retry。
+    //
+    // 连响应头都不回不行：那时 fetch 自己还没返回，首帧闸还没开始计时（那条路
+    // 归路由预算管，报出来是 fetch failed）。先回一帧 role 也不行：那一帧现在
+    // 立刻到客户端，属于「响应已经开始」，可重试的信息只能放进流里的 error 帧。
     res.writeHead(200, { "content-type": "text/event-stream" });
-    // A role-only frame does not open the content gate, so the silence that
-    // follows is reported before any headers go out
+    res.flushHeaders();
+    return;
+  }
+  if (scenario === "timeout-started") {
+    // 先吐一帧 role 再安静：这一帧现在立刻到客户端，响应已经开始，之后静默只能
+    // 变成流里的一条 error 帧 —— 200 的响应头上没有 x-should-retry 可以改。
+    res.writeHead(200, { "content-type": "text/event-stream" });
     res.write(
       `data: ${JSON.stringify({
-        id: "chatcmpl-retry-header-idle",
+        id: "chatcmpl-retry-header-started",
         object: "chat.completion.chunk",
         choices: [{ index: 0, delta: { role: "assistant" } }],
       })}\n\n`,
     );
-    // Deliberately leave the stream open
     return;
   }
   res.writeHead(404, { "content-type": "application/json" });
@@ -121,6 +131,7 @@ const scenarios: Record<string, string> = {
   quota: "retry-header-quota",
   auth: "retry-header-auth",
   timeout: "retry-header-timeout",
+  "timeout-started": "retry-header-timeout-started",
   "rate-limit": "retry-header-rate-limit",
   inject: "retry-header-inject",
 };
@@ -183,7 +194,7 @@ const route = http.createServer(async (req, res) => {
     res,
     {
       model: `retry-header-${scenario}-model`,
-      stream: scenario === "timeout",
+      stream: scenario === "timeout" || scenario === "timeout-started",
       messages: [{ role: "user", content: "hello" }],
     },
     { "x-scenario": scenario },
@@ -230,6 +241,7 @@ async function run(direct: string, scenario = ""): Promise<Answer> {
 }
 
 const timeout = await run("", "timeout");
+const timeoutStarted = await run("", "timeout-started");
 const rateLimit = await run("", "rate-limit");
 const server = await run("", "server");
 const quota = await run("", "quota");
@@ -239,7 +251,19 @@ const override = await run("override");
 const overrideUpper = await run("override-upper");
 
 check("静默超时：x-should-retry: true", timeout.retryHeader === "true", `${timeout.status} ${JSON.stringify(timeout.body)}`);
-check("静默超时走的是真链路：吐了一帧但没到内容提交点", timeout.body.includes("upstream sent nothing") && timeout.body.includes("mid-stream"), `${timeout.status} ${JSON.stringify(timeout.body)}`);
+check("静默超时走的是真链路：首帧一直没来", timeout.body.includes("upstream sent nothing") && timeout.body.includes("first frame"), `${timeout.status} ${JSON.stringify(timeout.body)}`);
+// 响应已经开始之后的静默：这是 200，头早就发出去了，改不了。可重试的信息只能
+// 落在流里那条 error 帧上（客户端自己看帧判断要不要重发）。
+check(
+  "响应已经开始之后静默：200 且没有这个头",
+  timeoutStarted.status === 200 && timeoutStarted.retryHeader === undefined,
+  `${timeoutStarted.status} ${String(timeoutStarted.retryHeader)} ${JSON.stringify(timeoutStarted.body)}`,
+);
+check(
+  "响应已经开始之后静默：流里有一条 error 帧，且说清了是静默",
+  timeoutStarted.body.includes('"error"') && timeoutStarted.body.includes("sent nothing"),
+  JSON.stringify(timeoutStarted.body),
+);
 check("429 限流：x-should-retry: true", rateLimit.retryHeader === "true", `${rateLimit.status} ${JSON.stringify(rateLimit.body)}`);
 check("5xx：x-should-retry: true", server.retryHeader === "true", `${server.status} ${JSON.stringify(server.body)}`);
 check("额度失败：x-should-retry: false", quota.retryHeader === "false", `${quota.status} ${JSON.stringify(quota.body)}`);

@@ -375,14 +375,14 @@ test('毫秒设置填越界、填不进数字框的值：一个 SetConfig 都不
 /**
  * 布尔项是下拉框：选「开启」落库的是 "true"，界面上的中文不外流到库里。
  *
- * 用「静默后自动续写」而不是 REQUIRE_API_KEY：e2e 的环境变量钉着后者
+ * 用「静默时报可重试」而不是 REQUIRE_API_KEY：e2e 的环境变量钉着后者
  * （e2e.config.ts 给了 false），改了也不生效，看不到落库的形状。
  */
 test('布尔项：选「开启」值列说「开启」、落库 true；改回「关闭」值列说「关闭」', async ({
   app,
   screen,
 }) => {
-  const key = 'ROUTER_CONTINUE_ON_IDLE';
+  const key = 'ROUTER_IDLE_ERROR_RETRYABLE';
 
   /** 这一项在服务端的形状：值 + 来源。面板上看到的必须与它一致。 */
   const readValue = async (): Promise<{ value?: string; source?: string }> => {
@@ -400,7 +400,7 @@ test('布尔项：选「开启」值列说「开启」、落库 true；改回「
   // 起手是代码里的默认值：关。
   expect(await readValue()).toMatchObject({ value: 'false', source: 'default' });
 
-  const row = screen.getByRole('row').filter({ hasText: '静默后自动续写' });
+  const row = screen.getByRole('row').filter({ hasText: '静默时报可重试' });
   await expect(row).toBeVisible();
   // 值列说「关闭」，与弹窗里的下拉同一套词 —— 不是裸的 false。
   await expect(row).toContainText('关闭');

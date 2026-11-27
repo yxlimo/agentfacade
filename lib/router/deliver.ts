@@ -513,7 +513,6 @@ export { STREAM_IDLE_DEFAULT_MS };
 markHotSetting("ROUTER_FIRST_FRAME_MS");
 markHotSetting("ROUTER_STREAM_IDLE_MS");
 markHotSetting("ROUTER_IDLE_ERROR_RETRYABLE");
-markHotSetting("ROUTER_TOOL_OPENING_MS");
 
 /**
  * Retryable idle errors are opt-in because they change bytes on the wire; with
@@ -525,12 +524,7 @@ function idleErrorRetryableEnabled(): boolean {
 
 /**
  * Only mid-stream silence is rewritten: a first-frame timeout happens before
- * headers are out, so the caller can still switch targets instead
- *
- * The tool-call silence is not rewritten either: it carries its own error type
- * (`ToolCallSilenceError`), and the rewrite is for the mid-stream silence only.
- * The client never saw those frames (nothing was sent yet), so the rewritten
- * sentence would describe a silence the client never ran into.
+ * any byte is out, so the caller can still resend or switch targets itself.
  */
 function retryableIdleMessage(e: unknown): string | null {
   if (!(e instanceof StreamIdleError) || e.phase !== "mid-stream") return null;
@@ -649,9 +643,7 @@ function chunkIsProgress(bytes: Uint8Array, tracker: ToolCallTracker | null): bo
     } catch {
       return true;
     }
-    // 收全的工具参数算内容；只有名字、参数还在流的不算「能发给客户端」，
-    // 但它们同样是上游在说话 —— 工具那一侧有自己的窗口
-    // （ROUTER_TOOL_OPENING_MS，锚点是最后一个工具帧），这里只管这段安静够不够。
+    // 工具帧（开局帧、参数碎片）都算上游在说话：它们是字节，也照原样发给了客户端。
     // 把参数碎片当成静默，量到的就成了整段工具调用的总时长，一条慢慢吐参数的长
     // 工具调用会被这条通用窗口砍掉。
     if (tracker.observe(json) || tracker.toolFrame) return true;
@@ -659,7 +651,6 @@ function chunkIsProgress(bytes: Uint8Array, tracker: ToolCallTracker | null): bo
   return false;
 }
 
-/**
 /**
  * Which silence this is: waiting for the first frame, or the stream going quiet
  * mid-answer.
@@ -669,18 +660,15 @@ function chunkIsProgress(bytes: Uint8Array, tracker: ToolCallTracker | null): bo
  * targets), the mid-stream timeout happens after them (only an error frame can
  * reach the client).
  *
- * A tool call that opened but never got its arguments is not a phase: it has
- * its own error type (`ToolCallSilenceError`), because the upstream is healthy
- * there — what is stuck is that one connection.
+ * 工具调用发了一半停住不是单独一档：对客户端来说它就是「静默」，与正文说到
+ * 一半停住同一句话、同一种处理。
  */
 export type StreamPhase = "first-frame" | "mid-stream";
 
 /**
  * How this silence is put into words: two kinds, two sentences.
  *
- * The tool-call silence borrows the mid-stream one: the client does not need
- * to know whether the silence came in the middle of an answer or at the start
- * of a tool call. The log is where the two are told apart.
+ * 静默只有一种说法：客户端不需要知道它发生在正文中间还是工具调用中间。
  */
 function idleSentence(idleMs: number, label: string, phase: StreamPhase): string {
   if (phase === "first-frame") {
@@ -1281,24 +1269,6 @@ class ToolCallTracker {
 }
 
 
-/**
- * 工具帧是原子的：扣住，直到参数收全。
- *
- * 一个 tool_call 的参数是分片送来的。半个 tool_call 客户端既不显示也补不上 ——
- * 所以从工具帧（开局帧或参数碎片）到达那一刻起，**从这一帧开始的所有帧**都扣在
- * 手里，连非工具帧一起扣：扣住期间若正文帧先发出去，写出顺序就与上游顺序不同了。
- * 参数能 JSON.parse 通过了，再按原顺序一次性写出。
- *
- * 写出的时机有三个：
- *   · 参数收全；
- *   · 累积超过 CONTENT_GATE_MAX_BYTES：立刻写出去，此后不再扣这一轮（静默归中途
- *     那个窗口）；
- *   · 上游正常结束（finish_reason / message_stop / 流结束）：参数没收全也原样写出，
- *     不吞帧。
- *
- * 扣住期间上游安静了：走工具那个窗口（ROUTER_TOOL_OPENING_MS），到点失败 ——
- * 客户端这时一个工具帧都没拿到（它拿到的是思考/正文与那句可重试的超时）。
- */
 
 /** The whole answer, for a client that did not ask for a stream. */
 export function deliverJson(
@@ -1445,7 +1415,7 @@ export async function deliverOpenAIStream(
   }
   try {
     for await (const chunk of openaiStreamToAnthropic(
-      watchFinish(upstream, onFinish, onUsage),
+      watchFinish(readOpenAIChunks(upstream, abort.signal), onFinish, onUsage),
       model,
     )) {
       if (!(await writeFrame(ctx, chunk))) {
@@ -1643,12 +1613,48 @@ export async function deliverOpenAIChunks(
   onFailure?: (error: unknown) => void,
 ): Promise<void> {
   ctx.res.setHeader("x-request-id", rid("req_"));
-  // 有什么发什么：这一条入口拿到的已经是解析好的帧，直接发头往下写，不再
-  // 等第一块「内容」出现（扣住就是客户端收不到字节的原因）。
-  // 这里也计时：三个入口该是一套东西（见 withIteratorIdle）。
-  const source = withIteratorIdle(chunks, `model=${model}`);
+  // 与流入口同一条规矩：**先**读到第一帧，再发头。
+  //
+  // 有什么发什么指的是「读到的字节别扣在手里」，不是「头先发出去、再去看上游
+  // 说什么」。第一帧之前一个字节都没写，这时上游拒绝或超时，路由层还能换目标
+  // 或原样重发；先发了头就只能把一切失败变成 200 里藏一句 error（2026-11-05
+  // 的用例又把这条钉回来：旧协议那个入口发头太早）。
+  const gated = withIteratorIdle(chunks, `model=${model}`)[Symbol.asyncIterator]();
+  const state = replyState(ctx);
+  let first: IteratorResult<Json>;
+  try {
+    first = await gated.next();
+  } catch (e) {
+    if (e instanceof ClientGoneError) {
+      reportClientGone(ctx, onFailure);
+      ctx.res.end();
+      return;
+    }
+    log.warn(`[DELIVER] 上游在内容出现之前就失败了：${failureLine(e)}`);
+    reportFailure(onFailure, e);
+    // 响应从没接管过：它还是 Koa 的，调用方写的 sendError 才会落到 socket 上。
+    throw e;
+  }
+  if (state.gone) {
+    reportClientGone(ctx, onFailure);
+    ctx.res.end();
+    return;
+  }
+  // 第一帧到了：现在才接管响应、发头。之后这一条流就是「来一帧发一帧」。
   takeOver(ctx);
   sseHead(ctx);
+  // 已经读到的那一帧接回序列最前面：往下照旧一帧一帧发。
+  const source: AsyncIterable<Json> = {
+    [Symbol.asyncIterator]: async function* () {
+      if (first.done) return;
+      yield first.value;
+      for (;;) {
+        const next = await gated.next();
+        if (next.done) return;
+        yield next.value;
+      }
+    },
+  };
   if (dialect === "openai") {
     try {
       for await (const chunk of source) {

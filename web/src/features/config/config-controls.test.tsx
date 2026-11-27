@@ -173,8 +173,8 @@ describe('配置页按契约渲染控件', () => {
         create(ListConfigResponseSchema, {
           items: [
             create(ConfigItemSchema, {
-              key: 'ROUTER_CONTINUE_ON_IDLE',
-              label: '静默后自动续写',
+              key: 'ROUTER_IDLE_ERROR_RETRYABLE',
+              label: '静默时报可重试',
               value: 'true',
               fallback: 'true',
               source: 'database',
@@ -196,7 +196,7 @@ describe('配置页按契约渲染控件', () => {
 
     renderWithClient({ client, children: <ConfigPage /> })
     await user.click(await screen.findByRole('tab', { name: /网关/ }))
-    await screen.findByText('静默后自动续写')
+    await screen.findByText('静默时报可重试')
 
     /** 找 label 那一行：「值列显示什么」只在行里判，不受表头之类干扰。 */
     const rowFor = (label: string): HTMLElement => {
@@ -207,7 +207,7 @@ describe('配置页按契约渲染控件', () => {
       return row
     }
 
-    const onRow = rowFor('静默后自动续写')
+    const onRow = rowFor('静默时报可重试')
     expect(within(onRow).getByText('开启')).toBeInTheDocument()
     // 值列里没有机器字面量：true 只在库里，不在界面上。
     expect(onRow).not.toHaveTextContent('true')

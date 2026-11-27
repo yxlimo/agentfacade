@@ -30,7 +30,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "admin-config-"));
 process.env.FACADE_DATA_DIR = tmp;
 // This round checks the defaults, so none of the three may be pinned by
 // This round checks the defaults, so none of the four may be pinned by
-for (const key of ["ROUTER_FIRST_FRAME_MS", "ROUTER_STREAM_IDLE_MS", "ROUTER_TOOL_OPENING_MS", "ROUTER_RETRY_BUDGET_MS"]) {
+for (const key of ["ROUTER_FIRST_FRAME_MS", "ROUTER_STREAM_IDLE_MS", "ROUTER_RETRY_BUDGET_MS"]) {
   delete process.env[key];
 }
 
@@ -44,8 +44,6 @@ const {
   STREAM_IDLE_DEFAULT_MS,
   StreamIdleError,
   withStreamIdle,
-  CONTINUE_MAX_MAX,
-  CONTINUE_MAX_MIN,
 } = await import("../lib/router/deliver.ts");
 const { ATTEMPT_BUDGET_DEFAULT_MS } = await import("../lib/router/upstreams/policy.ts");
 const { STREAM_LIMIT_MAX_MS } = await import("../lib/router/stream-limits.ts");
@@ -81,15 +79,12 @@ section("面板上的十二个键");
 const NEW_KEYS = [
   "ROUTER_FIRST_FRAME_MS",
   "ROUTER_STREAM_IDLE_MS",
-  "ROUTER_TOOL_OPENING_MS",
   "ROUTER_RETRY_BUDGET_MS",
   "PERIODIC_ENABLED",
   "HEALTH_CACHE_MS",
   "BENEFITS_DISABLED",
   "BENEFITS_INTERVAL_MS",
   "QODER_LEGACY_RETRY_MS",
-  "ROUTER_CONTINUE_ON_IDLE",
-  "ROUTER_CONTINUE_MAX",
   "ROUTER_IDLE_ERROR_RETRYABLE",
 ];
 const keys = configItems().map((i) => i.key);
@@ -113,8 +108,6 @@ const DESCRIPTION_LIMIT: Record<string, number> = {
   ROUTER_FIRST_FRAME_MS: 60,
   // 要点到正文、thinking、tool_call 三件事，还要留出「之后见下面三项」的指引
   ROUTER_STREAM_IDLE_MS: 60,
-  // 除了「多久算静默」，还得说清 0 是什么含义、超时之后是重发给同一个上游
-  ROUTER_TOOL_OPENING_MS: 60,
 };
 for (const key of NEW_KEYS) {
   const row = item(key);
@@ -253,7 +246,6 @@ section("热的与要重启的");
 const HOT: [string, string][] = [
   ["ROUTER_FIRST_FRAME_MS", "1111"],
   ["ROUTER_STREAM_IDLE_MS", "2222"],
-  ["ROUTER_TOOL_OPENING_MS", "4444"],
   ["ROUTER_RETRY_BUDGET_MS", "3333"],
   ["BENEFITS_DISABLED", "true"],
 ];
@@ -288,17 +280,6 @@ for (const [key, value] of NEEDS_RESTART) {
 check("变得回去：首帧上限又是 300000", configNumber("ROUTER_FIRST_FRAME_MS", 300_000) === 300_000, String(configNumber("ROUTER_FIRST_FRAME_MS", -1)));
 check("变得回去：快照间隔又是 300000", configNumber("HEALTH_CACHE_MS", 300_000) === 300_000, String(configNumber("HEALTH_CACHE_MS", -1)));
 
-/* ------------------------------------------------------------------ *
- * 六、两个续写设置的默认值与范围夹取
- * ------------------------------------------------------------------ */
-
-section("续写设置的默认值与范围夹取");
-
-check("ROUTER_CONTINUE_ON_IDLE 默认是关", item("ROUTER_CONTINUE_ON_IDLE")?.value === "false", String(item("ROUTER_CONTINUE_ON_IDLE")?.value));
-check("ROUTER_CONTINUE_ON_IDLE 默认值也是关", item("ROUTER_CONTINUE_ON_IDLE")?.fallback === "false", String(item("ROUTER_CONTINUE_ON_IDLE")?.fallback));
-check("ROUTER_CONTINUE_MAX 默认是 2", configNumber("ROUTER_CONTINUE_MAX", -1) === 2, String(configNumber("ROUTER_CONTINUE_MAX", -1)));
-check("ROUTER_CONTINUE_MAX 面板显示的默认值也是 2", item("ROUTER_CONTINUE_MAX")?.fallback === "2", String(item("ROUTER_CONTINUE_MAX")?.fallback));
-
 section("静默超时报可重试的开关");
 
 check("ROUTER_IDLE_ERROR_RETRYABLE 默认是关", item("ROUTER_IDLE_ERROR_RETRYABLE")?.value === "false", String(item("ROUTER_IDLE_ERROR_RETRYABLE")?.value));
@@ -313,30 +294,6 @@ configClear("ROUTER_IDLE_ERROR_RETRYABLE");
 reloadConfig();
 check("清掉之后回到默认值 false", item("ROUTER_IDLE_ERROR_RETRYABLE")?.value === "false", String(item("ROUTER_IDLE_ERROR_RETRYABLE")?.value));
 
-// 0 到 5 是合法范围。越界写进去的值要夹回边界，并且说出来，不静默改数。
-const clampMin = setConfigValue("ROUTER_CONTINUE_MAX", "-1");
-check("越界下界夹回 0", clampMin.ok === true && configNumber("ROUTER_CONTINUE_MAX", -1) === 0, String(configNumber("ROUTER_CONTINUE_MAX", -1)));
-check("下界夹取在返回里说出来", clampMin.message.includes("夹回"), clampMin.message);
-check("面板显示的是夹后的 0", item("ROUTER_CONTINUE_MAX")?.value === "0", String(item("ROUTER_CONTINUE_MAX")?.value));
-
-const clampMax = setConfigValue("ROUTER_CONTINUE_MAX", "99");
-check("越界上界夹回 5", clampMax.ok === true && configNumber("ROUTER_CONTINUE_MAX", -1) === 5, String(configNumber("ROUTER_CONTINUE_MAX", -1)));
-check("上界夹取在返回里说出来", clampMax.message.includes("夹回"), clampMax.message);
-check("面板显示的是夹后的 5", item("ROUTER_CONTINUE_MAX")?.value === "5", String(item("ROUTER_CONTINUE_MAX")?.value));
-
-// 范围内的值原样收下，不夹也不说。
-const inRange = setConfigValue("ROUTER_CONTINUE_MAX", "3");
-check("范围内的值原样收下", inRange.ok === true && configNumber("ROUTER_CONTINUE_MAX", -1) === 3, String(configNumber("ROUTER_CONTINUE_MAX", -1)));
-check("范围内的值不说夹取", !inRange.message.includes("夹回"), inRange.message);
-
-// 0 是合法值：就是不续写。
-const zero = setConfigValue("ROUTER_CONTINUE_MAX", "0");
-check("0 是合法值，就是不续写", zero.ok === true && configNumber("ROUTER_CONTINUE_MAX", -1) === 0, String(configNumber("ROUTER_CONTINUE_MAX", -1)));
-
-configClear("ROUTER_CONTINUE_MAX");
-reloadConfig();
-check("清掉之后回到默认值 2", configNumber("ROUTER_CONTINUE_MAX", -1) === 2, String(configNumber("ROUTER_CONTINUE_MAX", -1)));
-
 /* ------------------------------------------------------------------ *
  * 七、控件类型、单位、边界与文案
  * ------------------------------------------------------------------ */
@@ -347,7 +304,6 @@ const rows = configItems();
 const MILLISECOND_KEYS = new Set([
   "ROUTER_FIRST_FRAME_MS",
   "ROUTER_STREAM_IDLE_MS",
-  "ROUTER_TOOL_OPENING_MS",
   "ROUTER_RETRY_BUDGET_MS",
   "HEALTH_CACHE_MS",
   "BENEFITS_INTERVAL_MS",
@@ -364,7 +320,7 @@ for (const row of rows) {
   const want = MILLISECOND_KEYS.has(row.key) ? ConfigUnit.MILLISECONDS : ConfigUnit.UNSPECIFIED;
   check(`${row.key} 的单位按声明给出`, row.unit === want, `声明 ${want}，实到 ${row.unit}`);
 }
-check("声明为毫秒的一共七个键", MILLISECOND_KEYS.size === 7, String(MILLISECOND_KEYS.size));
+check("声明为毫秒的一共六个键", MILLISECOND_KEYS.size === 6, String(MILLISECOND_KEYS.size));
 
 for (const row of rows) {
   const type = types.get(row.key);
@@ -377,23 +333,11 @@ for (const row of rows) {
 const boolKeys = rows.filter((row) => types.get(row.key) === "boolean");
 check("布尔键是 BOOLEAN 控件", boolKeys.length > 0 && boolKeys.every((row) => row.kind === ConfigKind.BOOLEAN), JSON.stringify(boolKeys.map((row) => [row.key, row.kind])));
 
-const continueMax = rows.find((row) => row.key === "ROUTER_CONTINUE_MAX")!;
-check(
-  "ROUTER_CONTINUE_MAX 有下界且取自 deliver.ts",
-  continueMax.hasMin === true && continueMax.minValue === BigInt(CONTINUE_MAX_MIN),
-  `hasMin=${continueMax.hasMin}，min=${continueMax.minValue}`,
-);
-check(
-  "ROUTER_CONTINUE_MAX 有上界且取自 deliver.ts",
-  continueMax.hasMax === true && continueMax.maxValue === BigInt(CONTINUE_MAX_MAX),
-  `hasMax=${continueMax.hasMax}，max=${continueMax.maxValue}`,
-);
-
 // The three stream gates are capped by the same constant the router clamps with:
 // the panel must report that number, otherwise a value the panel accepts
 // silently becomes a different one in force.
-const STREAM_KEYS = ["ROUTER_FIRST_FRAME_MS", "ROUTER_STREAM_IDLE_MS", "ROUTER_TOOL_OPENING_MS"];
-const BOUNDED_KEYS = new Set([...STREAM_KEYS, "ROUTER_CONTINUE_MAX"]);
+const STREAM_KEYS = ["ROUTER_FIRST_FRAME_MS", "ROUTER_STREAM_IDLE_MS"];
+const BOUNDED_KEYS = new Set(STREAM_KEYS);
 for (const key of STREAM_KEYS) {
   const row = rows.find((r) => r.key === key)!;
   check(
@@ -404,28 +348,6 @@ for (const key of STREAM_KEYS) {
   check(`${key} 没有下界`, row.hasMin === false && row.minValue === 0n, `hasMin=${row.hasMin}，min=${row.minValue}`);
 }
 
-// The fourth knob: how long to wait for the tool arguments after the opening
-// frame has arrived. Off by default (0), so the mid-stream window stays in
-// charge — the panel must not claim a limit that is not in force.
-const opening = rows.find((row) => row.key === "ROUTER_TOOL_OPENING_MS");
-check("面板上有 ROUTER_TOOL_OPENING_MS", Boolean(opening), JSON.stringify(rows.map((row) => row.key)));
-check("它的单位是毫秒（面板上按秒显示与填写）", opening?.unit === ConfigUnit.MILLISECONDS, String(opening?.unit));
-check("它的控件是数字", opening?.kind === ConfigKind.NUMBER, String(opening?.kind));
-check(
-  "它的默认值是 0（不单独计时）",
-  opening?.fallback === "0" && configNumber("ROUTER_TOOL_OPENING_MS", -1) === 0,
-  `fallback=${opening?.fallback}，读到 ${configNumber("ROUTER_TOOL_OPENING_MS", -1)}`,
-);
-check(
-  "它有上界且取自 stream-limits.ts",
-  opening?.hasMax === true && opening?.maxValue === BigInt(STREAM_LIMIT_MAX_MS),
-  `hasMax=${opening?.hasMax}，max=${opening?.maxValue}`,
-);
-check(
-  "它没有下界（0 是合法值）",
-  opening?.hasMin === false && opening?.minValue === 0n,
-  `hasMin=${opening?.hasMin}，min=${opening?.minValue}`,
-);
 check(
   "面板报的流闸上限与夹取用的是同一个常量",
   STREAM_KEYS.every((key) => rows.find((r) => r.key === key)!.maxValue === BigInt(STREAM_LIMIT_MAX_MS)),
@@ -438,25 +360,11 @@ for (const row of rows.filter((row) => !BOUNDED_KEYS.has(row.key))) {
     `hasMin=${row.hasMin}，hasMax=${row.hasMax}`,
   );
 }
-check(
-  "面板报的界与 deliver.ts 夹取用的界一致",
-  continueMax.minValue === BigInt(CONTINUE_MAX_MIN) && continueMax.maxValue === BigInt(CONTINUE_MAX_MAX),
-  `面板 ${continueMax.minValue}-${continueMax.maxValue}，路由 ${CONTINUE_MAX_MIN}-${CONTINUE_MAX_MAX}`,
-);
-check(
-  "夹取提示语也用同一对界",
-  clampMin.message.includes(String(CONTINUE_MAX_MIN)) && clampMax.message.includes(String(CONTINUE_MAX_MAX)),
-  `${clampMin.message} / ${clampMax.message}`,
-);
-
 const COPY: [string, string, string][] = [
   ["ROUTER_FIRST_FRAME_MS", "等首字时限", "等不到第一个字就把同一请求重发给同一个上游（秒）；这是等首字的上限"],
   ["ROUTER_STREAM_IDLE_MS", "多久算静默", "正文或 thinking 停这么久就算静默（秒）；之后见下面三项"],
-  ["ROUTER_TOOL_OPENING_MS", "tool_call 静默多久", "tool_call 发一半停这么久就算静默（秒）；0 = 跟「多久算静默」一致。静默后把同一请求重发给同一上游，不换上游"],
   ["ROUTER_RETRY_BUDGET_MS", "重试总时限", "一次请求的重试总时限（秒）"],
-  ["ROUTER_CONTINUE_ON_IDLE", "静默后自动续写", "断开重连让上游接着写，客户端感觉不到中断"],
-  ["ROUTER_CONTINUE_MAX", "最多续写几次", "一次答复最多续写几次；0 = 不续写，直接报错"],
-  ["ROUTER_IDLE_ERROR_RETRYABLE", "静默时报可重试", "与续写二选一：改成报可重试超时，让客户端整回合重发"],
+  ["ROUTER_IDLE_ERROR_RETRYABLE", "静默时报可重试", "静默改报可重试超时，让客户端整回合重发"],
   ["HEALTH_CACHE_MS", "快照刷新间隔", "额度与状态快照多久刷新（秒）"],
   ["BENEFITS_INTERVAL_MS", "签到间隔", "签到任务多久跑一次（秒）"],
   ["QODER_LEGACY_RETRY_MS", "排队重试间隔", "Qoder 旧协议排队后隔多久重试（秒）"],

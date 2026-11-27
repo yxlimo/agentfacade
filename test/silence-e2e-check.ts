@@ -40,8 +40,6 @@ const WATCHDOG_MS = 40_000;
 const FIRST_FRAME_MS = 400;
 /** 多久算静默（毫秒）。 */
 const IDLE_MS = 300;
-/** 工具开局之后的上限（毫秒）：比中途那个窗口小，两种静默才分得开。 */
-const TOOL_OPENING_MS = 120;
 /** 重发同一个上游的总时限（毫秒）：一见底就 504。 */
 const RETRY_BUDGET_MS = 1_500;
 
@@ -182,6 +180,8 @@ type Report = {
   text: string;
   /** 请求发出到最后一个字节（毫秒）。 */
   spanMs: number;
+  /** 请求发出到第一个字节（毫秒）。扣住时代这一段等于整个上游耗时。 */
+  firstByteMs: number;
   calls: SeenCall[];
   /** 按本次请求的 upstream_id + agent_model 取到的用量行（不兜底）。 */
   usage: UsageRow[];
@@ -322,14 +322,51 @@ function writeContentThenSilence(res: http.ServerResponse): void {
   res.write(openaiChunk({ role: "assistant", content: "前半" }));
 }
 
+/**
+ * G：只发一封「信封」（role 帧），然后安静到中途窗口到点。
+ *
+ * 以前要等「第一块对用户可见的内容」才发头，这一段就是客户端零字节；现在读到
+ * 什么发什么。断言钉的是**到达时间**，不是「最终收到了」。
+ */
+function writeEnvelopeThenSilence(res: http.ServerResponse): void {
+  res.writeHead(200, { "content-type": "text/event-stream" });
+  res.write(openaiChunk({ role: "assistant" }));
+  // 不 res.end()：之后一直安静。
+}
+
+/** H：一条 200KB 的参数帧分 20 片吐，每片之间隔一会儿。 */
+const BIG_SLICES = 20;
+const BIG_SLICE_MS = 25;
+const BIG_SLICE_BYTES = 10 * 1024;
+
+function writeBigFrameInSlices(res: http.ServerResponse): void {
+  res.writeHead(200, { "content-type": "text/event-stream" });
+  res.write(openaiChunk({ role: "assistant" }));
+  res.write(toolOpening(""));
+  let sent = 0;
+  const timer = setInterval(() => {
+    sent++;
+    res.write(openaiChunk({ tool_calls: [{ index: 0, function: { arguments: "x".repeat(BIG_SLICE_BYTES) } }] }));
+    if (sent >= BIG_SLICES) {
+      clearInterval(timer);
+      res.write(openaiChunk({}, "tool_calls"));
+      res.write("data: [DONE]\n\n");
+      res.end();
+    }
+  }, BIG_SLICE_MS);
+  res.on("close", () => clearInterval(timer));
+}
+
 /* ------------------------------------------------------------------ *
  * 一个场景（子进程）
  * ------------------------------------------------------------------ */
 
-type Case = "A" | "B" | "C" | "D" | "E" | "F";
+type Case = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H";
 
 function isCase(value: string | undefined): value is Case {
-  return value === "A" || value === "B" || value === "C" || value === "D" || value === "E" || value === "F";
+  return (
+    value === "A" || value === "B" || value === "C" || value === "D" || value === "E" || value === "F" || value === "G" || value === "H"
+  );
 }
 
 function sleep(ms: number): Promise<void> {
@@ -357,6 +394,10 @@ function writerFor(which: Case): (res: http.ServerResponse, attempt: number) => 
       return (res, attempt) => writeSilentThenAnswer(res, attempt);
     case "F":
       return (res) => writeContentThenSilence(res);
+    case "G":
+      return (res) => writeEnvelopeThenSilence(res);
+    case "H":
+      return (res) => writeBigFrameInSlices(res);
   }
 }
 
@@ -398,9 +439,7 @@ async function runChild(which: Case): Promise<void> {
   // 窗口按毫秒缩：生产上那两个数是分钟。
   process.env.ROUTER_FIRST_FRAME_MS = String(FIRST_FRAME_MS);
   process.env.ROUTER_STREAM_IDLE_MS = String(IDLE_MS);
-  process.env.ROUTER_TOOL_OPENING_MS = String(TOOL_OPENING_MS);
   process.env.ROUTER_RETRY_BUDGET_MS = String(RETRY_BUDGET_MS);
-  process.env.ROUTER_CONTINUE_ON_IDLE = "false";
   process.env.ROUTER_IDLE_ERROR_RETRYABLE = "false";
 
   const { app } = await import("../lib/router/app.ts");
@@ -472,14 +511,15 @@ async function runChild(which: Case): Promise<void> {
   const routePort = (route.address() as { port: number }).port;
 
   // 客户端：真 socket，按 io 收字节，量到最后一个字节用了多久。
-  type ClientReply = { status: number; retry: string | null; text: string; spanMs: number };
+  type ClientReply = { status: number; retry: string | null; text: string; spanMs: number; firstByteMs: number };
   const client = await new Promise<ClientReply>((resolve) => {
     const started = Date.now();
     let settled = false;
+    let firstByteMs = -1;
     const finish = (status: number, retry: string | null, text: string): void => {
       if (settled) return;
       settled = true;
-      resolve({ status, retry, text, spanMs: Date.now() - started });
+      resolve({ status, retry, text, spanMs: Date.now() - started, firstByteMs });
     };
     const body = JSON.stringify({
       model: PUBLIC_MODEL,
@@ -509,6 +549,7 @@ async function runChild(which: Case): Promise<void> {
         const retry = Array.isArray(retryHeader) ? retryHeader[0] : (retryHeader ?? "");
         res.setEncoding("utf8");
         res.on("data", (piece: string) => {
+          if (firstByteMs < 0) firstByteMs = Date.now() - started;
           text += piece;
         });
         res.on("end", () => finish(res.statusCode ?? 0, retry, text));
@@ -533,6 +574,7 @@ async function runChild(which: Case): Promise<void> {
     retry: client.retry,
     text: client.text,
     spanMs: client.spanMs,
+    firstByteMs: client.firstByteMs,
     calls,
     usage: usageRowsOf(dataDir),
   };
@@ -692,43 +734,30 @@ async function main(): Promise<void> {
   }
 
   /* ---------------------------------------------------------------- *
-   * D. 工具帧扣住：客户端零字节，失败在工具那道闸上
+   * D. 工具名来了、参数没来：字节照发，静默归中途那个窗口
    * ---------------------------------------------------------------- */
 
-  section("D. 工具名来了、参数没来：客户端一个字节都没拿到，按工具窗口失败");
+  section("D. 工具名来了、参数没来：客户端先收到字节，之后按中途窗口报可重试超时");
   {
     const d = await runCase("D");
     check("D 子进程正常退出", d.code === 0, `exit ${d.code}：${d.stderr.slice(0, 400)}`);
     const text = d.report?.text ?? "";
     const calls = d.report?.calls ?? [];
-    check("D 客户端拿到的是 504", d.report?.status === 504, `HTTP ${d.report?.status ?? 0} ${text.slice(0, 300)}`);
-    check("D 答复说可以重发（x-should-retry: true）", d.report?.retry === "true", String(d.report?.retry));
+    // 头已经发出去了（工具开局帧已经到客户端），所以状态码是 200 + 流里的 error 帧：
+    // 这正是「有什么发什么」的代价与契约 —— 客户端拿到的是能重试的超时。
+    check("D 客户端拿到的是 200（头已经发出去过）", d.report?.status === 200, `HTTP ${d.report?.status ?? 0} ${text.slice(0, 300)}`);
     check(
-      "D 客户端一个流的字节都没拿到（没有一个 SSE 帧）",
-      !text.includes("data:") && !text.includes("event:") && !text.includes("message_start"),
-      text.slice(0, 300),
-    );
-    // 错的名字不线上走：客户端能看到的只有那一句，日志里才是工具那道闸的标记。
-    check(
-      "D 那句是 120ms 的工具静默（不是 300ms 的中途静默）",
-      text.includes(`${TOOL_OPENING_MS}ms`) && text.includes("mid-stream"),
+      "D 客户端先收到了工具开局帧（不再扣住）",
+      text.includes('"type":"tool_use"') && text.includes('"name":"read"'),
       text.slice(0, 300),
     );
     check(
-      "D 日志记的是工具开局那道闸",
-      d.stderr.includes("tool_call 静默") || d.stderr.includes("a tool call was still being written"),
-      d.stderr.split("\n").filter((line) => line.includes("[DELIVER]")).slice(-3).join(" | "),
+      "D 之后是一个静默超时（300ms 中途窗口，不是工具窗口）",
+      text.includes(`${IDLE_MS}ms`) && text.includes("mid-stream"),
+      text.slice(-300),
     );
-    check(
-      "D 上游被重发了（同一条请求，同一个上游）",
-      calls.length >= 2 && calls.every((call) => call.platform === PLATFORM_A),
-      `${calls.length} 次：${calls.map((call) => call.platform).join(" | ")}`,
-    );
-    check(
-      "D 每次都是原样重发（请求体一样）",
-      calls.length >= 2 && calls.every((call) => call.body === calls[0]?.body),
-      calls.map((call) => call.body.slice(0, 60)).join(" | "),
-    );
+    // 头已发出，换目标与同上游重发都不成立：只有客户端自己重发。
+    check("D 没有重发同一条请求", calls.length === 1, `${calls.length} 次：${calls.map((call) => call.platform).join(" | ")}`);
     check("D 上游那一条被掐掉了", calls.some((call) => call.cancelled), JSON.stringify(calls.map((call) => call.cancelled)));
     check("D 备目标一次都没被叫", calls.every((call) => call.platform !== PLATFORM_B), calls.map((call) => call.platform).join(" | "));
   }
@@ -790,6 +819,54 @@ async function main(): Promise<void> {
       "F 上游只被叫了一次（中途静默不重发、不换目标）",
       (f.report?.calls ?? []).length === 1 && (f.report?.calls ?? [])[0]?.platform === PLATFORM_A,
       (f.report?.calls ?? []).map((call) => call.platform).join(" | "),
+    );
+  }
+
+  /* ---------------------------------------------------------------- *
+   * G. 信封帧：客户端立刻收到字节，不再等「第一块内容」
+   * ---------------------------------------------------------------- */
+
+  section("G. 上游只发一封信封就安静：客户端必须立刻收到它");
+  {
+    const g = await runCase("G");
+    check("G 子进程正常退出", g.code === 0, `exit ${g.code}：${g.stderr.slice(0, 400)}`);
+    const text = g.report?.text ?? "";
+    // 上游只发了一帧（role），之后一直安静到 300ms 中途窗口。
+    // 旧的扣住逻辑要等「第一块对用户可见的内容」，这一帧不算内容 ——
+    // 那时客户端要等整整 300ms 才收到第一个字节。
+    check(
+      "G 第一个字节远早于静默窗口（没有扣住）",
+      (g.report?.firstByteMs ?? -1) >= 0 && (g.report?.firstByteMs ?? 99_999) < IDLE_MS,
+      `首字节 ${g.report?.firstByteMs ?? -1}ms，窗口 ${IDLE_MS}ms`,
+    );
+    check(
+      "G 之后照样报静默超时",
+      text.includes(`${IDLE_MS}ms`) && text.includes("mid-stream"),
+      text.slice(-200),
+    );
+  }
+
+  /* ---------------------------------------------------------------- *
+   * H. 一条大帧分片吐：客户端边到边收，不等整帧拼全
+   * ---------------------------------------------------------------- */
+
+  section("H. 200KB 的参数帧分 20 片吐：客户端在整帧收全之前就收到字节");
+  {
+    const h = await runCase("H");
+    check("H 子进程正常退出", h.code === 0, `exit ${h.code}：${h.stderr.slice(0, 400)}`);
+    const text = h.report?.text ?? "";
+    const upstreamSpan = BIG_SLICES * BIG_SLICE_MS;
+    // 上游把 200KB 分 20 片、每片 25ms 吐完。扣住的版本要等参数收全才写第一个
+    // 字节，首字节时间就等于整个上游耗时；现在应该是「来一片发一片」。
+    check(
+      "H 第一个字节远早于上游吐完（没有攒整帧）",
+      (h.report?.firstByteMs ?? 99_999) < upstreamSpan / 2,
+      `首字节 ${h.report?.firstByteMs ?? -1}ms，上游吐完约 ${upstreamSpan}ms`,
+    );
+    check(
+      "H 最终把参数收全了（字节没丢）",
+      text.includes("x".repeat(64)) && text.includes("message_stop"),
+      `收到 ${text.length} 字节`,
     );
   }
 

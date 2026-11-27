@@ -308,8 +308,8 @@ export function transientRetryPlan(): { delaysMs: readonly number[]; repeatLastM
 /**
  * Resend the same request to the same upstream, as-is.
  *
- * The tool-call silence says "that one connection is stuck": the upstream is healthy
- * (see ToolCallSilenceError in lib/router/deliver.ts). Switching upstream would
+ * A silence that ends the answer before any byte went out says "that one connection is
+ * stuck": the upstream itself is fine. Switching upstream would
  * replace the tool call that is already open, and switching account would move the
  * session the client asked for — so the same request goes out again, to the same
  * upstream, unchanged.

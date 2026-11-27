@@ -543,7 +543,6 @@ function isPreCommitSilence(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const { name, phase } = error as { name?: unknown; phase?: unknown };
   const named = String(name ?? "");
-  if (named === "ToolCallSilenceError") return true;
   // StreamIdleError is named "TimeoutError" (it reads like a timeout to
   // everything above), and its phase says which of the two silences it is.
   return named === "TimeoutError" && phase === "first-frame";
